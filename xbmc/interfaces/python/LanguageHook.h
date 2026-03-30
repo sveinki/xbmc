@@ -1,32 +1,21 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
-#include <Python.h>
-
 #include "interfaces/legacy/LanguageHook.h"
 #include "threads/Event.h"
 
-#include <set>
 #include <map>
+#include <mutex>
+#include <set>
+
+#include <Python.h>
 
 namespace XBMCAddon
 {
@@ -50,13 +39,13 @@ namespace XBMCAddon
 
     public:
 
-      inline PythonLanguageHook(PyInterpreterState* interp) : m_interp(interp)  {  }
+      inline explicit PythonLanguageHook(PyInterpreterState* interp) : m_interp(interp)  {  }
       ~PythonLanguageHook() override;
 
       void DelayedCallOpen() override;
       void DelayedCallClose() override;
       void MakePendingCalls() override;
-      
+
       /**
        * PythonCallbackHandler expects to be instantiated PER AddonClass instance
        *  that is to be used as a callback. This is why this cannot be instantiated
@@ -87,7 +76,11 @@ namespace XBMCAddon
       void RegisterAddonClassInstance(AddonClass* obj);
       void UnregisterAddonClassInstance(AddonClass* obj);
       bool HasRegisteredAddonClassInstance(AddonClass* obj);
-      inline bool HasRegisteredAddonClasses() { CSingleLock l(*this); return !currentObjects.empty(); }
+      inline bool HasRegisteredAddonClasses()
+      {
+        std::unique_lock l(*this);
+        return !currentObjects.empty();
+      }
 
       // You should hold the lock on the LanguageHook itself if you're
       // going to do anything with the set that gets returned.

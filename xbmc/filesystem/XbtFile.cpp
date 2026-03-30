@@ -1,59 +1,36 @@
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <algorithm>
-#include <string.h>
-
-#ifdef TARGET_WINDOWS
-#ifdef NDEBUG
-#pragma comment(lib,"lzo2.lib")
-#elif defined _WIN64
-#pragma comment(lib, "lzo2d.lib")
-#else
-#pragma comment(lib, "lzo2-no_idb.lib")
-#endif
-#endif
-
-#include <lzo/lzo1x.h>
-
 #include "XbtFile.h"
+
 #include "URL.h"
 #include "filesystem/File.h"
 #include "filesystem/XbtManager.h"
 #include "guilib/TextureBundleXBT.h"
+#include "guilib/TextureFormats.h"
 #include "guilib/XBTFReader.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
+
+#include <algorithm>
+#include <climits>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace XFILE
 {
 
 CXbtFile::CXbtFile()
   : m_url(),
-    m_open(false),
     m_xbtfReader(nullptr),
     m_xbtfFile(),
     m_frameStartPositions(),
-    m_frameIndex(0),
-    m_positionWithinFrame(0),
-    m_positionTotal(0),
     m_unpackedFrames()
 { }
 
@@ -66,8 +43,6 @@ bool CXbtFile::Open(const CURL& url)
 {
   if (m_open)
     return false;
-
-  std::string options = url.GetOptions();
 
   CURL xbtUrl(url);
   xbtUrl.SetOptions("");
@@ -91,17 +66,14 @@ bool CXbtFile::Open(const CURL& url)
   m_positionWithinFrame = 0;
   m_positionTotal = 0;
 
-  m_unpackedFrames.assign(frames.size(), nullptr);
+  m_unpackedFrames.resize(frames.size());
 
   return true;
 }
 
 void CXbtFile::Close()
 {
-  for (const auto& unpackedFrame : m_unpackedFrames)
-    delete [] unpackedFrame;
   m_unpackedFrames.clear();
-
   m_frameIndex = 0;
   m_positionWithinFrame = 0;
   m_positionTotal = 0;
@@ -141,7 +113,10 @@ int CXbtFile::Stat(struct __stat64 *buffer)
 
 int CXbtFile::Stat(const CURL& url, struct __stat64* buffer)
 {
-  memset(buffer, 0, sizeof(struct __stat64));
+  if (!buffer)
+    return -1;
+
+  *buffer = {};
 
   // check if the file exists
   CXBTFReaderPtr reader;
@@ -194,17 +169,17 @@ ssize_t CXbtFile::Read(void* lpBuf, size_t uiBufSize)
     const CXBTFFrame& frame = frames[m_frameIndex];
 
     // check if we have already unpacked the current frame
-    if (m_unpackedFrames[m_frameIndex] == nullptr)
+    if (m_unpackedFrames[m_frameIndex].empty())
     {
       // unpack the data from the current frame
-      uint8_t* unpackedFrame = CTextureBundleXBT::UnpackFrame(*m_xbtfReader.get(), frame);
-      if (unpackedFrame == nullptr)
+      auto unpackedFrame = CTextureBundleXBT::UnpackFrame(*m_xbtfReader.get(), frame);
+      if (!unpackedFrame)
       {
         Close();
         return -1;
       }
 
-      m_unpackedFrames[m_frameIndex] = unpackedFrame;
+      m_unpackedFrames[m_frameIndex] = std::move(*unpackedFrame);
     }
 
     // determine how many bytes we need to copy from the current frame
@@ -214,7 +189,7 @@ ssize_t CXbtFile::Read(void* lpBuf, size_t uiBufSize)
       bytesToCopy = std::min(remaining, static_cast<size_t>(remainingBytesInFrame));
 
     // copy the data
-    memcpy(lpBuf, m_unpackedFrames[m_frameIndex] + m_positionWithinFrame, bytesToCopy);
+    memcpy(lpBuf, m_unpackedFrames[m_frameIndex].data() + m_positionWithinFrame, bytesToCopy);
     m_positionWithinFrame += bytesToCopy;
     m_positionTotal += bytesToCopy;
     remaining -= bytesToCopy;
@@ -273,17 +248,17 @@ int64_t CXbtFile::Seek(int64_t iFilePosition, int iWhence)
     const CXBTFFrame& frame = frames[m_frameIndex];
 
     // check if we have already unpacked the current frame
-    if (m_unpackedFrames[m_frameIndex] == nullptr)
+    if (m_unpackedFrames[m_frameIndex].empty())
     {
       // unpack the data from the current frame
-      uint8_t* unpackedFrame = CTextureBundleXBT::UnpackFrame(*m_xbtfReader.get(), frame);
-      if (unpackedFrame == nullptr)
+      auto unpackedFrame = CTextureBundleXBT::UnpackFrame(*m_xbtfReader.get(), frame);
+      if (!unpackedFrame)
       {
         Close();
         return -1;
       }
 
-      m_unpackedFrames[m_frameIndex] = unpackedFrame;
+      m_unpackedFrames[m_frameIndex] = std::move(*unpackedFrame);
     }
 
     int64_t remainingBytesToSeek = newPosition - m_positionTotal;
@@ -329,13 +304,49 @@ uint32_t CXbtFile::GetImageHeight() const
   return frame.GetHeight();
 }
 
-uint32_t CXbtFile::GetImageFormat() const
+XB_FMT CXbtFile::GetImageFormat() const
 {
   CXBTFFrame frame;
   if (!GetFirstFrame(frame))
-    return false;
+    return XB_FMT_UNKNOWN;
 
   return frame.GetFormat();
+}
+
+KD_TEX_FMT CXbtFile::GetKDFormat() const
+{
+  CXBTFFrame frame;
+  if (!GetFirstFrame(frame))
+    return KD_TEX_FMT_UNKNOWN;
+
+  return frame.GetKDFormat();
+}
+
+KD_TEX_FMT CXbtFile::GetKDFormatType() const
+{
+  CXBTFFrame frame;
+  if (!GetFirstFrame(frame))
+    return KD_TEX_FMT_UNKNOWN;
+
+  return frame.GetKDFormatType();
+}
+
+KD_TEX_ALPHA CXbtFile::GetKDAlpha() const
+{
+  CXBTFFrame frame;
+  if (!GetFirstFrame(frame))
+    return KD_TEX_ALPHA_OPAQUE;
+
+  return frame.GetKDAlpha();
+}
+
+KD_TEX_SWIZ CXbtFile::GetKDSwizzle() const
+{
+  CXBTFFrame frame;
+  if (!GetFirstFrame(frame))
+    return KD_TEX_SWIZ_RGBA;
+
+  return frame.GetKDSwizzle();
 }
 
 bool CXbtFile::HasImageAlpha() const

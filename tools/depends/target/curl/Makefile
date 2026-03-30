@@ -1,56 +1,48 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
+include ../../Makefile.include CURL-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile CURL-VERSION ../../download-files.include
 
-# lib name, version
-LIBNAME=curl
-ifeq (osx, $(findstring osx, $(OS)))
-VERSION=7.21.6
-else
-VERSION=7.51.0
-endif
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.bz2
-# configuration settings
-CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
-          ./configure --prefix=$(PREFIX) \
-          --without-libssh2 --disable-ntlm-wb --enable-ipv6 --without-librtmp
+CMAKE_OPTIONS=-DCMAKE_INSTALL_PREFIX=$(PREFIX) \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_CURL_EXE=OFF \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DBUILD_STATIC_LIBS=ON \
+              -DBUILD_LIBCURL_DOCS=OFF \
+              -DENABLE_CURL_MANUAL=OFF \
+              -DCURL_DISABLE_TESTS=OFF \
+              -DCURL_DISABLE_LDAP=ON \
+              -DCURL_DISABLE_LDAPS=ON \
+              -DCURL_DISABLE_SMB=OFF \
+              -DCURL_USE_OPENSSL=ON \
+              -DOPENSSL_ROOT_DIR=$(PREFIX) \
+              -DCURL_BROTLI=ON \
+              -DUSE_NGHTTP2=ON \
+              -DUSE_LIBIDN2=OFF \
+              -DCURL_USE_LIBSSH2=OFF \
+              -DCURL_USE_GSSAPI=OFF \
+              -DCURL_CA_FALLBACK=ON
 
-LIBDYLIB=$(PLATFORM)/lib/.libs/lib$(LIBNAME).a
-
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
+LIBDYLIB=$(PLATFORM)/build/lib/$(BYPRODUCT)
 
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
-	rm -rf $(PLATFORM)/*; mkdir -p $(PLATFORM)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
+	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)/build
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-ifeq (osx, $(findstring osx, $(OS)))
-	cd $(PLATFORM); patch -p1 < ../0001-HTTP-reset-expected-DL-UL-sizes-on-redirects.patch
-endif
-ifeq (darwin, $(findstring darwin, $(HOST)))
-	cd $(PLATFORM); sed -ie "s/elif defined(HAVE_CLOCK_GETTIME_MONOTONIC)/#elif defined(HAVE_CLOCK_GETTIME_MONOTONIC_NOPE)/" lib/timeval.c
-endif
-	cd $(PLATFORM); $(CONFIGURE)
+	cd $(PLATFORM)/build; $(CMAKE) ${CMAKE_OPTIONS} ..
 
 $(LIBDYLIB): $(PLATFORM)
-	$(MAKE) -C $(PLATFORM)/lib
+	$(MAKE) -C $(PLATFORM)/build
 
 .installed-$(PLATFORM): $(LIBDYLIB)
-	# install only libcurl and includes
-	$(MAKE) -C $(PLATFORM)/lib install
-	$(MAKE) -C $(PLATFORM)/include install
-	# make sure to also install libcurl.pc, we need to do
-	# this because we are selectively installing only libcurl
-	$(MAKE) -C $(PLATFORM) install-pkgconfigDATA
+	$(MAKE) -C $(PLATFORM)/build install
 	touch $@
 
 clean:
-	$(MAKE) -C $(PLATFORM) clean
-	rm -f .installed-$(PLATFORM)
+	rm -rf $(PLATFORM) .installed-$(PLATFORM)
 
 distclean::
 	rm -rf $(PLATFORM) .installed-$(PLATFORM)
 
+.PHONY: update-cacert
+update-cacert: $(PLATFORM)
+	$(PLATFORM)/scripts/mk-ca-bundle.pl -u $(CMAKE_SOURCE_DIR)/system/certs/cacert.pem

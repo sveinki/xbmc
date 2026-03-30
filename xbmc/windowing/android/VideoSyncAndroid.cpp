@@ -1,47 +1,34 @@
 /*
- *      Copyright (C) 2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-
-#include "utils/log.h"
 #include "VideoSyncAndroid.h"
+
+#include "ServiceBroker.h"
 #include "cores/VideoPlayer/VideoReferenceClock.h"
-#include "utils/TimeUtils.h"
-#include "platform/android/activity/XBMCApp.h"
-#include "windowing/WindowingFactory.h"
-#include "guilib/GraphicContext.h"
 #include "utils/MathUtils.h"
-#include "linux/XTimeUtils.h"
+#include "utils/TimeUtils.h"
+#include "utils/XTimeUtils.h"
+#include "utils/log.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
 
+#include "platform/android/activity/XBMCApp.h"
 
-bool CVideoSyncAndroid::Setup(PUPDATECLOCK func)
+bool CVideoSyncAndroid::Setup()
 {
-  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::%s setting up", __FUNCTION__);
+  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::{} setting up", __FUNCTION__);
 
   //init the vblank timestamp
   m_LastVBlankTime = CurrentHostCounter();
-  UpdateClock = func;
   m_abortEvent.Reset();
 
-  CXBMCApp::InitFrameCallback(this);
-  g_Windowing.Register(this);
+  CXBMCApp::Get().InitFrameCallback(this);
+  CServiceBroker::GetWinSystem()->Register(this);
 
   return true;
 }
@@ -54,15 +41,16 @@ void CVideoSyncAndroid::Run(CEvent& stopEvent)
 
 void CVideoSyncAndroid::Cleanup()
 {
-  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::%s cleaning up", __FUNCTION__);
-  CXBMCApp::DeinitFrameCallback();
-  g_Windowing.Unregister(this);
+  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::{} cleaning up", __FUNCTION__);
+  CXBMCApp::Get().DeinitFrameCallback();
+  CServiceBroker::GetWinSystem()->Unregister(this);
 }
 
 float CVideoSyncAndroid::GetFps()
 {
-  m_fps = g_graphicsContext.GetFPS();
-  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::%s Detected refreshrate: %f hertz", __FUNCTION__, m_fps);
+  m_fps = CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS();
+  CLog::Log(LOGDEBUG, "CVideoSyncAndroid::{} Detected refreshrate: {:f} hertz", __FUNCTION__,
+            m_fps);
   return m_fps;
 }
 
@@ -75,15 +63,14 @@ void CVideoSyncAndroid::FrameCallback(int64_t frameTimeNanos)
 {
   int           NrVBlanks;
   double        VBlankTime;
-  int64_t       nowtime = CurrentHostCounter();
 
   //calculate how many vblanks happened
-  VBlankTime = (double)(nowtime - m_LastVBlankTime) / (double)CurrentHostFrequency();
-  NrVBlanks = MathUtils::round_int(VBlankTime * m_fps);
+  VBlankTime = (double)(frameTimeNanos - m_LastVBlankTime) / (double)CurrentHostFrequency();
+  NrVBlanks = MathUtils::round_int(VBlankTime * static_cast<double>(m_fps));
 
   //save the timestamp of this vblank so we can calculate how many happened next time
-  m_LastVBlankTime = nowtime;
+  m_LastVBlankTime = frameTimeNanos;
 
   //update the vblank timestamp, update the clock and send a signal that we got a vblank
-  UpdateClock(NrVBlanks, nowtime, m_refClock);
+  m_refClock->UpdateClock(NrVBlanks, frameTimeNanos);
 }

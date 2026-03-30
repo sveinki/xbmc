@@ -1,29 +1,19 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
-#include <vector>
+#include "InfoBool.h"
+
 #include <list>
 #include <stack>
-#include "InfoBool.h"
+#include <utility>
+#include <vector>
 
 class CGUIListItem;
 
@@ -34,11 +24,14 @@ namespace INFO
 class InfoSingle : public InfoBool
 {
 public:
-  InfoSingle(const std::string &expression, int context, unsigned int &refreshCounter)
-    : InfoBool(expression, context, refreshCounter) {};
-  void Initialize() override;
+  InfoSingle(const std::string& expression, int context, unsigned int& refreshCounter)
+    : InfoBool(expression, context, refreshCounter)
+  {
+  }
+  void Initialize(CGUIInfoManager* infoMgr) override;
 
-  void Update(const CGUIListItem *item) override;
+  void Update(int contextWindow, const CGUIListItem* item) override;
+
 private:
   int m_condition;             ///< actual condition this represents
 };
@@ -48,13 +41,16 @@ private:
 class InfoExpression : public InfoBool
 {
 public:
-  InfoExpression(const std::string &expression, int context, unsigned int &refreshCounter)
-    : InfoBool(expression, context, refreshCounter) {};
+  InfoExpression(const std::string& expression, int context, unsigned int& refreshCounter)
+    : InfoBool(expression, context, refreshCounter)
+  {
+  }
   ~InfoExpression() override = default;
 
-  void Initialize() override;
+  void Initialize(CGUIInfoManager* infoMgr) override;
 
-  void Update(const CGUIListItem *item) override;
+  void Update(int contextWindow, const CGUIListItem* item) override;
+
 private:
   typedef enum
   {
@@ -78,7 +74,7 @@ private:
   {
   public:
     virtual ~InfoSubexpression(void) = default; // so we can destruct derived classes using a pointer to their base class
-    virtual bool Evaluate(const CGUIListItem *item) = 0;
+    virtual bool Evaluate(int contextWindow, const CGUIListItem* item) = 0;
     virtual node_type_t Type() const=0;
   };
 
@@ -88,9 +84,10 @@ private:
   class InfoLeaf : public InfoSubexpression
   {
   public:
-    InfoLeaf(InfoPtr info, bool invert) : m_info(info), m_invert(invert) {};
-    bool Evaluate(const CGUIListItem *item) override;
-    node_type_t Type() const override { return NODE_LEAF; };
+    InfoLeaf(InfoPtr info, bool invert) : m_info(std::move(info)), m_invert(invert) {}
+    bool Evaluate(int contextWindow, const CGUIListItem* item) override;
+    node_type_t Type() const override { return NODE_LEAF; }
+
   private:
     InfoPtr m_info;
     bool m_invert;
@@ -102,9 +99,10 @@ private:
   public:
     InfoAssociativeGroup(node_type_t type, const InfoSubexpressionPtr &left, const InfoSubexpressionPtr &right);
     void AddChild(const InfoSubexpressionPtr &child);
-    void Merge(std::shared_ptr<InfoAssociativeGroup> other);
-    bool Evaluate(const CGUIListItem *item) override;
-    node_type_t Type() const override { return m_type; };
+    void Merge(const std::shared_ptr<InfoAssociativeGroup>& other);
+    bool Evaluate(int contextWindow, const CGUIListItem* item) override;
+    node_type_t Type() const override { return m_type; }
+
   private:
     node_type_t m_type;
     std::list<InfoSubexpressionPtr> m_children;

@@ -1,28 +1,19 @@
 /*
- *      Copyright (C) 2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2017-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialogAxisDetection.h"
-#include "guilib/LocalizeStrings.h"
+
+#include "ServiceBroker.h"
 #include "input/joysticks/DriverPrimitive.h"
-#include "input/joysticks/IButtonMap.h"
 #include "input/joysticks/JoystickTranslator.h"
+#include "input/joysticks/interfaces/IButtonMap.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "utils/StringUtils.h"
 
 #include <algorithm>
@@ -33,7 +24,8 @@ using namespace GAME;
 std::string CGUIDialogAxisDetection::GetDialogText()
 {
   // "Press all analog buttons now to detect them:[CR][CR]%s"
-  std::string dialogText = g_localizeStrings.Get(35020);
+  const std::string& dialogText =
+      CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(35020);
 
   std::vector<std::string> primitives;
 
@@ -43,41 +35,53 @@ std::string CGUIDialogAxisDetection::GetDialogText()
     primitives.emplace_back(JOYSTICK::CJoystickTranslator::GetPrimitiveName(axis));
   }
 
-  return StringUtils::Format(dialogText.c_str(), StringUtils::Join(primitives, " | ").c_str());
+  return StringUtils::Format(dialogText, StringUtils::Join(primitives, " | "));
 }
 
 std::string CGUIDialogAxisDetection::GetDialogHeader()
 {
-  return g_localizeStrings.Get(35058); // "Controller Configuration"
+  return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+      35058); // "Controller Configuration"
 }
 
 bool CGUIDialogAxisDetection::MapPrimitiveInternal(JOYSTICK::IButtonMap* buttonMap,
-                                                   IKeymap* keymap,
+                                                   KEYMAP::IKeymap* keymap,
                                                    const JOYSTICK::CDriverPrimitive& primitive)
 {
   if (primitive.Type() == JOYSTICK::PRIMITIVE_TYPE::SEMIAXIS)
-    AddAxis(buttonMap->DeviceName(), primitive.Index());
+    AddAxis(buttonMap->Location(), primitive.Index());
 
   return true;
 }
 
-void CGUIDialogAxisDetection::OnLateAxis(const JOYSTICK::IButtonMap* buttonMap, unsigned int axisIndex)
+bool CGUIDialogAxisDetection::AcceptsPrimitive(JOYSTICK::PRIMITIVE_TYPE type) const
 {
-  AddAxis(buttonMap->DeviceName(), axisIndex);
+  switch (type)
+  {
+    case JOYSTICK::PRIMITIVE_TYPE::SEMIAXIS:
+      return true;
+    default:
+      break;
+  }
+
+  return false;
 }
 
-void CGUIDialogAxisDetection::AddAxis(const std::string& deviceName, unsigned int axisIndex)
+void CGUIDialogAxisDetection::OnLateAxis(const JOYSTICK::IButtonMap* buttonMap,
+                                         unsigned int axisIndex)
+{
+  AddAxis(buttonMap->Location(), axisIndex);
+}
+
+void CGUIDialogAxisDetection::AddAxis(const std::string& deviceLocation, unsigned int axisIndex)
 {
   auto it = std::find_if(m_detectedAxes.begin(), m_detectedAxes.end(),
-    [&deviceName, axisIndex](const AxisEntry& axis)
-    {
-      return axis.first == deviceName &&
-             axis.second == axisIndex;
-    });
+                         [&deviceLocation, axisIndex](const AxisEntry& axis)
+                         { return axis.first == deviceLocation && axis.second == axisIndex; });
 
   if (it == m_detectedAxes.end())
   {
-    m_detectedAxes.emplace_back(std::make_pair(deviceName, axisIndex));
+    m_detectedAxes.emplace_back(std::make_pair(deviceLocation, axisIndex));
     m_captureEvent.Set();
   }
 }

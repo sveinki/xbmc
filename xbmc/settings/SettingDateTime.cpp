@@ -1,34 +1,29 @@
 /*
- *      Copyright (C) 2017 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2017-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "SettingDateTime.h"
-#include "XBDateTime.h"
 
-CSettingDate::CSettingDate(const std::string &id, CSettingsManager *settingsManager /* = NULL */)
+#include "XBDateTime.h"
+#include "utils/TimeUtils.h"
+
+#include <shared_mutex>
+
+CSettingDate::CSettingDate(const std::string& id, CSettingsManager* settingsManager /* = nullptr */)
   : CSettingString(id, settingsManager)
 { }
 
-CSettingDate::CSettingDate(const std::string &id, int label, const std::string &value, CSettingsManager *settingsManager /* = NULL */)
+CSettingDate::CSettingDate(const std::string& id,
+                           int label,
+                           const std::string& value,
+                           CSettingsManager* settingsManager /* = nullptr */)
   : CSettingString(id, label, value, settingsManager)
 { }
-  
+
 CSettingDate::CSettingDate(const std::string &id, const CSettingDate &setting)
   : CSettingString(id, setting)
 { }
@@ -40,7 +35,7 @@ SettingPtr CSettingDate::Clone(const std::string &id) const
 
 bool CSettingDate::CheckValidity(const std::string &value) const
 {
-  CSharedLock lock(m_critical);
+  std::shared_lock lock(m_critical);
 
   if (!CSettingString::CheckValidity(value))
     return false;
@@ -48,11 +43,24 @@ bool CSettingDate::CheckValidity(const std::string &value) const
   return CDateTime::FromDBDate(value).IsValid();
 }
 
-CSettingTime::CSettingTime(const std::string &id, CSettingsManager *settingsManager /* = NULL */)
+CDateTime CSettingDate::GetDate() const
+{
+  return CDateTime::FromDBDate(GetValue());
+}
+
+bool CSettingDate::SetDate(const CDateTime& date)
+{
+  return SetValue(date.GetAsDBDate());
+}
+
+CSettingTime::CSettingTime(const std::string& id, CSettingsManager* settingsManager /* = nullptr */)
   : CSettingString(id, settingsManager)
 { }
 
-CSettingTime::CSettingTime(const std::string &id, int label, const std::string &value, CSettingsManager *settingsManager /* = NULL */)
+CSettingTime::CSettingTime(const std::string& id,
+                           int label,
+                           const std::string& value,
+                           CSettingsManager* settingsManager /* = nullptr */)
   : CSettingString(id, label, value, settingsManager)
 { }
 
@@ -67,10 +75,20 @@ SettingPtr CSettingTime::Clone(const std::string &id) const
 
 bool CSettingTime::CheckValidity(const std::string &value) const
 {
-  CSharedLock lock(m_critical);
+  std::shared_lock lock(m_critical);
 
   if (!CSettingString::CheckValidity(value))
     return false;
 
   return CDateTime::FromDBTime(value).IsValid();
+}
+
+CDateTime CSettingTime::GetTime() const
+{
+  return CDateTime::FromDBTime(GetValue());
+}
+
+bool CSettingTime::SetTime(const CDateTime& time)
+{
+  return SetValue(CTimeUtils::WithoutSeconds(time.GetAsDBTime()));
 }

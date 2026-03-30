@@ -1,41 +1,55 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
+include ../../Makefile.include GNUTLS-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile ../../download-files.include \
+                              add-dl-as-private-lib.patch \
+                              03-support-correct-cisdigit.patch
 
-# lib name, version
-LIBNAME=gnutls
-VERSION=3.5.10
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.xz
-
-ifeq (darwin, $(findstring darwin, $(HOST)))
-# darwins tar doesn't know about xz - so we need our native version of tar here
-ARCHIVE_TOOL=$(ARCHIVE_TOOL_NATIVE)
-CONFIGURE_HACKS = ac_cv_func_vfork_works=no
-CONFIGURE_HACKS+= ac_cv_func_fork=no
-endif
+# disable rpl_malloc and rpl_realloc symbols in glib
+# causes linking errors in libmicrohttpd and ffmpeg with missing symbols
+# Undefined symbols for architecture arm64:
+#  "_rpl_realloc", referenced from:
+#      _gnutls_realloc in libgnutls.a(mem.o)
+#      _gnutls_realloc_zero in libgnutls.a(init.o)
+#      __asn1_realloc in libgnutls.a(parser_aux.o)
+#      __asn1_ordering_set_of in libgnutls.a(coding.o)
+#      __asn1_realloc in libgnutls.a(decoding.o)
+#      __gnutls_fread_file in libgnutls.a(read-file.o)
+#      _rpl_getdelim in libgnutls.a(getdelim.o)
+#      ...
+CONFIGURE_OPTIONS+= ac_cv_func_malloc_0_nonnull=yes \
+                    ac_cv_func_realloc_0_nonnull=yes
 
 # configuration settings
-CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
-          ./configure --prefix=$(PREFIX) --disable-shared --without-p11-kit --disable-nls --with-included-unistring \
-                      --with-included-libtasn1 --enable-local-libopts --disable-doc --disable-tests $(CONFIGURE_HACKS)
+CONFIGURE=./configure --prefix=$(PREFIX) \
+                      --disable-shared \
+                      --without-p11-kit \
+                      --disable-nls \
+                      --with-included-unistring \
+                      --with-included-libtasn1 \
+                      --enable-local-libopts \
+                      --disable-doc \
+                      --disable-tests \
+                      --disable-guile \
+                      --disable-tools \
+                      --without-idn \
+                      --without-brotli \
+                      --without-zstd \
+                      $(CONFIGURE_OPTIONS)
+
+# LLVM 15 has raised this to error by default. drop back to warning
+CFLAGS+= -Wno-error=implicit-int -Wno-error=implicit-function-declaration -Wno-error=int-conversion 
+export CFLAGS
 
 LIBDYLIB=$(PLATFORM)/lib/.libs/lib$(LIBNAME).a
 
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
-
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM)/*; mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	cd $(PLATFORM); patch -p0 < ../size-max.patch
+	cd $(PLATFORM); patch -p1 -i ../add-dl-as-private-lib.patch
+	cd $(PLATFORM); patch -p1 -i ../03-support-correct-cisdigit.patch
+	cd $(PLATFORM); $(AUTORECONF) -vif
 	cd $(PLATFORM); $(CONFIGURE)
-ifeq (darwin, $(findstring darwin, $(HOST)))
-	cd $(PLATFORM); sed -ie "s/HAVE_GETENTROPY/HAVE_GETENTROPY_NOPE/" config.h
-endif
 
 $(LIBDYLIB): $(PLATFORM)
 	$(MAKE) -C $(PLATFORM)

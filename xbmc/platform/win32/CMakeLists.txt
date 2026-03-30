@@ -1,26 +1,31 @@
 set(SOURCES CharsetConverter.cpp
+            CPUInfoWin32.cpp
+            DisplayUtilsWin32.cpp
+            Environment.cpp
+            GPUInfoWin32.cpp
+            MemUtils.cpp
             MessagePrinter.cpp
-            crts_caller.cpp
             dxerr.cpp
             Filesystem.cpp
             pch.cpp
-            stat_utf8.cpp
-            stdio_utf8.cpp
-            strverscmp.cpp
+            PlatformWin32.cpp
             WIN32Util.cpp
-            WindowHelper.cpp)
+            WindowHelper.cpp
+            XTimeUtils.cpp)
 
 set(HEADERS CharsetConverter.h
-            crts_caller.h
+            CPUInfoWin32.h
             dirent.h
+            DisplayUtilsWin32.h
             dxerr.h
+            GPUInfoWin32.h
             IMMNotificationClient.h
             my_ntddcdrm.h
             my_ntddscsi.h
             netdb.h
             pch.h
             PlatformDefs.h
-            PlatformInclude.h
+            PlatformWin32.h
             resource.h
             unistd.h
             WIN32Util.h

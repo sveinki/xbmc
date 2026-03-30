@@ -1,45 +1,59 @@
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ContextMenuItem.h"
-#include "addons/Addon.h"
-#include "addons/AddonManager.h"
-#include "addons/ContextMenuAddon.h"
-#include "addons/IAddon.h"
+
+#include "FileItem.h"
 #include "GUIInfoManager.h"
+#include "addons/AddonManager.h"
+#include "addons/IAddon.h"
+#include "guilib/GUIComponent.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #ifdef HAS_PYTHON
 #include "interfaces/generic/ScriptInvocationManager.h"
 #include "interfaces/python/ContextItemAddonInvoker.h"
 #include "interfaces/python/XBPython.h"
 #endif
+#include "ServiceBroker.h"
 #include "utils/StringUtils.h"
 
+std::string CStaticContextMenuAction::GetLabel(const CFileItem& item) const
+{
+  return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(m_label);
+}
+
+CContextMenuItem::CContextMenuItem(CGroup groupData)
+  : m_label(std::move(groupData.label)),
+    m_parent(std::move(groupData.parent)),
+    m_groupId(std::move(groupData.groupId)),
+    m_addonId(std::move(groupData.addonId))
+{
+}
+
+CContextMenuItem::CContextMenuItem(CItem itemData)
+  : m_label(std::move(itemData.label)),
+    m_parent(std::move(itemData.parent)),
+    m_library(std::move(itemData.library)),
+    m_addonId(std::move(itemData.addonId)),
+    m_args(std::move(itemData.args)),
+    m_visibilityCondition(std::move(itemData.condition))
+{
+}
 
 bool CContextMenuItem::IsVisible(const CFileItem& item) const
 {
   if (!m_infoBoolRegistered)
   {
-    m_infoBool = g_infoManager.Register(m_visibilityCondition, 0);
+    m_infoBool = CServiceBroker::GetGUI()->GetInfoManager().Register(m_visibilityCondition, 0);
     m_infoBoolRegistered = true;
   }
-  return IsGroup() || (m_infoBool && m_infoBool->Get(&item));
+  return IsGroup() || (m_infoBool && m_infoBool->Get(INFO::DEFAULT_CONTEXT, &item));
 }
 
 bool CContextMenuItem::IsParentOf(const CContextMenuItem& other) const
@@ -52,18 +66,27 @@ bool CContextMenuItem::IsGroup() const
   return !m_groupId.empty();
 }
 
-bool CContextMenuItem::Execute(const CFileItemPtr& item) const
+bool CContextMenuItem::HasParent() const
+{
+  return !m_parent.empty();
+}
+
+bool CContextMenuItem::Execute(const std::shared_ptr<CFileItem>& item) const
 {
   if (!item || m_library.empty() || IsGroup())
     return false;
 
   ADDON::AddonPtr addon;
-  if (!ADDON::CAddonMgr::GetInstance().GetAddon(m_addonId, addon))
+  if (!CServiceBroker::GetAddonMgr().GetAddon(m_addonId, addon, ADDON::OnlyEnabled::CHOICE_YES))
     return false;
 
+  bool reuseLanguageInvoker = false;
+  if (addon->ExtraInfo().contains("reuselanguageinvoker"))
+    reuseLanguageInvoker = addon->ExtraInfo().at("reuselanguageinvoker") == "true";
+
 #ifdef HAS_PYTHON
-  LanguageInvokerPtr invoker(new CContextItemAddonInvoker(&g_pythonParser, item));
-  return (CScriptInvocationManager::GetInstance().ExecuteAsync(m_library, invoker, addon) != -1);
+  auto invoker = std::make_shared<CContextItemAddonInvoker>(&CServiceBroker::GetXBPython(), item);
+  return (CScriptInvocationManager::GetInstance().ExecuteAsync(m_library, invoker, addon, m_args, reuseLanguageInvoker) != -1);
 #else
   return false;
 #endif
@@ -77,38 +100,16 @@ bool CContextMenuItem::operator==(const CContextMenuItem& other) const
   return (IsGroup() == other.IsGroup())
       && (m_parent == other.m_parent)
       && (m_library == other.m_library)
-      && (m_addonId == other.m_addonId);
+      && (m_addonId == other.m_addonId)
+      && (m_args == other.m_args);
 }
 
 std::string CContextMenuItem::ToString() const
 {
   if (IsGroup())
-    return StringUtils::Format("CContextMenuItem[group, id=%s, parent=%s, addon=%s]",
-        m_groupId.c_str(), m_parent.c_str(), m_addonId.c_str());
+    return StringUtils::Format("CContextMenuItem[group, id={}, parent={}, addon={}]", m_groupId,
+                               m_parent, m_addonId);
   else
-    return StringUtils::Format("CContextMenuItem[item, parent=%s, library=%s, addon=%s]",
-        m_parent.c_str(), m_library.c_str(), m_addonId.c_str());
-}
-
-CContextMenuItem CContextMenuItem::CreateGroup(const std::string& label, const std::string& parent,
-    const std::string& groupId, const std::string& addonId)
-{
-  CContextMenuItem menuItem;
-  menuItem.m_label = label;
-  menuItem.m_parent = parent;
-  menuItem.m_groupId = groupId;
-  menuItem.m_addonId = addonId;
-  return menuItem;
-}
-
-CContextMenuItem CContextMenuItem::CreateItem(const std::string& label, const std::string& parent,
-    const std::string& library, const std::string& condition, const std::string& addonId)
-{
-  CContextMenuItem menuItem;
-  menuItem.m_label = label;
-  menuItem.m_parent = parent;
-  menuItem.m_library = library;
-  menuItem.m_visibilityCondition = condition;
-  menuItem.m_addonId = addonId;
-  return menuItem;
+    return StringUtils::Format("CContextMenuItem[item, parent={}, library={}, addon={}]", m_parent,
+                               m_library, m_addonId);
 }

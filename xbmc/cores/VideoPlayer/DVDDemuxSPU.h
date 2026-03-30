@@ -1,25 +1,14 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include <memory>
 #include <stdint.h>
 
 struct AVFrame;
@@ -44,11 +33,13 @@ public:
   CDVDDemuxSPU();
   ~CDVDDemuxSPU();
 
-  CDVDOverlaySpu* AddData(uint8_t* data, int iSize, double pts); // returns a packet from ParsePacket if possible
+  std::shared_ptr<CDVDOverlaySpu> AddData(
+      uint8_t* data, int iSize, double pts); // returns a packet from ParsePacket if possible
 
-  CDVDOverlaySpu* ParseRLE(CDVDOverlaySpu* pSPU, uint8_t* pUnparsedData);
-  static void FindSubtitleColor(int last_color, int stats[4], CDVDOverlaySpu* pSPU);
-  static bool CanDisplayWithAlphas(int a[4], int stats[4]);
+  std::shared_ptr<CDVDOverlaySpu> ParseRLE(std::shared_ptr<CDVDOverlaySpu> pSPU,
+                                           uint8_t* pUnparsedData);
+  static void FindSubtitleColor(int last_color, int stats[4], CDVDOverlaySpu& pSPU);
+  static bool CanDisplayWithAlphas(const int a[4], const int stats[4]);
 
   void Reset();
   void FlushCurrentPacket(); // flushes current unparsed data
@@ -60,7 +51,7 @@ public:
   bool m_bHasClut;
 
 protected:
-  CDVDOverlaySpu* ParsePacket(SPUData* pSPUData);
+  std::shared_ptr<CDVDOverlaySpu> ParsePacket(SPUData* pSPUData);
 
   SPUData m_spuData;
 };

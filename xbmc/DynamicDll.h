@@ -1,27 +1,17 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "cores/DllLoader/LibraryLoader.h"
-#include <string>
+#pragma once
+
 #include "DllPaths.h"
+#include "cores/DllLoader/LibraryLoader.h"
+
+#include <string>
 
 ///////////////////////////////////////////////////////////
 //
@@ -122,8 +112,8 @@ public: \
     typedef result (linkage * name##_METHOD) args; \
   public: \
     union { \
-      name##_METHOD name; \
-      void*         name##_ptr; \
+      name##_METHOD m_##name; \
+      void*         m_##name##_ptr; \
     };
 
 #define DEFINE_METHOD_LINKAGE_BASE(result, linkage, name, args, args2) \
@@ -136,7 +126,7 @@ public: \
   public: \
     virtual result name args override \
     { \
-      return m_##name args2; \
+      return m_##name ? m_##name args2 : (result) 0; \
     }
 
 #define DEFINE_METHOD_LINKAGE0(result, linkage, name) \
@@ -222,8 +212,8 @@ public: \
 //
 //  DEFINE_FUNC_ALIGNED 0-X
 //
-//  Defines a function for an export from a dll, wich
-//  require a aligned stack on function call
+//  Defines a function for an export from a dll, which
+//  requires an aligned stack on function call
 //  Use DEFINE_FUNC_ALIGNED for each function to be resolved.
 //
 //  result:  Result of the function
@@ -243,7 +233,7 @@ public: \
 //    __asm sub esp, [s];
 //    __asm and esp, ~15;
 //    __asm add esp, [s]
-//    m_test(p1, p2, p3);  //return value will still be correct aslong as we don't mess with it
+//    m_test(p1, p2, p3);  //return value will still be correct as long as we don't mess with it
 //    __asm mov esp,[o];
 //  };
 
@@ -375,7 +365,7 @@ public: \
     return false;
 
 #define RESOLVE_METHOD_FP(method) \
-  if (!m_dll->ResolveExport( #method , & method##_ptr )) \
+  if (!m_dll->ResolveExport( #method , & m_##method##_ptr )) \
     return false;
 
 
@@ -392,11 +382,11 @@ public: \
 
 #define RESOLVE_METHOD_OPTIONAL(method) \
    m_##method##_ptr = nullptr; \
-   m_dll->ResolveExport( #method , & m_##method##_ptr );
+   m_dll->ResolveExport( #method , & m_##method##_ptr, false );
 
 #define RESOLVE_METHOD_OPTIONAL_FP(method) \
-   method##_ptr = NULL; \
-   m_dll->ResolveExport( #method , & method##_ptr );
+   m_##method##_ptr = NULL; \
+   m_dll->ResolveExport( #method , & m_##method##_ptr, false );
 
 
 
@@ -413,6 +403,10 @@ public: \
 #define RESOLVE_METHOD_RENAME(dllmethod, method) \
   if (!m_dll->ResolveExport( #dllmethod , & m_##method##_ptr )) \
     return false;
+
+#define RESOLVE_METHOD_RENAME_OPTIONAL(dllmethod, method) \
+  m_##method##_ptr = nullptr; \
+  m_dll->ResolveExport( #dllmethod , & m_##method##_ptr, false );
 
 #define RESOLVE_METHOD_RENAME_FP(dllmethod, method) \
   if (!m_dll->ResolveExport( #dllmethod , & method##_ptr )) \

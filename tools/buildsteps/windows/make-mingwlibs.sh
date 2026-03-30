@@ -8,15 +8,14 @@ RM=/bin/rm
 NOPROMPT=0
 MAKECLEAN=""
 MAKEFLAGS=""
-TOOLS="mingw"
 TRIPLET=""
 
 while true; do
   case $1 in
-    --tools=* ) TOOLS="${1#*=}"; shift ;;
     --build32=* ) build32="${1#*=}"; shift ;;
     --build64=* ) build64="${1#*=}"; shift ;;
     --buildArm=* ) buildArm="${1#*=}"; shift ;;
+    --buildArm64=* ) buildArm64="${1#*=}"; shift ;;
     --prompt=* ) PROMPTLEVEL="${1#*=}"; shift ;;
     --mode=* ) BUILDMODE="${1#*=}"; shift ;;
     --win10=* ) win10="${1#*=}"; shift ;;
@@ -35,6 +34,9 @@ elif [[ $build64 = "yes" ]]; then
 elif [[ $buildArm = "yes" ]]; then
   TRIPLET=arm
   ARCH=arm
+elif [[ $buildArm64 = "yes" ]]; then
+  TRIPLET=arm64
+  ARCH=arm64
 else
   echo "-------------------------------------------------------------------------------"
   echo " none of build types (build32, build64 or buildArm) was specified "
@@ -48,13 +50,13 @@ else
 fi
 
 if [[ $win10 = "no" ]]; then
-  export _WIN32_WINNT=0x0600
-  export NTDDI_VERSION=0x06000000
+  export _WIN32_WINNT=_WIN32_WINNT_WINBLUE
+  export NTDDI_VERSION=NTDDI_WINBLUE
 elif [[ $win10 = "yes" ]]; then
-  TRIPLET=$TRIPLET-uwp
+  TRIPLET=win10-$TRIPLET
 fi
 
-export TRIPLET ARCH TOOLS
+export TRIPLET ARCH
 
 throwerror() {
   $TOUCH $ERRORFILE
@@ -66,8 +68,8 @@ throwerror() {
 
 checkfiles() {
   for i in $@; do
-    if [ ! -f "$PREFIX/bin/$i" ]; then
-      throwerror "$PREFIX/bin/$i"
+    if [ ! -f "$PREFIX/$i" ]; then
+      throwerror "$PREFIX/$i"
       exit 1
     fi
   done
@@ -75,7 +77,7 @@ checkfiles() {
 
 buildProcess() {
 export PREFIX=/xbmc/project/BuildDependencies/mingwlibs/$TRIPLET
-if [ "$(pathChanged $PREFIX /xbmc/tools/buildsteps/windows /xbmc/tools/depends/target/*/*-VERSION)" == "0" ]; then
+if [ "$(pathChanged $PREFIX /xbmc/tools/depends/target/ffmpeg /xbmc/tools/buildsteps/windows /xbmc/tools/depends/target/dav1d/DAV1D-VERSION /xbmc/tools/depends/target/ffmpeg/FFMPEG-VERSION)" == "0" ]; then
   return
 fi
 
@@ -92,7 +94,6 @@ echo
 echo " NOPROMPT  = $NOPROMPT"
 echo " MAKECLEAN = $MAKECLEAN"
 echo " WORKSPACE = $WORKSPACE"
-echo " TOOLCHAIN = $TOOLS"
 echo
 echo "-------------------------------------------------------------------------------"
 
@@ -101,26 +102,15 @@ echo "-------------------------------------------------"
 echo " building FFmpeg $TRIPLET"
 echo "-------------------------------------------------"
 ./buildffmpeg.sh $MAKECLEAN
-checkfiles avcodec-57.dll avformat-57.dll avutil-55.dll postproc-54.dll swscale-4.dll avfilter-6.dll swresample-2.dll
+checkfiles lib/avcodec.lib lib/avformat.lib lib/avutil.lib lib/postproc.lib lib/swscale.lib lib/avfilter.lib lib/swresample.lib
 echo "-------------------------------------------------"
 echo " building of FFmpeg $TRIPLET done..."
 echo "-------------------------------------------------"
-if [[ $win10 != "yes" ]]; then # currently disabled for uwp
-echo -ne "\033]0;building libdvd $TRIPLET\007"
-echo "-------------------------------------------------"
-echo " building libdvd $TRIPLET"
-echo "-------------------------------------------------"
-./buildlibdvd.sh $MAKECLEAN
-checkfiles libdvdcss-2.dll libdvdnav.dll
-echo "-------------------------------------------------"
-echo " building of libdvd $TRIPLET done..."
-echo "-------------------------------------------------"
-fi
 echo "-------------------------------------------------------------------------------"
 echo " compile mingw libs $TRIPLET done..."
 echo "-------------------------------------------------------------------------------"
 
-tagSuccessFulBuild $PREFIX /xbmc/tools/buildsteps/windows /xbmc/tools/depends/target/*/*-VERSION
+tagSuccessFulBuild $PREFIX /xbmc/tools/depends/target/ffmpeg /xbmc/tools/buildsteps/windows /xbmc/tools/depends/target/dav1d/DAV1D-VERSION /xbmc/tools/depends/target/ffmpeg/FFMPEG-VERSION
 }
 
 run_builds() {
@@ -131,6 +121,8 @@ run_builds() {
       profile_path=/local64/etc/profile.local
     elif [[ $buildArm = "yes" ]]; then
       profile_path=/local32/etc/profile.local
+    elif [[ $buildArm64 = "yes" ]]; then
+      profile_path=/localarm64/etc/profile.local
     fi
 
     if [ ! -z $profile_path ]; then
@@ -138,6 +130,7 @@ run_builds() {
           echo "-------------------------------------------------------------------------------"
           echo " $TRIPLET build environment not configured, please run download-msys2.bat"
           echo "-------------------------------------------------------------------------------"
+          exit 1
         else
           source $profile_path
           buildProcess

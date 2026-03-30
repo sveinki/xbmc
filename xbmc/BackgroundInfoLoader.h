@@ -1,34 +1,23 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "threads/Thread.h"
+#pragma once
+
 #include "IProgressCallback.h"
 #include "threads/CriticalSection.h"
+#include "threads/IRunnable.h"
 
-#include <vector>
 #include <memory>
+#include <vector>
 
 class CFileItem; typedef std::shared_ptr<CFileItem> CFileItemPtr;
 class CFileItemList;
+class CThread;
 
 class IBackgroundLoaderObserver
 {
@@ -48,26 +37,29 @@ public:
   void Run() override;
   void SetObserver(IBackgroundLoaderObserver* pObserver);
   void SetProgressCallback(IProgressCallback* pCallback);
-  virtual bool LoadItem(CFileItem* pItem) { return false; };
-  virtual bool LoadItemCached(CFileItem* pItem) { return false; };
-  virtual bool LoadItemLookup(CFileItem* pItem) { return false; };
+  virtual bool LoadItem(CFileItem* pItem) { return false; }
+  virtual bool LoadItemCached(CFileItem* pItem) { return false; }
+  virtual bool LoadItemLookup(CFileItem* pItem) { return false; }
 
   void StopThread(); // will actually stop the loader thread.
   void StopAsync();  // will ask loader to stop as soon as possible, but not block
 
 protected:
-  virtual void OnLoaderStart() {};
-  virtual void OnLoaderFinish() {};
+  virtual void OnLoaderStart() {}
+  virtual void OnLoaderFinish() {}
 
-  CFileItemList *m_pVecItems;
+  CFileItemList* m_pVecItems{nullptr};
   std::vector<CFileItemPtr> m_vecItems; // FileItemList would delete the items and we only want to keep a reference.
   CCriticalSection m_lock;
 
-  volatile bool m_bIsLoading;
-  volatile bool m_bStop;
-  CThread *m_thread;
+  volatile bool m_bIsLoading{false};
+  volatile bool m_bStop{true};
+  std::unique_ptr<CThread> m_thread{};
 
-  IBackgroundLoaderObserver* m_pObserver;
-  IProgressCallback* m_pProgressCallback;
+  IBackgroundLoaderObserver* m_pObserver{nullptr};
+  IProgressCallback* m_pProgressCallback{nullptr};
+
+private:
+  void Reset();
 };
 

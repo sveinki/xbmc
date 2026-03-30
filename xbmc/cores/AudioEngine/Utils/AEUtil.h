@@ -1,47 +1,24 @@
-#pragma once
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "AEAudioFormat.h"
-#include "PlatformDefs.h"
+
+#include <atomic>
 #include <math.h>
 
+#include "PlatformDefs.h"
+
 extern "C" {
-#include "libavutil/samplefmt.h"
+#include <libavutil/channel_layout.h>
+#include <libavutil/samplefmt.h>
 }
-
-#if defined(HAVE_SSE) && defined(__SSE__)
-#include <xmmintrin.h>
-#else
-#define __m128 void
-#endif
-
-#if defined(HAVE_SSE2) && defined(__SSE2__)
-#include <emmintrin.h>
-#endif
-
-#ifdef __GNUC__
-  #define MEMALIGN(b, x) x __attribute__((aligned(b)))
-#else
-  #define MEMALIGN(b, x) __declspec(align(b)) x
-#endif
 
 // AV sync options
 enum AVSync
@@ -52,18 +29,12 @@ enum AVSync
 
 struct AEDelayStatus
 {
-  AEDelayStatus()
-  : delay(0.0)
-  , maxcorrection(0.0)
-  , tick(0)
-  {}
-
   void   SetDelay(double d);
-  double GetDelay();
+  double GetDelay() const;
 
-  double delay;  // delay in sink currently
-  double maxcorrection; // time correction must not be greater than sink delay
-  int64_t tick;  // timestamp when delay was calculated
+  double delay = 0.0;  // delay in sink currently
+  double maxcorrection = 0.0; // time correction must not be greater than sink delay
+  int64_t tick = 0;  // timestamp when delay was calculated
 };
 
 /**
@@ -86,18 +57,13 @@ struct AEDelayStatus
 class CAESpinSection
 {
 public:
-  CAESpinSection()
-  : m_enter(0)
-  , m_leave(0)
-  {}
-
   void enter() { m_enter++; }
-  void leave() { m_leave = m_enter; }
+  void leave() { m_leave.store(m_enter); }
 
 protected:
   friend class CAESpinLock;
-  volatile unsigned int m_enter;
-  volatile unsigned int m_leave;
+  std::atomic_uint32_t m_enter = 0;
+  std::atomic_uint32_t m_leave = 0;
 };
 
 class CAESpinLock
@@ -128,10 +94,6 @@ private:
 class CAEUtil
 {
 private:
-  static unsigned int m_seed;
-  #if defined(HAVE_SSE2) && defined(__SSE2__)
-    static __m128i m_sseSeed;
-  #endif
 
   static float SoftClamp(const float x);
 
@@ -178,10 +140,10 @@ public:
    */
   static inline float GainToScale(const float dB)
   {
-    float val = 0.0f; 
+    float val = 0.0f;
     // we need to make sure that our lowest db returns plain zero
-    if (dB > -60.0f) 
-      val = pow(10.0f, dB/20); 
+    if (dB > -60.0f)
+      val = pow(10.0f, dB/20);
 
     // in order to not introduce computing overhead for nearly zero
     // values of dB e.g. -0.01 or -0.001 we clamp to top
@@ -213,6 +175,11 @@ public:
   static uint64_t GetAVChannelLayout(const CAEChannelInfo &info);
   static CAEChannelInfo GetAEChannelLayout(uint64_t layout);
   static AVSampleFormat GetAVSampleFormat(AEDataFormat format);
-  static uint64_t GetAVChannel(enum AEChannel aechannel);
+  static uint64_t GetAVChannelMask(enum AEChannel aechannel);
+  static enum AVChannel GetAVChannel(enum AEChannel aechannel);
   static int GetAVChannelIndex(enum AEChannel aechannel, uint64_t layout);
+  static void GenerateSilence(AEDataFormat format,
+                              unsigned int frameSize,
+                              void* buffer,
+                              unsigned int frames);
 };

@@ -1,35 +1,20 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <algorithm>
 #include "DDSImage.h"
-#include "XBTF.h"
-#include "utils/log.h"
-#include <string.h>
 
-#ifndef NO_XBMC_FILESYSTEM
+#include "XBTF.h"
 #include "filesystem/File.h"
+#include "utils/log.h"
+
+#include <algorithm>
+#include <string.h>
 using namespace XFILE;
-#else
-#include "SimpleFS.h"
-#endif
 
 CDDSImage::CDDSImage()
 {
@@ -37,7 +22,7 @@ CDDSImage::CDDSImage()
   memset(&m_desc, 0, sizeof(m_desc));
 }
 
-CDDSImage::CDDSImage(unsigned int width, unsigned int height, unsigned int format)
+CDDSImage::CDDSImage(unsigned int width, unsigned int height, XB_FMT format)
 {
   m_data = NULL;
   Allocate(width, height, format);
@@ -58,10 +43,10 @@ unsigned int CDDSImage::GetHeight() const
   return m_desc.height;
 }
 
-unsigned int CDDSImage::GetFormat() const
+XB_FMT CDDSImage::GetFormat() const
 {
   if (m_desc.pixelFormat.flags & DDPF_RGB)
-    return 0; // Not supported
+    return XB_FMT_UNKNOWN; // Not supported
   if (m_desc.pixelFormat.flags & DDPF_FOURCC)
   {
     if (strncmp((const char *)&m_desc.pixelFormat.fourcc, "DXT1", 4) == 0)
@@ -73,7 +58,7 @@ unsigned int CDDSImage::GetFormat() const
     if (strncmp((const char *)&m_desc.pixelFormat.fourcc, "ARGB", 4) == 0)
       return XB_FMT_A8R8G8B8;
   }
-  return 0;
+  return XB_FMT_UNKNOWN;
 }
 
 unsigned int CDDSImage::GetSize() const
@@ -108,14 +93,16 @@ bool CDDSImage::ReadFile(const std::string &inputFile)
     return false;
 
   // and read it in
-  if (file.Read(m_data, m_desc.linearSize) != m_desc.linearSize)
+  if (file.Read(m_data, m_desc.linearSize) != static_cast<ssize_t>(m_desc.linearSize))
     return false;
 
   file.Close();
   return true;
 }
 
-unsigned int CDDSImage::GetStorageRequirements(unsigned int width, unsigned int height, unsigned int format)
+unsigned int CDDSImage::GetStorageRequirements(unsigned int width,
+                                               unsigned int height,
+                                               XB_FMT format)
 {
   switch (format)
   {
@@ -130,7 +117,7 @@ unsigned int CDDSImage::GetStorageRequirements(unsigned int width, unsigned int 
   }
 }
 
-void CDDSImage::Allocate(unsigned int width, unsigned int height, unsigned int format)
+void CDDSImage::Allocate(unsigned int width, unsigned int height, XB_FMT format)
 {
   memset(&m_desc, 0, sizeof(m_desc));
   m_desc.size = sizeof(m_desc);
@@ -146,7 +133,7 @@ void CDDSImage::Allocate(unsigned int width, unsigned int height, unsigned int f
   m_data = new unsigned char[m_desc.linearSize];
 }
 
-const char *CDDSImage::GetFourCC(unsigned int format)
+const char* CDDSImage::GetFourCC(XB_FMT format)
 {
   switch (format)
   {

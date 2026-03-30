@@ -1,26 +1,19 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "IDirectory.h"
 #include "MediaSource.h"
+#include "threads/IRunnable.h"
+
+#include <memory>
+#include <string>
 
 namespace XFILE
 {
@@ -35,40 +28,59 @@ namespace XFILE
     CVirtualDirectory(void);
     ~CVirtualDirectory(void) override;
     bool GetDirectory(const CURL& url, CFileItemList &items) override;
-    bool GetDirectory(const CURL& url, CFileItemList &items, bool bUseFileDirectories);
-    void SetSources(const VECSOURCES& vecSources);
-    inline unsigned int GetNumberOfSources() 
-    {
-      return m_vecSources.size();
-    }
+    void CancelDirectory() override;
+    bool GetDirectory(const CURL& url, CFileItemList &items, bool bUseFileDirectories, bool keepImpl);
+    void SetSources(const std::vector<CMediaSource>& sources);
+    inline unsigned int GetNumberOfSources() { return static_cast<uint32_t>(m_sources.size()); }
 
-    bool IsSource(const std::string& strPath, VECSOURCES *sources = NULL, std::string *name = NULL) const;
+    bool IsSource(const std::string& strPath,
+                  std::vector<CMediaSource>* sources = NULL,
+                  std::string* name = NULL) const;
     bool IsInSource(const std::string& strPath) const;
 
-    inline const CMediaSource& operator [](const int index) const
-    {
-      return m_vecSources[index];
-    }
+    inline const CMediaSource& operator[](const int index) const { return m_sources[index]; }
 
-    inline CMediaSource& operator[](const int index)
-    {
-      return m_vecSources[index];
-    }
+    inline CMediaSource& operator[](const int index) { return m_sources[index]; }
 
-    void GetSources(VECSOURCES &sources) const;
+    void GetSources(std::vector<CMediaSource>& sources) const;
 
-    void AllowNonLocalSources(bool allow) { m_allowNonLocalSources = allow; };
+    void AllowNonLocalSources(bool allow) { m_allowNonLocalSources = allow; }
 
-    /*! \brief Set whether we allow threaded loading of directories.
-     The default is to allow threading, so this can be used to disable it.
-     \param allowThreads if true we allow threads, if false we don't.
-     */
-    void SetAllowThreads(bool allowThreads) { m_allowThreads = allowThreads; };
+    std::shared_ptr<IDirectory> GetDirImpl() { return m_pDir; }
+    void ReleaseDirImpl() { m_pDir.reset(); }
+
   protected:
     void CacheThumbs(CFileItemList &items);
 
-    VECSOURCES m_vecSources;
-    bool       m_allowNonLocalSources;
-    bool       m_allowThreads;
+    std::vector<CMediaSource> m_sources;
+    bool m_allowNonLocalSources;
+    std::shared_ptr<IDirectory> m_pDir;
+  };
+
+  class CGetDirectoryItems final : public IRunnable
+  {
+  public:
+    CGetDirectoryItems(
+        CVirtualDirectory& dir, const CURL& url, CFileItemList& items, bool useDir, bool keepImpl)
+      : m_dir(dir),
+        m_url(url),
+        m_items(items),
+        m_useDir(useDir),
+        m_keepImpl(keepImpl)
+    {
+    }
+
+    void Run() override { m_result = m_dir.GetDirectory(m_url, m_items, m_useDir, m_keepImpl); }
+    void Cancel() override { m_dir.CancelDirectory(); }
+
+    bool GetResult() const { return m_result; }
+
+  private:
+    CVirtualDirectory& m_dir;
+    const CURL& m_url;
+    CFileItemList& m_items;
+    bool m_useDir{false};
+    bool m_result{false};
+    bool m_keepImpl{false};
   };
 }

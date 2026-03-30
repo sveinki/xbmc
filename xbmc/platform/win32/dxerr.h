@@ -1,25 +1,24 @@
-//--------------------------------------------------------------------------------------
-// File: DXErr.h
-//
-// DirectX Error Library
-//
-// THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
-// ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-// THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
-// PARTICULAR PURPOSE.
-//
-// Copyright (c) Microsoft Corporation. All rights reserved.
-//--------------------------------------------------------------------------------------
+/*
+ *  File: DXErr.h
+ *
+ *  DirectX Error Library
+ *
+ *  Copyright (C) Microsoft Corporation. All rights reserved.
+ *
+ *  SPDX-License-Identifier: MIT
+ *  See LICENSES/README.md for more information.
+ *
+ *  source https://github.com/microsoft/DXUT/blob/main/Core/dxerr.h
+ *  last synchronized 2024-10-15
+ */
+
+// clang-format off
 
 // This version only supports UNICODE.
 
 #pragma once
 
-#if !defined(NOMINMAX)
-#define NOMINMAX
-#endif
-
-#include <windows.h>
+#include <Windows.h>
 #include <sal.h>
 
 #ifdef __cplusplus
@@ -66,9 +65,17 @@ HRESULT WINAPI DXTraceW( _In_z_ const WCHAR* strFile, _In_ DWORD dwLine, _In_ HR
 //
 //--------------------------------------------------------------------------------------
 #if defined(DEBUG) || defined(_DEBUG)
+#ifdef _MSC_VER
 #define DXTRACE_MSG(str)              DXTrace( __FILEW__, (DWORD)__LINE__, 0, str, false )
 #define DXTRACE_ERR(str,hr)           DXTrace( __FILEW__, (DWORD)__LINE__, hr, str, false )
 #define DXTRACE_ERR_MSGBOX(str,hr)    DXTrace( __FILEW__, (DWORD)__LINE__, hr, str, true )
+#else
+#define DXUT_PASTE(x, y) x##y
+#define DXUT_MAKEWIDE(x) DXUT_PASTE(L,x)
+#define DXTRACE_MSG(str)              DXTrace( DXUT_MAKEWIDE(__FILE__), (DWORD)__LINE__, 0, str, false )
+#define DXTRACE_ERR(str,hr)           DXTrace( DXUT_MAKEWIDE(__FILE__), (DWORD)__LINE__, hr, str, false )
+#define DXTRACE_ERR_MSGBOX(str,hr)    DXTrace( DXUT_MAKEWIDE(__FILE__), (DWORD)__LINE__, hr, str, true )
+#endif
 #else
 #define DXTRACE_MSG(str)              (0L)
 #define DXTRACE_ERR(str,hr)           (hr)

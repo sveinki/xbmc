@@ -1,29 +1,19 @@
-if(X_FOUND)
+if(TARGET ${APP_NAME_LC}::X)
   set(USE_X11 1)
 else()
   set(USE_X11 0)
 endif()
-if(OPENGL_FOUND)
-  set(USE_OPENGL 1)
-else()
-  set(USE_OPENGL 0)
-endif()
-if(OPENGLES_FOUND)
-  set(USE_OPENGLES 1)
-else()
-  set(USE_OPENGLES 0)
-endif()
 
 # CMake config
+set(APP_BINARY ${APP_NAME_LC}${APP_BINARY_SUFFIX})
 set(APP_PREFIX ${prefix})
 set(APP_LIB_DIR ${libdir}/${APP_NAME_LC})
 set(APP_DATA_DIR ${datarootdir}/${APP_NAME_LC})
 set(APP_INCLUDE_DIR ${includedir}/${APP_NAME_LC})
-set(CXX11_SWITCH "-std=c++11")
 
 # Set XBMC_STANDALONE_SH_PULSE so we can insert PulseAudio block into kodi-standalone
 if(EXISTS ${CMAKE_SOURCE_DIR}/tools/Linux/kodi-standalone.sh.pulse)
-  if(ENABLE_PULSEAUDIO AND PULSEAUDIO_FOUND)
+  if(ENABLE_PULSEAUDIO AND TARGET ${APP_NAME_LC}::PulseAudio)
     file(READ "${CMAKE_SOURCE_DIR}/tools/Linux/kodi-standalone.sh.pulse" pulse_content)
     set(XBMC_STANDALONE_SH_PULSE ${pulse_content})
   endif()
@@ -39,6 +29,10 @@ configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi-standalone.sh.in
 configure_file(${CMAKE_SOURCE_DIR}/cmake/KodiConfig.cmake.in
                ${CORE_BUILD_DIR}/scripts/${APP_NAME}Config.cmake @ONLY)
 
+# Configure gbm session entry
+configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi-gbm-session.desktop.in
+               ${CORE_BUILD_DIR}/${APP_NAME_LC}-gbm-session.desktop @ONLY)
+
 # Configure xsession entry
 configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi-xsession.desktop.in
                ${CORE_BUILD_DIR}/${APP_NAME_LC}-xsession.desktop @ONLY)
@@ -47,11 +41,15 @@ configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi-xsession.desktop.in
 configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi.desktop.in
                ${CORE_BUILD_DIR}/${APP_NAME_LC}.desktop @ONLY)
 
+# Configure metainfo
+configure_file(${CMAKE_SOURCE_DIR}/tools/Linux/kodi.metainfo.xml.in
+               ${CORE_BUILD_DIR}/${APP_PACKAGE}.metainfo.xml @ONLY)
+
 # Install app
 install(TARGETS ${APP_NAME_LC}
         DESTINATION ${libdir}/${APP_NAME_LC}
         COMPONENT kodi-bin)
-if(X_FOUND AND XRANDR_FOUND)
+if(TARGET ${APP_NAME_LC}::X AND TARGET ${APP_NAME_LC}::XRandR)
   install(TARGETS ${APP_NAME_LC}-xrandr
           DESTINATION ${libdir}/${APP_NAME_LC}
           COMPONENT kodi-bin)
@@ -81,6 +79,12 @@ foreach(file ${install_data})
           COMPONENT kodi)
 endforeach()
 
+# Install gbm session entry
+install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/${APP_NAME_LC}-gbm-session.desktop
+        RENAME ${APP_NAME_LC}-gbm.desktop
+        DESTINATION ${datarootdir}/wayland-sessions
+        COMPONENT kodi)
+
 # Install xsession entry
 install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/${APP_NAME_LC}-xsession.desktop
         RENAME ${APP_NAME_LC}.desktop
@@ -90,6 +94,11 @@ install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/${APP_NAME_LC}-xsession.desk
 # Install desktop entry
 install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/${APP_NAME_LC}.desktop
         DESTINATION ${datarootdir}/applications
+        COMPONENT kodi)
+
+# Install metainfo
+install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/${APP_PACKAGE}.metainfo.xml
+        DESTINATION ${datarootdir}/metainfo
         COMPONENT kodi)
 
 # Install icons
@@ -125,12 +134,22 @@ install(FILES ${CMAKE_SOURCE_DIR}/tools/Linux/packaging/media/icon256x256.png
         RENAME ${APP_NAME_LC}.png
         DESTINATION ${datarootdir}/icons/hicolor/256x256/apps
         COMPONENT kodi)
+install(FILES ${CMAKE_SOURCE_DIR}/tools/Linux/packaging/media/iconScalable.svg
+        RENAME ${APP_NAME_LC}.svg
+        DESTINATION ${datarootdir}/icons/hicolor/scalable/apps
+        COMPONENT kodi)
+
+# Install firewalld service definitions
+install(FILES ${CMAKE_SOURCE_DIR}/tools/Linux/firewalld-services/kodi-eventserver.xml
+              ${CMAKE_SOURCE_DIR}/tools/Linux/firewalld-services/kodi-http.xml
+              ${CMAKE_SOURCE_DIR}/tools/Linux/firewalld-services/kodi-jsonrpc.xml
+        DESTINATION ${prefix}/lib/firewalld/services
+        COMPONENT kodi)
 
 # Install docs
-install(FILES ${CMAKE_SOURCE_DIR}/copying.txt
-              ${CMAKE_SOURCE_DIR}/LICENSE.GPL
+install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.md
               ${CMAKE_SOURCE_DIR}/version.txt
-              ${CMAKE_SOURCE_DIR}/docs/README.linux
+              ${CMAKE_SOURCE_DIR}/docs/README.Linux.md
         DESTINATION ${docdir}
         COMPONENT kodi)
 
@@ -139,35 +158,31 @@ install(FILES ${CMAKE_SOURCE_DIR}/privacy-policy.txt
         COMPONENT kodi)
 
 # Install kodi-tools-texturepacker
-if(NOT WITH_TEXTUREPACKER)
-  install(PROGRAMS $<TARGET_FILE:TexturePacker::TexturePacker>
+if(INTERNAL_TEXTUREPACKER_INSTALLABLE)
+  install(PROGRAMS $<TARGET_FILE:TexturePacker::TexturePacker::Installable>
           DESTINATION ${bindir}
+          RENAME "${APP_NAME_LC}-TexturePacker"
           COMPONENT kodi-tools-texturepacker)
 endif()
 
 # Install kodi-addon-dev headers
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/xbmc/addons/kodi-addon-dev-kit/include/kodi/
+include(${CMAKE_SOURCE_DIR}/xbmc/addons/AddonBindings.cmake)
+install(DIRECTORY ${CORE_ADDON_BINDINGS_DIRS}/
         DESTINATION ${includedir}/${APP_NAME_LC}
         COMPONENT kodi-addon-dev
         REGEX ".txt" EXCLUDE)
 
-install(FILES ${CMAKE_SOURCE_DIR}/xbmc/cores/VideoPlayer/DVDDemuxers/DVDDemuxPacket.h
-              ${CMAKE_SOURCE_DIR}/xbmc/cores/VideoPlayer/DVDDemuxers/DemuxCrypto.h
-              ${CMAKE_SOURCE_DIR}/xbmc/cores/AudioEngine/Utils/AEChannelData.h
-              ${CMAKE_SOURCE_DIR}/xbmc/filesystem/IFileTypes.h
-              ${CMAKE_SOURCE_DIR}/xbmc/input/ActionIDs.h
-              ${CMAKE_SOURCE_DIR}/xbmc/input/XBMC_vkeys.h
+install(FILES ${CORE_ADDON_BINDINGS_FILES}
         DESTINATION ${includedir}/${APP_NAME_LC}
         COMPONENT kodi-addon-dev)
 
 # Install kodi-addon-dev add-on bindings
-install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/scripts/${APP_NAME}Config.cmake
-              ${CMAKE_SOURCE_DIR}/cmake/scripts/common/AddonHelpers.cmake
+install(FILES ${CMAKE_SOURCE_DIR}/cmake/scripts/common/AddonHelpers.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/AddOptions.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/ArchSetup.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/CheckCommits.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/CheckTargetPlatform.cmake
-              ${CMAKE_SOURCE_DIR}/cmake/scripts/common/GenerateVersionedFiles.cmake
+              ${CMAKE_SOURCE_DIR}/cmake/scripts/common/GenerateCompileInfo.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/GeneratorSetup.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/HandleDepends.cmake
               ${CMAKE_SOURCE_DIR}/cmake/scripts/common/Macros.cmake
@@ -176,9 +191,15 @@ install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/scripts/${APP_NAME}Config.cm
               ${CMAKE_SOURCE_DIR}/cmake/scripts/linux/PathSetup.cmake
         DESTINATION ${datarootdir}/${APP_NAME_LC}/cmake
         COMPONENT kodi-addon-dev)
+# ${APP_NAME}Config.cmake contains architecture-specific paths so it
+# should be installed in ${libdir}/${APP_NAME_LC}/${dir}
+install(FILES ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/scripts/${APP_NAME}Config.cmake
+        DESTINATION ${libdir}/${APP_NAME_LC}/cmake
+        COMPONENT kodi-addon-dev)
 
 if(ENABLE_EVENTCLIENTS)
-  execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "from distutils.sysconfig import get_python_lib; print get_python_lib(prefix='')"
+  find_package(PythonInterpreter REQUIRED ${SEARCH_QUIET})
+  execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "from sysconfig import get_path; print(get_path('platlib', scheme='posix_prefix', vars={'platbase':'${CMAKE_INSTALL_PREFIX}'}))"
                   OUTPUT_VARIABLE PYTHON_LIB_PATH OUTPUT_STRIP_TRAILING_WHITESPACE)
   # Install kodi-eventclients-common BT python files
   install(PROGRAMS ${CMAKE_SOURCE_DIR}/tools/EventClients/lib/python/bt/__init__.py
@@ -197,10 +218,10 @@ if(ENABLE_EVENTCLIENTS)
           COMPONENT kodi-eventclients-common)
 
   # Install kodi-eventclients-common python files
-  file(WRITE ${CMAKE_BINARY_DIR}/packages/deb/defs.py ICON_PATH="usr/share/pixmaps/${APP_NAME_LC}/")
+  file(WRITE ${CMAKE_BINARY_DIR}/packages/deb/defs.py ICON_PATH="/usr/share/pixmaps/${APP_NAME_LC}/")
   install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/deb/defs.py
                    ${CMAKE_SOURCE_DIR}/tools/EventClients/lib/python/__init__.py
-                   "${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/PS3 BD Remote/ps3_remote.py"
+                   ${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/PS3BDRemote/ps3_remote.py
                    ${CMAKE_SOURCE_DIR}/tools/EventClients/lib/python/xbmcclient.py
                    ${CMAKE_SOURCE_DIR}/tools/EventClients/lib/python/zeroconf.py
           DESTINATION ${PYTHON_LIB_PATH}/${APP_NAME_LC}
@@ -249,23 +270,23 @@ if(ENABLE_EVENTCLIENTS)
           COMPONENT kodi-eventclients-dev)
 
   # Install kodi-eventclients-ps3
-  install(PROGRAMS "${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/PS3 BD Remote/ps3_remote.py"
+  install(PROGRAMS ${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/PS3BDRemote/ps3_remote.py
           RENAME ${APP_NAME_LC}-ps3remote
           DESTINATION ${bindir}
           COMPONENT kodi-eventclients-ps3)
 
-  if(BLUETOOTH_FOUND AND CWIID_FOUND)
+  if(TARGET ${APP_NAME_LC}::Bluetooth AND TARGET ${APP_NAME_LC}::CWiid AND TARGET ${APP_NAME_LC}::GLU)
     # Install kodi-eventclients-wiiremote
     install(PROGRAMS ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/WiiRemote/${APP_NAME_LC}-wiiremote
             DESTINATION ${bindir}
             COMPONENT kodi-eventclients-wiiremote)
   endif()
 
-  # Install kodi-eventclients-xbmc-send
-  install(PROGRAMS "${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/Kodi Send/kodi-send.py"
+  # Install kodi-eventclients-kodi-send
+  install(PROGRAMS ${CMAKE_SOURCE_DIR}/tools/EventClients/Clients/KodiSend/kodi-send.py
           RENAME ${APP_NAME_LC}-send
           DESTINATION ${bindir}
-          COMPONENT kodi-eventclients-xbmc-send)
+          COMPONENT kodi-eventclients-kodi-send)
 endif()
 
 # Install XBT skin files
@@ -310,4 +331,8 @@ if(CPACK_GENERATOR)
   else()
     message(FATAL_ERROR "DEB Generator: Can't configure CPack to generate Debian packages on non-linux systems.")
   endif()
+endif()
+
+if("webos" IN_LIST CORE_PLATFORM_NAME_LC)
+  include(${CMAKE_SOURCE_DIR}/cmake/scripts/webos/Install.cmake)
 endif()

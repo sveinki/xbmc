@@ -1,50 +1,47 @@
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialogMediaSource.h"
-#include "ServiceBroker.h"
-#include "guilib/GUIKeyboardFactory.h"
+
+#include "FileItem.h"
+#include "FileItemList.h"
 #include "GUIDialogFileBrowser.h"
-#include "video/windows/GUIWindowVideoBase.h"
-#include "music/windows/GUIWindowMusicBase.h"
-#include "guilib/GUIWindowManager.h"
-#include "input/Key.h"
+#include "GUIDialogYesNo.h"
+#include "PasswordManager.h"
+#include "ServiceBroker.h"
+#include "URL.h"
 #include "Util.h"
-#include "utils/URIUtils.h"
-#include "utils/StringUtils.h"
-#include "utils/Variant.h"
 #include "filesystem/Directory.h"
 #include "filesystem/PVRDirectory.h"
-#include "GUIDialogYesNo.h"
-#include "FileItem.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIKeyboardFactory.h"
+#include "guilib/GUIWindowManager.h"
+#include "input/actions/ActionIDs.h"
+#include "music/windows/GUIWindowMusicBase.h"
+#include "pvr/recordings/PVRRecordingsPath.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/MediaSourceSettings.h"
 #include "settings/Settings.h"
-#include "guilib/LocalizeStrings.h"
-#include "PasswordManager.h"
-#include "URL.h"
-#include "pvr/recordings/PVRRecordingsPath.h"
+#include "settings/SettingsComponent.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+#include "utils/Variant.h"
+#include "video/windows/GUIWindowVideoBase.h"
 
 #if defined(TARGET_ANDROID)
-#include "platform/android/activity/XBMCApp.h"
-#include "filesystem/File.h"
+#include "utils/FileUtils.h"
+
+#include "platform/android/storage/AndroidStorageProvider.h"
+#endif
+
+#ifdef TARGET_WINDOWS_STORE
+#include "platform/win10/filesystem/WinLibraryDirectory.h"
 #endif
 
 using namespace XFILE;
@@ -61,8 +58,6 @@ using namespace XFILE;
 
 CGUIDialogMediaSource::CGUIDialogMediaSource(void)
     : CGUIDialog(WINDOW_DIALOG_MEDIA_SOURCE, "DialogMediaSource.xml")
-    , m_confirmed(false)
-    , m_bNameChanged(false)
 {
   m_paths = new CFileItemList;
   m_loadType = KEEP_IN_MEMORY;
@@ -132,7 +127,7 @@ bool CGUIDialogMediaSource::OnMessage(CGUIMessage& message)
 // \return True if the media source is added, false otherwise.
 bool CGUIDialogMediaSource::ShowAndAddMediaSource(const std::string &type)
 {
-  CGUIDialogMediaSource *dialog = g_windowManager.GetWindow<CGUIDialogMediaSource>(WINDOW_DIALOG_MEDIA_SOURCE);
+  CGUIDialogMediaSource *dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogMediaSource>(WINDOW_DIALOG_MEDIA_SOURCE);
   if (!dialog) return false;
   dialog->Initialize();
   dialog->SetShare(CMediaSource());
@@ -140,29 +135,17 @@ bool CGUIDialogMediaSource::ShowAndAddMediaSource(const std::string &type)
   dialog->Open();
   bool confirmed(dialog->IsConfirmed());
   if (confirmed)
-  { // yay, add this share
+  {
+    // Add this media source
+    // Get unique source name
+    std::string strName = dialog->GetUniqueMediaSourceName();
+
     CMediaSource share;
-    unsigned int i, j = 2;
-    bool bConfirmed = false;
-    VECSOURCES* pShares = CMediaSourceSettings::GetInstance().GetSources(type);
-    std::string strName = dialog->m_name;
-    while (!bConfirmed)
-    {
-      for (i = 0;i<pShares->size();++i)
-      {
-        if (StringUtils::EqualsNoCase((*pShares)[i].strName, strName))
-          break;
-      }
-      if (i < pShares->size()) // found a match -  try next
-        strName = StringUtils::Format("%s (%i)", dialog->m_name.c_str(), j++);
-      else
-        bConfirmed = true;
-    }
-    share.FromNameAndPaths(type, strName, dialog->GetPaths());
-    if (dialog->m_paths->Size() > 0) {
+    share.FromNameAndPaths(strName, dialog->GetPaths());
+    if (dialog->m_paths->Size() > 0)
       share.m_strThumbnailImage = dialog->m_paths->Get(0)->GetArt("thumb");
-    }
     CMediaSourceSettings::GetInstance().AddShare(type, share);
+    OnMediaSourceChanged(type, "", share);
   }
   dialog->m_paths->Clear();
   return confirmed;
@@ -170,7 +153,7 @@ bool CGUIDialogMediaSource::ShowAndAddMediaSource(const std::string &type)
 
 bool CGUIDialogMediaSource::ShowAndEditMediaSource(const std::string &type, const std::string&share)
 {
-  VECSOURCES* pShares = CMediaSourceSettings::GetInstance().GetSources(type);
+  std::vector<CMediaSource>* pShares = CMediaSourceSettings::GetInstance().GetSources(type);
   if (pShares)
   {
     for (unsigned int i = 0;i<pShares->size();++i)
@@ -185,7 +168,7 @@ bool CGUIDialogMediaSource::ShowAndEditMediaSource(const std::string &type, cons
 bool CGUIDialogMediaSource::ShowAndEditMediaSource(const std::string &type, const CMediaSource &share)
 {
   std::string strOldName = share.strName;
-  CGUIDialogMediaSource *dialog = g_windowManager.GetWindow<CGUIDialogMediaSource>(WINDOW_DIALOG_MEDIA_SOURCE);
+  CGUIDialogMediaSource *dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogMediaSource>(WINDOW_DIALOG_MEDIA_SOURCE);
   if (!dialog) return false;
   dialog->Initialize();
   dialog->SetShare(share);
@@ -193,45 +176,75 @@ bool CGUIDialogMediaSource::ShowAndEditMediaSource(const std::string &type, cons
   dialog->Open();
   bool confirmed(dialog->IsConfirmed());
   if (confirmed)
-  { // yay, add this share
-    unsigned int i, j = 2;
-    bool bConfirmed = false;
-    VECSOURCES* pShares = CMediaSourceSettings::GetInstance().GetSources(type);
-    std::string strName = dialog->m_name;
-    while (!bConfirmed)
-    {
-      for (i = 0;i<pShares->size();++i)
-      {
-        if (StringUtils::EqualsNoCase((*pShares)[i].strName, strName))
-          break;
-      }
-      if (i < pShares->size() && (*pShares)[i].strName != strOldName) // found a match -  try next
-        strName = StringUtils::Format("%s (%i)", dialog->m_name.c_str(), j++);
-      else
-        bConfirmed = true;
-    }
+  {
+    // Update media source
+    // Get unique new source name when changed
+    std::string strName(dialog->m_name);
+    if (!StringUtils::EqualsNoCase(dialog->m_name, strOldName))
+      strName = dialog->GetUniqueMediaSourceName();
 
     CMediaSource newShare;
-    newShare.FromNameAndPaths(type, strName, dialog->GetPaths());
+    newShare.FromNameAndPaths(strName, dialog->GetPaths());
     CMediaSourceSettings::GetInstance().UpdateShare(type, strOldName, newShare);
+
+    OnMediaSourceChanged(type, strOldName, newShare);
   }
   dialog->m_paths->Clear();
   return confirmed;
 }
 
+std::string CGUIDialogMediaSource::GetUniqueMediaSourceName()
+{
+  // Get unique source name for this media type
+  unsigned int i, j = 2;
+  bool bConfirmed = false;
+  std::vector<CMediaSource>* pShares = CMediaSourceSettings::GetInstance().GetSources(m_type);
+  std::string strName = m_name;
+  while (!bConfirmed)
+  {
+    for (i = 0; i<pShares->size(); ++i)
+    {
+      if (StringUtils::EqualsNoCase((*pShares)[i].strName, strName))
+        break;
+    }
+    if (i < pShares->size())
+      // found a match -  try next
+      strName = StringUtils::Format("{} ({})", m_name, j++);
+    else
+      bConfirmed = true;
+  }
+  return strName;
+}
+
+void CGUIDialogMediaSource::OnMediaSourceChanged(const std::string& type, const std::string& oldName, const CMediaSource& share)
+{
+  // Processing once media source added/edited - library scraping and scanning
+  if (!StringUtils::StartsWithNoCase(share.strPath, "rss://") &&
+    !StringUtils::StartsWithNoCase(share.strPath, "rsss://") &&
+    !StringUtils::StartsWithNoCase(share.strPath, "upnp://"))
+  {
+    if (type == "video" && !URIUtils::IsLiveTV(share.strPath))
+      // Assign content to a path, refresh scraper information optionally start a scan
+      CGUIWindowVideoBase::OnAssignContent(share.strPath);
+    else if (type == "music")
+      CGUIWindowMusicBase::OnAssignContent(oldName, share);
+  }
+}
+
 void CGUIDialogMediaSource::OnPathBrowse(int item)
 {
-  if (item < 0 || item > m_paths->Size()) return;
+  if (item < 0 || item >= m_paths->Size()) return;
   // Browse is called.  Open the filebrowser dialog.
   // Ignore current path is best at this stage??
-  std::string path;
+  std::string path = m_paths->Get(item)->GetPath();
   bool allowNetworkShares(m_type != "programs");
-  VECSOURCES extraShares;
+  std::vector<CMediaSource> extraShares;
 
-  if (m_name != CUtil::GetTitleFromPath(m_paths->Get(item)->GetPath()))
+  if (m_name != CUtil::GetTitleFromPath(path))
     m_bNameChanged = true;
+  path.clear();
 
-  std::string strDevices = g_localizeStrings.Get(33040); //"% Devices"
+  auto& localizeStrings = CServiceBroker::GetResourcesComponent().GetLocalizeStrings();
 
   if (m_type == "music")
   {
@@ -239,10 +252,23 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
 #if defined(TARGET_ANDROID)
     // add the default android music directory
     std::string path;
-    if (CXBMCApp::GetExternalStorage(path, "music") && !path.empty() && CDirectory::Exists(path))
+    if (CAndroidStorageProvider::GetExternalStorage(path, "music") && !path.empty() &&
+        CDirectory::Exists(path))
     {
       share1.strPath = path;
-      share1.strName = g_localizeStrings.Get(20240);
+      share1.strName = localizeStrings.Get(20240);
+      share1.m_ignore = true;
+      extraShares.push_back(share1);
+    }
+#endif
+
+#if defined(TARGET_WINDOWS_STORE)
+    // add the default UWP music directory
+    std::string path;
+    if (XFILE::CWinLibraryDirectory::GetStoragePath(m_type, path) && !path.empty() && CDirectory::Exists(path))
+    {
+      share1.strPath = path;
+      share1.strName = localizeStrings.Get(20245);
       share1.m_ignore = true;
       extraShares.push_back(share1);
     }
@@ -250,7 +276,7 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
 
     // add the music playlist location
     share1.strPath = "special://musicplaylists/";
-    share1.strName = g_localizeStrings.Get(20011);
+    share1.strName = localizeStrings.Get(20011);
     share1.m_ignore = true;
     extraShares.push_back(share1);
 
@@ -258,20 +284,23 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
     if (CPVRDirectory::HasRadioRecordings())
     {
       share1.strPath = PVR::CPVRRecordingsPath::PATH_ACTIVE_RADIO_RECORDINGS;
-      share1.strName = g_localizeStrings.Get(19017); // Recordings
+      share1.strName = localizeStrings.Get(19017); // Recordings
       extraShares.push_back(share1);
     }
     if (CPVRDirectory::HasDeletedRadioRecordings())
     {
       share1.strPath = PVR::CPVRRecordingsPath::PATH_DELETED_RADIO_RECORDINGS;
-      share1.strName = g_localizeStrings.Get(19184); // Deleted recordings
+      share1.strName = localizeStrings.Get(19184); // Deleted recordings
       extraShares.push_back(share1);
     }
 
-    if (CServiceBroker::GetSettings().GetString(CSettings::SETTING_AUDIOCDS_RECORDINGPATH) != "")
+    if (!CServiceBroker::GetSettingsComponent()
+             ->GetSettings()
+             ->GetString(CSettings::SETTING_AUDIOCDS_RECORDINGPATH)
+             .empty())
     {
       share1.strPath = "special://recordings/";
-      share1.strName = g_localizeStrings.Get(21883);
+      share1.strName = localizeStrings.Get(21883);
       extraShares.push_back(share1);
     }
   }
@@ -281,10 +310,22 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
 #if defined(TARGET_ANDROID)
     // add the default android video directory
     std::string path;
-    if (CXBMCApp::GetExternalStorage(path, "videos") && !path.empty() && CFile::Exists(path))
+    if (CAndroidStorageProvider::GetExternalStorage(path, "videos") && !path.empty() &&
+        CFileUtils::Exists(path))
     {
       share1.strPath = path;
-      share1.strName = g_localizeStrings.Get(20241);
+      share1.strName = localizeStrings.Get(20241);
+      share1.m_ignore = true;
+      extraShares.push_back(share1);
+    }
+#endif
+#if defined(TARGET_WINDOWS_STORE)
+    // add the default UWP music directory
+    std::string path;
+    if (XFILE::CWinLibraryDirectory::GetStoragePath(m_type, path) && !path.empty() && CDirectory::Exists(path))
+    {
+      share1.strPath = path;
+      share1.strName = localizeStrings.Get(20246);
       share1.m_ignore = true;
       extraShares.push_back(share1);
     }
@@ -293,20 +334,20 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
     // add the video playlist location
     share1.m_ignore = true;
     share1.strPath = "special://videoplaylists/";
-    share1.strName = g_localizeStrings.Get(20012);
+    share1.strName = localizeStrings.Get(20012);
     extraShares.push_back(share1);
 
     // add the recordings dir as needed
     if (CPVRDirectory::HasTVRecordings())
     {
       share1.strPath = PVR::CPVRRecordingsPath::PATH_ACTIVE_TV_RECORDINGS;
-      share1.strName = g_localizeStrings.Get(19017); // Recordings
+      share1.strName = localizeStrings.Get(19017); // Recordings
       extraShares.push_back(share1);
     }
     if (CPVRDirectory::HasDeletedTVRecordings())
     {
       share1.strPath = PVR::CPVRRecordingsPath::PATH_DELETED_TV_RECORDINGS;
-      share1.strName = g_localizeStrings.Get(19184); // Deleted recordings
+      share1.strName = localizeStrings.Get(19184); // Deleted recordings
       extraShares.push_back(share1);
     }
   }
@@ -316,29 +357,53 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
 #if defined(TARGET_ANDROID)
     // add the default android music directory
     std::string path;
-    if (CXBMCApp::GetExternalStorage(path, "pictures") && !path.empty() && CFile::Exists(path))
+    if (CAndroidStorageProvider::GetExternalStorage(path, "pictures") && !path.empty() &&
+        CFileUtils::Exists(path))
     {
       share1.strPath = path;
-      share1.strName = g_localizeStrings.Get(20242);
+      share1.strName = localizeStrings.Get(20242);
       share1.m_ignore = true;
       extraShares.push_back(share1);
     }
 
     path.clear();
-    if (CXBMCApp::GetExternalStorage(path, "photos") && !path.empty() && CFile::Exists(path))
+    if (CAndroidStorageProvider::GetExternalStorage(path, "photos") && !path.empty() &&
+        CFileUtils::Exists(path))
     {
       share1.strPath = path;
-      share1.strName = g_localizeStrings.Get(20243);
+      share1.strName = localizeStrings.Get(20243);
+      share1.m_ignore = true;
+      extraShares.push_back(share1);
+    }
+#endif
+#if defined(TARGET_WINDOWS_STORE)
+    // add the default UWP music directory
+    std::string path;
+    if (XFILE::CWinLibraryDirectory::GetStoragePath(m_type, path) && !path.empty() && CDirectory::Exists(path))
+    {
+      share1.strPath = path;
+      share1.strName = localizeStrings.Get(20247);
+      share1.m_ignore = true;
+      extraShares.push_back(share1);
+    }
+    path.clear();
+    if (XFILE::CWinLibraryDirectory::GetStoragePath("photos", path) && !path.empty() && CDirectory::Exists(path))
+    {
+      share1.strPath = path;
+      share1.strName = localizeStrings.Get(20248);
       share1.m_ignore = true;
       extraShares.push_back(share1);
     }
 #endif
 
     share1.m_ignore = true;
-    if (CServiceBroker::GetSettings().GetString(CSettings::SETTING_DEBUG_SCREENSHOTPATH) != "")
+    if (!CServiceBroker::GetSettingsComponent()
+             ->GetSettings()
+             ->GetString(CSettings::SETTING_DEBUG_SCREENSHOTPATH)
+             .empty())
     {
       share1.strPath = "special://screenshots/";
-      share1.strName = g_localizeStrings.Get(20008);
+      share1.strName = localizeStrings.Get(20008);
       extraShares.push_back(share1);
     }
   }
@@ -350,7 +415,8 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
   {
     // nothing to add
   }
-  if (CGUIDialogFileBrowser::ShowAndGetSource(path, allowNetworkShares, extraShares.size() == 0 ? NULL : &extraShares))
+  if (CGUIDialogFileBrowser::ShowAndGetSource(path, allowNetworkShares,
+                                              extraShares.empty() ? nullptr : &extraShares))
   {
     if (item < m_paths->Size()) // if the skin does funky things, m_paths may have been cleared
       m_paths->Get(item)->SetPath(path);
@@ -367,13 +433,15 @@ void CGUIDialogMediaSource::OnPathBrowse(int item)
 
 void CGUIDialogMediaSource::OnPath(int item)
 {
-  if (item < 0 || item > m_paths->Size()) return;
-
-  if (m_name != CUtil::GetTitleFromPath(m_paths->Get(item)->GetPath()))
-    m_bNameChanged = true;
+  if (item < 0 || item >= m_paths->Size()) return;
 
   std::string path(m_paths->Get(item)->GetPath());
-  CGUIKeyboardFactory::ShowAndGetInput(path, CVariant{ g_localizeStrings.Get(1021) }, false);
+  if (m_name != CUtil::GetTitleFromPath(path))
+    m_bNameChanged = true;
+
+  CGUIKeyboardFactory::ShowAndGetInput(
+      path, CVariant{CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1021)},
+      false);
   m_paths->Get(item)->SetPath(path);
 
   if (!m_bNameChanged || m_name.empty())
@@ -388,32 +456,21 @@ void CGUIDialogMediaSource::OnPath(int item)
 
 void CGUIDialogMediaSource::OnOK()
 {
-  // verify the path by doing a GetDirectory.
+  // Verify the paths by doing a GetDirectory.
   CFileItemList items;
 
+  // Create temp media source to encode path urls as multipath
+  // Name of actual source may need to be made unique when saved in sources
   CMediaSource share;
-  share.FromNameAndPaths(m_type, m_name, GetPaths());
-  // hack: Need to temporarily add the share, then get path, then remove share
-  VECSOURCES *shares = CMediaSourceSettings::GetInstance().GetSources(m_type);
-  if (shares)
-    shares->push_back(share);
-  if (StringUtils::StartsWithNoCase(share.strPath, "plugin://") || CDirectory::GetDirectory(share.strPath, items, "", DIR_FLAG_NO_FILE_DIRS | DIR_FLAG_ALLOW_PROMPT) || CGUIDialogYesNo::ShowAndGetInput(CVariant{ 1001 }, CVariant{ 1025 }))
+  share.FromNameAndPaths(m_name, GetPaths());
+
+  if (StringUtils::StartsWithNoCase(share.strPath, "plugin://") ||
+    CDirectory::GetDirectory(share.strPath, items, "", DIR_FLAG_NO_FILE_DIRS | DIR_FLAG_ALLOW_PROMPT) ||
+    CGUIDialogYesNo::ShowAndGetInput(CVariant{ 1001 }, CVariant{ 1025 }))
   {
     m_confirmed = true;
     Close();
-    if (!StringUtils::StartsWithNoCase(share.strPath, "rss://") &&
-      !StringUtils::StartsWithNoCase(share.strPath, "upnp://"))
-    {
-      if (m_type == "video" && !URIUtils::IsLiveTV(share.strPath))
-        CGUIWindowVideoBase::OnAssignContent(share.strPath);
-      else if (m_type == "music")
-        CGUIWindowMusicBase::OnAssignContent(share.strPath);
-    }
   }
-
-  // and remove the share again
-  if (shares)
-    shares->erase(--shares->end());
 }
 
 void CGUIDialogMediaSource::OnCancel()
@@ -428,7 +485,8 @@ void CGUIDialogMediaSource::UpdateButtons()
     return;
 
   CONTROL_ENABLE_ON_CONDITION(CONTROL_OK, !m_paths->Get(0)->GetPath().empty() && !m_name.empty());
-  CONTROL_ENABLE_ON_CONDITION(CONTROL_PATH_ADD, !m_paths->Get(0)->GetPath().empty());
+  CONTROL_ENABLE_ON_CONDITION(CONTROL_PATH_ADD,
+                              !m_paths->Get(0)->GetPath().empty() && m_type != "files");
   CONTROL_ENABLE_ON_CONDITION(CONTROL_PATH_REMOVE, m_paths->Size() > 1);
   // name
   SET_CONTROL_LABEL2(CONTROL_NAME, m_name);
@@ -442,7 +500,9 @@ void CGUIDialogMediaSource::UpdateButtons()
     std::string path;
     CURL url(item->GetPath());
     path = url.GetWithoutUserDetails();
-    if (path.empty()) path = "<" + g_localizeStrings.Get(231) + ">"; // <None>
+    if (path.empty())
+      path =
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1020); // "Enter path..."
     item->SetLabel(path);
   }
   CGUIMessage msg(GUI_MSG_LABEL_BIND, GetID(), CONTROL_PATH, 0, 0, m_paths);
@@ -460,7 +520,7 @@ void CGUIDialogMediaSource::SetShare(const CMediaSource &share)
     CFileItemPtr item(new CFileItem(share.vecPaths[i], true));
     m_paths->Add(item);
   }
-  if (0 == share.vecPaths.size())
+  if (share.vecPaths.empty())
   {
     CFileItemPtr item(new CFileItem("", true));
     m_paths->Add(item);
@@ -472,36 +532,37 @@ void CGUIDialogMediaSource::SetShare(const CMediaSource &share)
 void CGUIDialogMediaSource::SetTypeOfMedia(const std::string &type, bool editNotAdd)
 {
   m_type = type;
+  auto& localizeStrings = CServiceBroker::GetResourcesComponent().GetLocalizeStrings();
   std::string heading;
   if (editNotAdd)
   {
     if (type == "video")
-      heading = g_localizeStrings.Get(10053);
+      heading = localizeStrings.Get(10053);
     else if (type == "music")
-      heading = g_localizeStrings.Get(10054);
+      heading = localizeStrings.Get(10054);
     else if (type == "pictures")
-      heading = g_localizeStrings.Get(10055);
+      heading = localizeStrings.Get(10055);
     else if (type == "games")
-      heading = g_localizeStrings.Get(35252); // "Edit game source"
+      heading = localizeStrings.Get(35252); // "Edit game source"
     else if (type == "programs")
-      heading = g_localizeStrings.Get(10056);
+      heading = localizeStrings.Get(10056);
     else
-      heading = g_localizeStrings.Get(10057);
+      heading = localizeStrings.Get(10057);
   }
   else
   {
     if (type == "video")
-      heading = g_localizeStrings.Get(10048);
+      heading = localizeStrings.Get(10048);
     else if (type == "music")
-      heading = g_localizeStrings.Get(10049);
+      heading = localizeStrings.Get(10049);
     else if (type == "pictures")
-      heading = g_localizeStrings.Get(10050);
+      heading = localizeStrings.Get(13006);
     else if (type == "games")
-      heading = g_localizeStrings.Get(35251); // "Add game source"
+      heading = localizeStrings.Get(35251); // "Add game source"
     else if (type == "programs")
-      heading = g_localizeStrings.Get(10051);
+      heading = localizeStrings.Get(10051);
     else
-      heading = g_localizeStrings.Get(10052);
+      heading = localizeStrings.Get(10052);
   }
   SET_CONTROL_LABEL(CONTROL_HEADING, heading);
 }
@@ -511,7 +572,7 @@ int CGUIDialogMediaSource::GetSelectedItem()
   CGUIMessage message(GUI_MSG_ITEM_SELECTED, GetID(), CONTROL_PATH);
   OnMessage(message);
   int value = message.GetParam1();
-  if (value < 0 || value > m_paths->Size()) return 0;
+  if (value < 0 || value >= m_paths->Size()) return 0;
   return value;
 }
 
@@ -554,15 +615,16 @@ std::vector<std::string> CGUIDialogMediaSource::GetPaths() const
   for (int i = 0; i < m_paths->Size(); i++)
   {
     if (!m_paths->Get(i)->GetPath().empty())
-    { // strip off the user and password for smb paths (anything that the password manager can auth)
+    { // strip off the user and password for supported paths (anything that the password manager can auth)
       // and add the user/pass to the password manager - note, we haven't confirmed that it works
-      // at this point, but if it doesn't, the user will get prompted anyway in SMBDirectory.
+      // at this point, but if it doesn't, the user will get prompted anyway in implementation.
       CURL url(m_paths->Get(i)->GetPath());
-      if (url.IsProtocol("smb"))
+      if (CPasswordManager::GetInstance().IsURLSupported(url) && !url.GetUserName().empty())
       {
         CPasswordManager::GetInstance().SaveAuthenticatedURL(url);
         url.SetPassword("");
         url.SetUserName("");
+        url.SetDomain("");
       }
       paths.push_back(url.Get());
     }

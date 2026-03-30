@@ -1,24 +1,13 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DirectXGraphics.h"
+
 #include "Texture.h"
 #include "XBTF.h"
 
@@ -34,6 +23,11 @@ void XPhysicalFree(LPVOID lpAddress)
 
 DWORD GetD3DFormat(XB_D3DFORMAT format)
 {
+#ifndef MAKEFOURCC
+#define MAKEFOURCC(ch0, ch1, ch2, ch3)                              \
+                ((DWORD)(BYTE)(ch0) | ((DWORD)(BYTE)(ch1) << 8) |   \
+                ((DWORD)(BYTE)(ch2) << 16) | ((DWORD)(BYTE)(ch3) << 24 ))
+#endif
   switch (format)
   {
   case XB_D3DFMT_A8R8G8B8:
@@ -310,13 +304,13 @@ void ConvertDXT4(const void *src, unsigned int width, unsigned int height, void 
   }
 }
 
-void GetTextureFromData(D3DTexture *pTex, void *texData, CBaseTexture **ppTexture)
+void GetTextureFromData(D3DTexture* pTex, void* texData, std::unique_ptr<CTexture>* ppTexture)
 {
   XB_D3DFORMAT fmt;
   DWORD width, height, pitch, offset;
   ParseTextureHeader(pTex, fmt, width, height, pitch, offset);
 
-  *ppTexture = new CTexture(width, height, XB_FMT_A8R8G8B8);
+  *ppTexture = CTexture::CreateTexture(width, height, XB_FMT_A8R8G8B8);
 
   if (*ppTexture)
   {

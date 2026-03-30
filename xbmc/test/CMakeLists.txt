@@ -1,6 +1,11 @@
-set(SOURCES TestBasicEnvironment.cpp
+set(SOURCES TestAutoSwitch.cpp
+            TestBasicEnvironment.cpp
+            TestCueDocument.cpp
+            TestDateTime.cpp
+            TestDateTimeSpan.cpp
             TestFileItem.cpp
-            TestTextureUtils.cpp
+            TestLangInfo.cpp
+            TestMediaSource.cpp
             TestURL.cpp
             TestUtil.cpp
             TestUtils.cpp)

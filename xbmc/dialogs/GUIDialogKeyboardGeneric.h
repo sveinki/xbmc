@@ -1,35 +1,31 @@
 /*
- *      Copyright (C) 2012-2013 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include "guilib/GUIDialog.h"
+#include "guilib/GUIKeyboard.h"
+#include "input/keyboard/KeyboardLayout.h"
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "guilib/GUIKeyboard.h"
-#include "guilib/GUIDialog.h"
-#include "input/KeyboardLayout.h"
-
 class CGUIFont;
 
-enum KEYBOARD {CAPS, LOWER, SYMBOLS};
+class CSpeechRecognitionListener;
+
+enum class KEY_TYPE
+{
+  CAPS,
+  LOWER,
+  SYMBOLS
+};
 
 class CGUIDialogKeyboardGeneric : public CGUIDialog, public CGUIKeyboard
 {
@@ -44,9 +40,9 @@ class CGUIDialogKeyboardGeneric : public CGUIDialog, public CGUIKeyboard
     void SetHeading(const std::string& heading);
     void SetText(const std::string& text);
     const std::string &GetText() const;
-    bool IsConfirmed() { return m_bIsConfirmed; };
-    void SetHiddenInput(bool hiddenInput) { m_hiddenInput = hiddenInput; };
-    bool IsInputHidden() const { return m_hiddenInput; };
+    bool IsConfirmed() { return m_bIsConfirmed; }
+    void SetHiddenInput(bool hiddenInput) { m_hiddenInput = hiddenInput; }
+    bool IsInputHidden() const { return m_hiddenInput; }
 
   protected:
     void OnWindowLoaded() override;
@@ -58,6 +54,7 @@ class CGUIDialogKeyboardGeneric : public CGUIDialog, public CGUIKeyboard
     void OnShift();
     void MoveCursor(int iAmount);
     void OnLayout();
+    void OnReveal();
     void OnSymbols();
     void OnIPAddress();
     void OnVoiceRecognition();
@@ -76,13 +73,13 @@ class CGUIDialogKeyboardGeneric : public CGUIDialog, public CGUIKeyboard
     void NormalCharacter(const std::string &ch);
 
     bool m_bIsConfirmed;
-    KEYBOARD m_keyType;
+    KEY_TYPE m_keyType;
     bool m_bShift;
     bool m_hiddenInput;
     bool m_isKeyboardNavigationMode;
     int m_previouslyFocusedButton;
 
-    std::vector<CKeyboardLayout> m_layouts;
+    std::vector<KODI::KEYBOARD::CKeyboardLayout> m_layouts;
     unsigned int                 m_currentLayout;
 
     std::string m_strHeading;
@@ -92,10 +89,12 @@ class CGUIDialogKeyboardGeneric : public CGUIDialog, public CGUIKeyboard
     std::vector<std::wstring> m_words;
     std::string m_hzcode;
     int         m_pos;
-    int         m_num;
+    int         m_num = 0;
     float       m_listwidth;
-    CGUIFont   *m_listfont;
+    CGUIFont   *m_listfont = nullptr;
     CCriticalSection  m_CS;
 
     char_callback_t m_pCharCallback;
+
+    std::shared_ptr<CSpeechRecognitionListener> m_speechRecognitionListener;
 };

@@ -1,29 +1,18 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-
 #include "CDDADirectory.h"
-#include "music/MusicDatabase.h"
-#include "FileItem.h"
+
 #include "File.h"
+#include "FileItem.h"
+#include "FileItemList.h"
+#include "ServiceBroker.h"
+#include "music/MusicDatabase.h"
 #include "storage/MediaManager.h"
 #include "utils/StringUtils.h"
 
@@ -40,11 +29,11 @@ bool CCDDADirectory::GetDirectory(const CURL& url, CFileItemList &items)
   // Reads the tracks from an audio cd
   std::string strPath = url.Get();
 
-  if (!g_mediaManager.IsDiscInDrive(strPath))
+  if (!CServiceBroker::GetMediaManager().IsDiscInDrive(strPath))
     return false;
 
   // Get information for the inserted disc
-  CCdInfo* pCdInfo = g_mediaManager.GetCdInfo(strPath);
+  CCdInfo* pCdInfo = CServiceBroker::GetMediaManager().GetCdInfo(strPath);
   if (pCdInfo == NULL)
     return false;
 
@@ -66,16 +55,16 @@ bool CCDDADirectory::GetDirectory(const CURL& url, CFileItemList &items)
       continue;
 
     // Format standard cdda item label
-    std::string strLabel = StringUtils::Format("Track %2.2i", i);
+    std::string strLabel = StringUtils::Format("Track {:02}", i);
 
     CFileItemPtr pItem(new CFileItem(strLabel));
-    pItem->m_bIsFolder = false;
-    std::string path = StringUtils::Format("cdda://local/%2.2i.cdda", i);
+    pItem->SetFolder(false);
+    std::string path = StringUtils::Format("cdda://local/{:02}.cdda", i);
     pItem->SetPath(path);
 
     struct __stat64 s64;
     if (CFile::Stat(pItem->GetPath(), &s64) == 0)
-      pItem->m_dwSize = s64.st_size;
+      pItem->SetSize(s64.st_size);
 
     items.Add(pItem);
   }

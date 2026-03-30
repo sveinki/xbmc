@@ -1,95 +1,114 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
-#include <vector>
 #include "DVDCodecs/Video/DVDVideoCodecFFmpeg.h"
 #include "DVDCodecs/Video/DXVA.h"
+#include "VideoRenderers/HwDecRender/DXVAEnumeratorHD.h"
+#include "VideoRenderers/Windows/RendererBase.h"
 #include "guilib/D3DResource.h"
-#include "guilib/Geometry.h"
+#include "utils/Geometry.h"
+
+#include <mutex>
+
+#include <wrl/client.h>
 
 class CRenderBuffer;
 
 namespace DXVA {
 
-// ProcAmp filters d3d11 filters
-const D3D11_VIDEO_PROCESSOR_FILTER PROCAMP_FILTERS[] =
-{
-  D3D11_VIDEO_PROCESSOR_FILTER_BRIGHTNESS,
-  D3D11_VIDEO_PROCESSOR_FILTER_CONTRAST,
-  D3D11_VIDEO_PROCESSOR_FILTER_HUE,
-  D3D11_VIDEO_PROCESSOR_FILTER_SATURATION
-};
+using namespace Microsoft::WRL;
 
-const DWORD NUM_FILTERS = ARRAYSIZE(PROCAMP_FILTERS);
+struct ProcColorSpaces;
 
 class CProcessorHD : public ID3DResource
 {
 public:
-  CProcessorHD();
+  explicit CProcessorHD();
  ~CProcessorHD();
 
-  bool PreInit();
   void UnInit();
-  bool Open(UINT width, UINT height);
+  bool Open(const VideoPicture& picture, std::shared_ptr<DXVA::CEnumeratorHD> enumerator);
   void Close();
-  bool Render(CRect src, CRect dst, ID3D11Resource* target, CRenderBuffer **views, DWORD flags, UINT frameIdx, UINT rotation);
-  uint8_t Size() const { return m_pVideoProcessor ? m_size : 0; }
-  uint8_t PastRefs() const { return m_max_back_refs; }
+  bool Render(CRect src, CRect dst, ID3D11Resource* target, CRenderBuffer **views, DWORD flags, UINT frameIdx, UINT rotation, float contrast, float brightness);
+  uint8_t PastRefs() const { return std::min(m_procCaps.m_rateCaps.PastFrames, 4u); }
+
+  /*!
+   * \brief Configure the processor for the provided conversion.
+   * \param conversion the conversion
+   * \return success status, true = success, false = error
+   */
+  bool SetConversion(const ProcessorConversion& conversion);
 
   // ID3DResource overrides
   void OnCreateDevice() override  {}
-  void OnDestroyDevice(bool fatal) override { CSingleLock lock(m_section); UnInit(); }
-  void OnLostDevice() override    { CSingleLock lock(m_section); UnInit(); }
-  void OnResetDevice() override   { CSingleLock lock(m_section); Close();  }
+  void OnDestroyDevice(bool) override
+  {
+    std::unique_lock lock(m_section);
+    UnInit();
+  }
+
+  static bool IsSuperResolutionSuitable(const VideoPicture& picture);
+  void TryEnableVideoSuperResolution();
+  bool IsVideoSuperResolutionEnabled() const { return m_superResolutionEnabled; }
+  bool Supports(ERENDERFEATURE feature) const;
 
 protected:
   bool ReInit();
   bool InitProcessor();
   bool CheckFormats() const;
   bool OpenProcessor();
-  bool ApplyFilter(D3D11_VIDEO_PROCESSOR_FILTER filter, int value, int min, int max, int def) const;
-  ID3D11VideoProcessorInputView* GetInputView(CRenderBuffer* view) const;
-  bool IsFormatSupported(DXGI_FORMAT format, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT support) const;
+  void ApplyFilter(D3D11_VIDEO_PROCESSOR_FILTER filter, int value, int min, int max, int def) const;
+  ComPtr<ID3D11VideoProcessorInputView> GetInputView(CRenderBuffer* view) const;
+  /*!
+   * \brief Apply new video settings if there was a change. Returns true if a parameter changed, false otherwise.
+   */
+  bool CheckVideoParameters(const CRect& src,
+                            const CRect& dst,
+                            const UINT& rotation,
+                            const float& contrast,
+                            const float& brightness,
+                            const CRenderBuffer& rb);
+
+  void EnableIntelVideoSuperResolution();
+  void EnableNvidiaRTXVideoSuperResolution();
 
   CCriticalSection m_section;
 
-  uint32_t m_width;
-  uint32_t m_height;
-  uint8_t  m_size;
-  uint8_t  m_max_back_refs;
-  uint8_t  m_max_fwd_refs;
-  uint32_t m_procIndex;
-  D3D11_VIDEO_PROCESSOR_CAPS m_vcaps;
-  D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS m_rateCaps;
+  ComPtr<ID3D11VideoDevice> m_pVideoDevice;
+  ComPtr<ID3D11VideoContext> m_pVideoContext;
+  ComPtr<ID3D11VideoProcessor> m_pVideoProcessor;
+  std::shared_ptr<CEnumeratorHD> m_enumerator;
 
-  struct ProcAmpInfo
-  {
-    bool bSupported;
-    D3D11_VIDEO_PROCESSOR_FILTER_RANGE Range;
-  };
-  ProcAmpInfo m_Filters[NUM_FILTERS];
-  ID3D11VideoDevice *m_pVideoDevice;
-  ID3D11VideoContext *m_pVideoContext;
-  ID3D11VideoProcessorEnumerator *m_pEnumerator;
-  ID3D11VideoProcessor *m_pVideoProcessor;
+  AVColorPrimaries m_color_primaries{AVCOL_PRI_UNSPECIFIED};
+  AVColorTransferCharacteristic m_color_transfer{AVCOL_TRC_UNSPECIFIED};
+  ProcessorCapabilities m_procCaps;
+
+  bool m_superResolutionEnabled{false};
+  ProcessorConversion m_conversion;
+  bool m_isValidConversion{false};
+
+  /*!
+   * \brief true when at least one frame has been processed successfully since init
+   */
+  bool m_configured{false};
+
+  // Members to compare the current frame with the previous frame
+  UINT m_lastInputFrameOrField{0};
+  UINT m_lastOutputIndex{0};
+  CRect m_lastSrc{};
+  CRect m_lastDst{};
+  UINT m_lastRotation{0};
+  float m_lastContrast{.0f};
+  float m_lastBrightness{.0f};
+  ProcessorConversion m_lastConversion{};
+  AVColorSpace m_lastColorSpace{AVCOL_SPC_UNSPECIFIED};
+  bool m_lastFullRange{false};
 };
-
 };

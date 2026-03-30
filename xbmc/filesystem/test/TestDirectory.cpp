@@ -1,30 +1,22 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "filesystem/Directory.h"
-#include "filesystem/SpecialProtocol.h"
 #include "FileItem.h"
-#include "utils/URIUtils.h"
+#include "FileItemList.h"
+#include "filesystem/Directory.h"
+#include "filesystem/DirectoryFactory.h"
+#include "filesystem/IDirectory.h"
+#include "filesystem/SpecialProtocol.h"
 #include "test/TestUtils.h"
+#include "utils/URIUtils.h"
+#include "video/VideoInfoTag.h"
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
 TEST(TestDirectory, General)
 {
@@ -40,7 +32,7 @@ TEST(TestDirectory, General)
   EXPECT_FALSE(XFILE::CDirectory::Exists(tmppath2));
   EXPECT_TRUE(XFILE::CDirectory::Create(tmppath2));
   EXPECT_TRUE(XFILE::CDirectory::Exists(tmppath2));
-  EXPECT_TRUE(XFILE::CDirectory::GetDirectory(tmppath1, items));
+  EXPECT_TRUE(XFILE::CDirectory::GetDirectory(tmppath1, items, "", XFILE::DIR_FLAG_DEFAULTS));
   XFILE::CDirectory::FilterFileDirectories(items, "");
   tmppath3 = tmppath2;
   URIUtils::AddSlashAtEnd(tmppath3);
@@ -65,3 +57,37 @@ TEST(TestDirectory, CreateRecursive)
   EXPECT_TRUE(XFILE::CDirectory::Create(path2));
   EXPECT_TRUE(XFILE::CDirectory::RemoveRecursive(path1));
 }
+
+#ifdef HAVE_LIBBLURAY
+TEST(TestDirectory, BlurayResolve)
+{
+  CFileItem item;
+  CVideoInfoTag* tag{item.GetVideoInfoTag()};
+
+  // Emulate first play of removable bluray disc
+  item.SetPath("E:\\BDMV\\index.bdmv");
+  std::string pathToResolve{
+      "bluray://removable%3a%2f%2fsometitle_0000000000000000000000000000000000000000%00%cc"
+      "/BDMV/index.bdmv"};
+  item.SetDynPath(pathToResolve);
+  tag->m_strFileNameAndPath = pathToResolve;
+
+  if (const std::unique_ptr<XFILE::IDirectory> dir{XFILE::CDirectoryFactory::Create(item)}; dir)
+  {
+    EXPECT_TRUE(dir->Resolve(item));
+    std::string correctResolvedPath{"E:\\BDMV\\index.bdmv"};
+    EXPECT_STREQ(item.GetDynPath().c_str(), correctResolvedPath.c_str());
+
+    // Emulate second/resume play of removable bluray disc
+    pathToResolve =
+        "bluray://removable%3a%2f%2fsometitle_0000000000000000000000000000000000000000%00%cc"
+        "/BDMV/PLAYLIST/00800.mpls";
+    item.SetDynPath(pathToResolve);
+    tag->m_strFileNameAndPath = pathToResolve;
+
+    EXPECT_TRUE(dir->Resolve(item));
+    correctResolvedPath = "bluray://E%3a%5c/BDMV/PLAYLIST/00800.mpls";
+    EXPECT_STREQ(item.GetDynPath().c_str(), correctResolvedPath.c_str());
+  }
+}
+#endif

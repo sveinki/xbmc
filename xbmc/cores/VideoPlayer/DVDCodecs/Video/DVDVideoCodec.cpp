@@ -1,44 +1,62 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDVideoCodec.h"
-#include "ServiceBroker.h"
+
 #include "cores/VideoPlayer/DVDCodecs/DVDFactoryCodec.h"
-#include "settings/Settings.h"
-#include "settings/lib/Setting.h"
-#include "windowing/WindowingFactory.h"
+
 #include <string>
 #include <vector>
 
 //******************************************************************************
 // VideoPicture
 //******************************************************************************
-
-VideoPicture::VideoPicture() = default;
-
 VideoPicture::~VideoPicture()
 {
   if (videoBuffer)
   {
     videoBuffer->Release();
   }
+}
+
+void VideoPicture::Reset()
+{
+  if (videoBuffer)
+    videoBuffer->Release();
+  videoBuffer = nullptr;
+  pts = DVD_NOPTS_VALUE;
+  dts = DVD_NOPTS_VALUE;
+  iFlags = 0;
+  iRepeatPicture = 0;
+  iDuration = 0;
+  iFrameType = 0;
+  color_space = AVCOL_SPC_UNSPECIFIED;
+  color_range = 0;
+  chroma_position = AVCHROMA_LOC_UNSPECIFIED;
+  color_primaries = AVColorPrimaries::AVCOL_PRI_UNSPECIFIED;
+  color_transfer = AVCOL_TRC_UNSPECIFIED;
+  colorBits = 8;
+  stereoMode.clear();
+
+  qp_table = nullptr;
+  qstride = 0;
+  qscale_type = 0;
+  pict_type = 0;
+
+  hdrType = StreamHdrType::HDR_TYPE_NONE;
+
+  hasDisplayMetadata = false;
+  hasLightMetadata = false;
+
+  iWidth = 0;
+  iHeight = 0;
+  iDisplayWidth = 0;
+  iDisplayHeight = 0;
 }
 
 VideoPicture& VideoPicture::CopyRef(const VideoPicture &pic)
@@ -60,79 +78,28 @@ VideoPicture& VideoPicture::SetParams(const VideoPicture &pic)
   return *this;
 }
 
-VideoPicture::VideoPicture(VideoPicture const&) = default;
-VideoPicture& VideoPicture::operator=(VideoPicture const&) = default;
-
-//******************************************************************************
-// VideoCodec
-//******************************************************************************
-bool CDVDVideoCodec::IsSettingVisible(const std::string &condition, const std::string &value, std::shared_ptr<const CSetting> setting, void *data)
+bool VideoPicture::CompareDisplayMetadata(const VideoPicture& pic) const
 {
-  if (setting == NULL || value.empty())
+  if (this->hasDisplayMetadata != pic.hasDisplayMetadata)
     return false;
 
-  const std::string &settingId = setting->GetId();
+  // both this and pic not has display metadata (e.g. SDR video)
+  // returns true because it is equal and there is no need to compare
+  if (!pic.hasDisplayMetadata)
+    return true;
 
-  if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVDPAU)
-  {
-    auto hwaccels = CDVDFactoryCodec::GetHWAccels();
-    for (auto &id : hwaccels)
-    {
-      if (id == "vdpau")
-        return true;
-    }
-    return false;
-  }
-  else if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVAAPI)
-  {
-    auto hwaccels = CDVDFactoryCodec::GetHWAccels();
-    for (auto &id : hwaccels)
-    {
-      if (id == "vaapi")
-        return true;
-    }
-    return false;
-  }
-
-  // check if we are running on nvidia hardware
-  std::string gpuvendor = g_Windowing.GetRenderVendor();
-  std::transform(gpuvendor.begin(), gpuvendor.end(), gpuvendor.begin(), ::tolower);
-  bool isNvidia = (gpuvendor.compare(0, 6, "nvidia") == 0);
-  bool isIntel = (gpuvendor.compare(0, 5, "intel") == 0);
-
-  // nvidia does only need mpeg-4 setting
-  if (isNvidia)
-  {
-    if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVDPAUMPEG4)
-      return true;
-
-    return false; // will also hide intel settings on nvidia hardware
-  }
-  else if (isIntel) // intel needs vc1, mpeg-2 and mpeg4 setting
-  {
-    if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVAAPIMPEG4)
-      return true;
-    if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVAAPIVC1)
-      return true;
-    if (settingId == CSettings::SETTING_VIDEOPLAYER_USEVAAPIMPEG2)
-      return true;
-
-    return false; // this will also hide nvidia settings on intel hardware
-  }
-  // if we don't know the hardware we are running on e.g. amd oss vdpau 
-  // or fglrx with xvba-driver we show everything
-  return true;
+  // both this and pic has display metadata
+  return this->displayMetadata.max_luminance.num == pic.displayMetadata.max_luminance.num &&
+         this->displayMetadata.max_luminance.den == pic.displayMetadata.max_luminance.den &&
+         this->displayMetadata.min_luminance.num == pic.displayMetadata.min_luminance.num &&
+         this->displayMetadata.min_luminance.den == pic.displayMetadata.min_luminance.den;
 }
 
-bool CDVDVideoCodec::IsCodecDisabled(const std::map<AVCodecID, std::string> &map, AVCodecID id)
+bool VideoPicture::IsSameParams(const VideoPicture& pic) const
 {
-  auto codec = map.find(id);
-  if (codec != map.end())
-  {
-    return (!CServiceBroker::GetSettings().GetBool(codec->second) ||
-            !CDVDVideoCodec::IsSettingVisible("unused", "unused",
-                                              CServiceBroker::GetSettings().GetSetting(codec->second),
-                                              NULL));
-  }
-  return false; // don't disable what we don't have
+  return this->iWidth == pic.iWidth && this->iHeight == pic.iHeight &&
+         this->iDisplayWidth == pic.iDisplayWidth && this->iDisplayHeight == pic.iDisplayHeight &&
+         this->stereoMode == pic.stereoMode && this->color_primaries == pic.color_primaries &&
+         this->color_transfer == pic.color_transfer && this->hdrType == pic.hdrType &&
+         CompareDisplayMetadata(pic);
 }

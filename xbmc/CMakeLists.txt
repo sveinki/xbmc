@@ -1,7 +1,4 @@
-set(SOURCES Application.cpp
-            ApplicationPlayer.cpp
-            AppParamParser.cpp
-            AutoSwitch.cpp
+set(SOURCES AutoSwitch.cpp
             BackgroundInfoLoader.cpp
             ContextMenuItem.cpp
             ContextMenuManager.cpp
@@ -11,6 +8,7 @@ set(SOURCES Application.cpp
             DbUrl.cpp
             DynamicDll.cpp
             FileItem.cpp
+            FileItemList.cpp
             FileItemListModification.cpp
             GUIInfoManager.cpp
             GUILargeTextureManager.cpp
@@ -23,6 +21,7 @@ set(SOURCES Application.cpp
             PlayListPlayer.cpp
             PartyModeManager.cpp
             SectionLoader.cpp
+            SeekHandler.cpp
             ServiceBroker.cpp
             ServiceManager.cpp
             SystemGlobals.cpp
@@ -30,16 +29,11 @@ set(SOURCES Application.cpp
             TextureCacheJob.cpp
             TextureDatabase.cpp
             ThumbLoader.cpp
-            ThumbnailCache.cpp
             URL.cpp
             Util.cpp
-            XBApplicationEx.cpp
             XBDateTime.cpp)
 
-set(HEADERS AppParamParser.h
-            Application.h
-            ApplicationPlayer.h
-            AutoSwitch.h
+set(HEADERS AutoSwitch.h
             BackgroundInfoLoader.h
             CompileInfo.h
             ContextMenuItem.h
@@ -52,34 +46,37 @@ set(HEADERS AppParamParser.h
             DllPaths_win32.h
             DynamicDll.h
             FileItem.h
+            FileItemList.h
             FileItemListModification.h
             GUIInfoManager.h
             GUILargeTextureManager.h
             GUIPassword.h
             GUIUserMessages.h
+            HDRStatus.h
             IFileItemListModifier.h
             IProgressCallback.h
             InfoScanner.h
             LangInfo.h
+            LockMode.h
             MediaSource.h
             NfoFile.h
             PartyModeManager.h
             PasswordManager.h
             PlayListPlayer.h
             SectionLoader.h
+            SeekHandler.h
             ServiceBroker.h
             ServiceManager.h
             SortFileItem.h
+            SourceType.h
             TextureCache.h
             TextureCacheJob.h
             TextureDatabase.h
             ThumbLoader.h
-            ThumbnailCache.h
             URL.h
             Util.h
-            XBApplicationEx.h
             XBDateTime.h
-            system.h
+            system_egl.h
             system_gl.h)
 
 if(ENABLE_OPTICAL)
@@ -88,6 +85,7 @@ if(ENABLE_OPTICAL)
 endif()
 
 core_add_library(xbmc)
-if(CAP_FOUND)
-  target_compile_definitions(${CORE_LIBRARY} PRIVATE -DHAVE_LIBCAP=1)
+
+if(CORE_SYSTEM_NAME STREQUAL windowsstore)
+  set_target_properties(${CORE_LIBRARY} PROPERTIES STATIC_LIBRARY_FLAGS "/ignore:4264")
 endif()

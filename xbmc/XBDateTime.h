@@ -1,48 +1,21 @@
+/*
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
 #pragma once
 
-/*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
- *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
- */
-
 #include "utils/IArchivable.h"
-#include "system.h"
+#include "utils/TimeFormat.h"
+#include "utils/XTimeUtils.h"
+
+#include <optional>
 #include <string>
 
-/*! \brief TIME_FORMAT enum/bitmask used for formatting time strings
- Note the use of bitmasking, e.g.
-  TIME_FORMAT_HH_MM_SS = TIME_FORMAT_HH | TIME_FORMAT_MM | TIME_FORMAT_SS
- \sa StringUtils::SecondsToTimeString
- */
-enum TIME_FORMAT { TIME_FORMAT_GUESS       =  0,
-                   TIME_FORMAT_SS          =  1,
-                   TIME_FORMAT_MM          =  2,
-                   TIME_FORMAT_MM_SS       =  3,
-                   TIME_FORMAT_HH          =  4,
-                   TIME_FORMAT_HH_SS       =  5, // not particularly useful
-                   TIME_FORMAT_HH_MM       =  6,
-                   TIME_FORMAT_HH_MM_SS    =  7,
-                   TIME_FORMAT_XX          =  8, // AM/PM
-                   TIME_FORMAT_HH_MM_XX    = 14,
-                   TIME_FORMAT_HH_MM_SS_XX = 15,
-                   TIME_FORMAT_H           = 16,
-                   TIME_FORMAT_H_MM_SS     = 19,
-                   TIME_FORMAT_H_MM_SS_XX  = 27};
+#include "PlatformDefs.h"
 
 class CDateTime;
 
@@ -51,6 +24,7 @@ class CDateTimeSpan
 public:
   CDateTimeSpan();
   CDateTimeSpan(const CDateTimeSpan& span);
+  CDateTimeSpan& operator=(const CDateTimeSpan&) = default;
   CDateTimeSpan(int day, int hour, int minute, int second);
 
   bool operator >(const CDateTimeSpan& right) const;
@@ -77,27 +51,27 @@ public:
   int GetSecondsTotal() const;
 
 private:
-  void ToULargeInt(ULARGE_INTEGER& time) const;
-  void FromULargeInt(const ULARGE_INTEGER& time);
+  void ToLargeInt(LARGE_INTEGER& time) const;
+  void FromLargeInt(const LARGE_INTEGER& time);
 
 private:
-  FILETIME m_timeSpan;
+  KODI::TIME::FileTime m_timeSpan;
 
   friend class CDateTime;
 };
 
-/// \brief DateTime class, which uses FILETIME as it's base.
-class CDateTime : public IArchivable
+/// \brief DateTime class, which uses FileTime as it's base.
+class CDateTime final : public IArchivable
 {
 public:
   CDateTime();
   CDateTime(const CDateTime& time);
-  explicit CDateTime(const SYSTEMTIME& time);
-  explicit CDateTime(const FILETIME& time);
+  CDateTime& operator=(const CDateTime&) = default;
+  explicit CDateTime(const KODI::TIME::SystemTime& time);
+  explicit CDateTime(const KODI::TIME::FileTime& time);
   explicit CDateTime(const time_t& time);
   explicit CDateTime(const tm& time);
   CDateTime(int year, int month, int day, int hour, int minute, int second);
-  ~CDateTime() override = default;
 
   static CDateTime GetCurrentDateTime();
   static CDateTime GetUTCDateTime();
@@ -113,8 +87,8 @@ public:
   static CDateTime FromUTCDateTime(const time_t &dateTime);
   static CDateTime FromRFC1123DateTime(const std::string &dateTime);
 
-  const CDateTime& operator =(const SYSTEMTIME& right);
-  const CDateTime& operator =(const FILETIME& right);
+  const CDateTime& operator=(const KODI::TIME::SystemTime& right);
+  const CDateTime& operator=(const KODI::TIME::FileTime& right);
   const CDateTime& operator =(const time_t& right);
   const CDateTime& operator =(const tm& right);
 
@@ -125,19 +99,19 @@ public:
   bool operator ==(const CDateTime& right) const;
   bool operator !=(const CDateTime& right) const;
 
-  bool operator >(const FILETIME& right) const;
-  bool operator >=(const FILETIME& right) const;
-  bool operator <(const FILETIME& right) const;
-  bool operator <=(const FILETIME& right) const;
-  bool operator ==(const FILETIME& right) const;
-  bool operator !=(const FILETIME& right) const;
+  bool operator>(const KODI::TIME::FileTime& right) const;
+  bool operator>=(const KODI::TIME::FileTime& right) const;
+  bool operator<(const KODI::TIME::FileTime& right) const;
+  bool operator<=(const KODI::TIME::FileTime& right) const;
+  bool operator==(const KODI::TIME::FileTime& right) const;
+  bool operator!=(const KODI::TIME::FileTime& right) const;
 
-  bool operator >(const SYSTEMTIME& right) const;
-  bool operator >=(const SYSTEMTIME& right) const;
-  bool operator <(const SYSTEMTIME& right) const;
-  bool operator <=(const SYSTEMTIME& right) const;
-  bool operator ==(const SYSTEMTIME& right) const;
-  bool operator !=(const SYSTEMTIME& right) const;
+  bool operator>(const KODI::TIME::SystemTime& right) const;
+  bool operator>=(const KODI::TIME::SystemTime& right) const;
+  bool operator<(const KODI::TIME::SystemTime& right) const;
+  bool operator<=(const KODI::TIME::SystemTime& right) const;
+  bool operator==(const KODI::TIME::SystemTime& right) const;
+  bool operator!=(const KODI::TIME::SystemTime& right) const;
 
   bool operator >(const time_t& right) const;
   bool operator >=(const time_t& right) const;
@@ -161,7 +135,7 @@ public:
 
   CDateTimeSpan operator -(const CDateTime& right) const;
 
-  operator FILETIME() const;
+  operator KODI::TIME::FileTime() const;
 
   void Archive(CArchive& ar) override;
 
@@ -189,15 +163,28 @@ public:
   bool SetFromUTCDateTime(const time_t &dateTime);
   bool SetFromRFC1123DateTime(const std::string &dateTime);
 
+  /*!
+   * \brief Set from RFC3339 full-date format YYYY-MM-DD only.
+   * \param[in] date input date.
+   * \return true when the parameter was in the expected format and represented a valid date.
+   */
+  bool SetFromRFC3339FullDate(std::string_view date);
+
   /*! \brief set from a database datetime format YYYY-MM-DD HH:MM:SS
    \sa GetAsDBDateTime()
    */
   bool SetFromDBDateTime(const std::string &dateTime);
 
-  void GetAsSystemTime(SYSTEMTIME& time) const;
+  void GetAsSystemTime(KODI::TIME::SystemTime& time) const;
   void GetAsTime(time_t& time) const;
   void GetAsTm(tm& time) const;
-  void GetAsTimeStamp(FILETIME& time) const;
+  void GetAsTimeStamp(KODI::TIME::FileTime& time) const;
+
+  enum class ReturnFormat : bool
+  {
+    CHOICE_YES = true,
+    CHOICE_NO = false,
+  };
 
   CDateTime GetAsUTCDateTime() const;
   std::string GetAsSaveString() const;
@@ -206,8 +193,10 @@ public:
   std::string GetAsDBTime() const;
   std::string GetAsLocalizedDate(bool longDate=false) const;
   std::string GetAsLocalizedDate(const std::string &strFormat) const;
+  std::string GetAsLocalizedDate(const std::string& strFormat, ReturnFormat returnFormat) const;
   std::string GetAsLocalizedTime(const std::string &format, bool withSeconds=true) const;
   std::string GetAsLocalizedDateTime(bool longDate=false, bool withSeconds=true) const;
+  std::string GetAsLocalizedTime(TIME_FORMAT format, bool withSeconds = false) const;
   std::string GetAsRFC1123DateTime() const;
   std::string GetAsW3CDate() const;
   std::string GetAsW3CDateTime(bool asUtc = false) const;
@@ -215,25 +204,35 @@ public:
   void SetValid(bool yesNo);
   bool IsValid() const;
 
-  static void ResetTimezoneBias(void);
-  static CDateTimeSpan GetTimezoneBias(void);
+  /*! \brief Get system timezone bias for this datetime value.
+   \note This calculates the bias for this specific datetime, which may differ
+         from the timezone bias for 'now' if DST rules have changed.
+   \return The bias as time span.
+   */
+  CDateTimeSpan GetTimezoneBias() const;
+
+  /*! \brief Set timezone bias for this datetime value (for testing purposes).
+   \param bias The bias to set.
+   */
+  void SetTimeZoneBias(const CDateTimeSpan& bias) { m_timeZoneBias = bias; }
 
 private:
-  bool ToFileTime(const SYSTEMTIME& time, FILETIME& fileTime) const;
-  bool ToFileTime(const time_t& time, FILETIME& fileTime) const;
-  bool ToFileTime(const tm& time, FILETIME& fileTime) const;
+  bool ToFileTime(const KODI::TIME::SystemTime& time, KODI::TIME::FileTime& fileTime) const;
+  bool ToFileTime(const time_t& time, KODI::TIME::FileTime& fileTime) const;
+  bool ToFileTime(const tm& time, KODI::TIME::FileTime& fileTime) const;
 
-  void ToULargeInt(ULARGE_INTEGER& time) const;
-  void FromULargeInt(const ULARGE_INTEGER& time);
+  void ToLargeInt(LARGE_INTEGER& time) const;
+  void FromLargeInt(const LARGE_INTEGER& time);
 
 private:
-  FILETIME m_time;
+  KODI::TIME::FileTime m_time;
 
-  typedef enum _STATE
+  enum class State
   {
-    invalid=0,
-    valid
-  } STATE;
+    INVALID = 0,
+    VALID
+  };
 
-  STATE m_state;
+  State m_state;
+  mutable std::optional<CDateTimeSpan> m_timeZoneBias;
 };

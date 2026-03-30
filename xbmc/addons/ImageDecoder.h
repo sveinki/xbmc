@@ -1,55 +1,70 @@
 /*
- *      Copyright (C) 2013 Arne Morten Kvarving
+ *  Copyright (C) 2013 Arne Morten Kvarving
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
-#include "addons/kodi-addon-dev-kit/include/kodi/addon-instance/ImageDecoder.h"
+#include "addons/IAddonSupportCheck.h"
 #include "addons/binary-addons/AddonInstanceHandler.h"
+#include "addons/kodi-dev-kit/include/kodi/addon-instance/ImageDecoder.h"
 #include "guilib/iimage.h"
 
-namespace ADDON
+class CPictureInfoTag;
+
+namespace KODI::ADDONS
 {
-  class CImageDecoder : public IAddonInstanceHandler,
-                        public IImage
+
+class CImageDecoder : public ADDON::IAddonInstanceHandler,
+                      public KODI::ADDONS::IAddonSupportCheck,
+                      public IImage
+{
+public:
+  explicit CImageDecoder(const ADDON::AddonInfoPtr& addonInfo, const std::string& mimetype);
+  ~CImageDecoder() override;
+
+  bool IsCreated() const { return m_created; }
+
+  /*! @ref IImage related functions */
+  ///@{
+  bool CreateThumbnailFromSurface(unsigned char*,
+                                  unsigned int,
+                                  unsigned int,
+                                  unsigned int,
+                                  unsigned int,
+                                  const std::string&,
+                                  unsigned char*&,
+                                  unsigned int&) override
   {
-  public:
-    CImageDecoder(ADDON::BinaryAddonBasePtr addonBase);
-    ~CImageDecoder() override;
+    return false;
+  }
+  bool LoadImageFromMemory(unsigned char* buffer,
+                           unsigned int bufSize,
+                           unsigned int width,
+                           unsigned int height) override;
+  bool Decode(unsigned char* const pixels,
+              unsigned int width,
+              unsigned int height,
+              unsigned int pitch,
+              unsigned int format) override;
+  ///@}
 
-    bool Create(const std::string& mimetype);
+  /*! From @ref CPictureInfoTag used function to get information from addon */
+  ///@{
+  bool LoadInfoTag(const std::string& fileName, CPictureInfoTag* tag);
+  ///@}
 
-    bool CreateThumbnailFromSurface(unsigned char*, unsigned int, unsigned int,
-                                    unsigned int, unsigned int, const std::string&,
-                                    unsigned char*&, unsigned int&) override { return false; }
+  /*! @ref KODI::ADDONS::IAddonSupportCheck related function */
+  ///@{
+  bool SupportsFile(const std::string& filename) override;
+  ///@}
 
-    bool LoadImageFromMemory(unsigned char* buffer, unsigned int bufSize,
-                             unsigned int width, unsigned int height) override;
-    bool Decode(unsigned char* const pixels, unsigned int width,
-                unsigned int height, unsigned int pitch,
-                unsigned int format) override;
+private:
+  /*! @note m_mimetype not set in all cases, only available if @ref LoadImageFromMemory is used. */
+  const std::string m_mimetype;
+  bool m_created{false};
+};
 
-    const std::string& GetMimetypes() const { return m_mimetype; }
-    const std::string& GetExtensions() const { return m_extension; }
-
-  protected:
-    std::string m_mimetype;
-    std::string m_extension;
-    AddonInstance_ImageDecoder m_struct = {};
-  };
-
-} /*namespace ADDON*/
+} // namespace KODI::ADDONS

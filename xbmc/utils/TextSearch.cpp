@@ -1,24 +1,13 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "TextSearch.h"
+
 #include "StringUtils.h"
 
 CTextSearch::CTextSearch(const std::string &strSearchTerms, bool bCaseSensitive /* = false */, TextSearchDefault defaultSearchMode /* = SEARCH_DEFAULT_OR */)
@@ -27,16 +16,9 @@ CTextSearch::CTextSearch(const std::string &strSearchTerms, bool bCaseSensitive 
   ExtractSearchTerms(strSearchTerms, defaultSearchMode);
 }
 
-CTextSearch::~CTextSearch(void)
-{
-  m_AND.clear();
-  m_OR.clear();
-  m_NOT.clear();
-}
-
 bool CTextSearch::IsValid(void) const
 {
-  return m_AND.size() > 0 || m_OR.size() > 0 || m_NOT.size() > 0;
+  return !m_AND.empty() || !m_OR.empty() || !m_NOT.empty();
 }
 
 bool CTextSearch::Search(const std::string &strHaystack) const
@@ -114,7 +96,7 @@ void CTextSearch::ExtractSearchTerms(const std::string &strSearchTerm, TextSearc
   bool bNextOR(defaultSearchMode == SEARCH_DEFAULT_OR);
   bool bNextNOT(defaultSearchMode == SEARCH_DEFAULT_NOT);
 
-  while (strParsedSearchTerm.length() > 0)
+  while (!strParsedSearchTerm.empty())
   {
     StringUtils::TrimLeft(strParsedSearchTerm);
 
@@ -140,7 +122,7 @@ void CTextSearch::ExtractSearchTerms(const std::string &strSearchTerm, TextSearc
     {
       std::string strTerm;
       GetAndCutNextTerm(strParsedSearchTerm, strTerm);
-      if (strTerm.length() > 0)
+      if (!strTerm.empty())
       {
         if (bNextAND)
           m_AND.push_back(strTerm);

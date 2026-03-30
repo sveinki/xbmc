@@ -1,25 +1,19 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-#include <DirectXPackedVector.h>
+#include "RenderSystemDX.h"
 
-#include "Application.h"
+#include "ServiceBroker.h"
+#include "application/Application.h"
+
+#if defined(TARGET_WINDOWS_DESKTOP)
+#include "cores/RetroPlayer/process/windows/RPProcessInfoWin.h"
+#include "cores/RetroPlayer/rendering/VideoRenderers/RPWinRenderer.h"
+#endif
 #include "cores/VideoPlayer/DVDCodecs/DVDFactoryCodec.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/DXVA.h"
 #if defined(TARGET_WINDOWS_STORE)
@@ -28,38 +22,40 @@
 #include "cores/VideoPlayer/Process/windows/ProcessInfoWin.h"
 #endif
 #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
-#include "cores/VideoPlayer/VideoRenderers/WinRenderer.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
+#include "cores/VideoPlayer/VideoRenderers/WinRenderer.h"
 #include "guilib/D3DResource.h"
 #include "guilib/GUIShaderDX.h"
 #include "guilib/GUITextureD3D.h"
 #include "guilib/GUIWindowManager.h"
-#include "settings/AdvancedSettings.h"
-#include "threads/SingleLock.h"
 #include "utils/MathUtils.h"
 #include "utils/log.h"
-#include "RenderSystemDX.h"
+#include "windowing/WinSystem.h"
 
-extern "C" {
-#include "libavutil/pixfmt.h"
+#include <mutex>
+
+#include <DirectXPackedVector.h>
+
+extern "C"
+{
+#include <libavutil/pixfmt.h>
 }
 
+using namespace KODI;
+using namespace DirectX;
 using namespace DirectX::PackedVector;
 using namespace Microsoft::WRL;
+using namespace std::chrono_literals;
 
 CRenderSystemDX::CRenderSystemDX() : CRenderSystemBase()
-  , m_interlaced(false)
 {
-  m_enumRenderingSystem = RENDERING_SYSTEM_DIRECTX;
   m_bVSync = true;
 
   memset(&m_viewPort, 0, sizeof m_viewPort);
   memset(&m_scissor, 0, sizeof m_scissor);
 }
 
-CRenderSystemDX::~CRenderSystemDX()
-{
-}
+CRenderSystemDX::~CRenderSystemDX() = default;
 
 bool CRenderSystemDX::InitRenderSystem()
 {
@@ -84,7 +80,10 @@ bool CRenderSystemDX::InitRenderSystem()
   DXVA::CDecoder::Register();
   VIDEOPLAYER::CRendererFactory::ClearRenderer();
   CWinRenderer::Register();
-
+#if defined(TARGET_WINDOWS_DESKTOP)
+  RETRO::CRPProcessInfoWin::Register();
+  RETRO::CRPProcessInfoWin::RegisterRendererFactory(new RETRO::CWinRendererFactory);
+#endif
   m_viewPort = m_deviceResources->GetScreenViewport();
   RestoreViewPort();
 
@@ -92,6 +91,15 @@ bool CRenderSystemDX::InitRenderSystem()
   // set camera to center of screen
   CPoint camPoint = { outputSize.Width * 0.5f, outputSize.Height * 0.5f };
   SetCameraPosition(camPoint, outputSize.Width, outputSize.Height);
+
+  const DXGI_ADAPTER_DESC AIdentifier = m_deviceResources->GetAdapterDesc();
+  m_RenderRenderer = KODI::PLATFORM::WINDOWS::FromW(AIdentifier.Description);
+  uint32_t version = 0;
+  for (uint32_t decimal = m_deviceResources->GetDeviceFeatureLevel() >> 8, round = 0; decimal > 0; decimal >>= 4, ++round)
+    version += (decimal % 16) * std::pow(10, round);
+  m_RenderVersion = StringUtils::Format("{:.1f}", static_cast<float>(version) / 10.0f);
+
+  CGUITextureD3D::Register();
 
   return true;
 }
@@ -101,7 +109,7 @@ void CRenderSystemDX::OnResize()
   if (!m_bRenderCreated)
     return;
 
-  auto outputSize = m_deviceResources->GetLogicalSize();
+  auto outputSize = m_deviceResources->GetOutputSize();
 
   // set camera to center of screen
   CPoint camPoint = { outputSize.Width * 0.5f, outputSize.Height * 0.5f };
@@ -110,22 +118,9 @@ void CRenderSystemDX::OnResize()
   CheckInterlacedStereoView();
 }
 
-inline void DXWait(ID3D11Device* pDevice, ID3D11DeviceContext* pContext)
-{
-  ID3D11Query* wait = nullptr;
-  CD3D11_QUERY_DESC qd(D3D11_QUERY_EVENT);
-  if (SUCCEEDED(pDevice->CreateQuery(&qd, &wait)))
-  {
-    pContext->End(wait);
-    while (S_FALSE == pContext->GetData(wait, nullptr, 0, 0))
-      Sleep(1);
-  }
-  SAFE_RELEASE(wait);
-}
-
 bool CRenderSystemDX::IsFormatSupport(DXGI_FORMAT format, unsigned int usage) const
 {
-  auto pD3DDev = m_deviceResources->GetD3DDevice();
+  ComPtr<ID3D11Device1> pD3DDev = m_deviceResources->GetD3DDevice();
   UINT supported;
   pD3DDev->CheckFormatSupport(format, &supported);
   return (supported & usage) != 0;
@@ -133,12 +128,13 @@ bool CRenderSystemDX::IsFormatSupport(DXGI_FORMAT format, unsigned int usage) co
 
 bool CRenderSystemDX::DestroyRenderSystem()
 {
-  CSingleLock lock(m_resourceSection);
+  std::unique_lock lock(m_resourceSection);
 
   if (m_pGUIShader)
   {
     m_pGUIShader->End();
-    SAFE_DELETE(m_pGUIShader);
+    delete m_pGUIShader;
+    m_pGUIShader = nullptr;
   }
   m_rightEyeTex.Release();
   m_BlendEnableState = nullptr;
@@ -146,30 +142,32 @@ bool CRenderSystemDX::DestroyRenderSystem()
   m_RSScissorDisable = nullptr;
   m_RSScissorEnable = nullptr;
   m_depthStencilState = nullptr;
+  m_depthStencilStateRO = nullptr;
+  m_depthStencilStateRW = nullptr;
 
   return true;
 }
 
 void CRenderSystemDX::CheckInterlacedStereoView()
 {
-  RENDER_STEREO_MODE stereoMode = g_graphicsContext.GetStereoMode();
+  RenderStereoMode stereoMode = CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoMode();
 
-  if ( m_rightEyeTex.Get()
-    && RENDER_STEREO_MODE_INTERLACED    != stereoMode
-    && RENDER_STEREO_MODE_CHECKERBOARD  != stereoMode)
+  if (m_rightEyeTex.Get() && RenderStereoMode::INTERLACED != stereoMode &&
+      RenderStereoMode::CHECKERBOARD != stereoMode)
   {
     m_rightEyeTex.Release();
   }
 
-  if ( !m_rightEyeTex.Get()
-    && ( RENDER_STEREO_MODE_INTERLACED   == stereoMode
-      || RENDER_STEREO_MODE_CHECKERBOARD == stereoMode))
+  if (!m_rightEyeTex.Get() &&
+      (RenderStereoMode::INTERLACED == stereoMode || RenderStereoMode::CHECKERBOARD == stereoMode))
   {
     const auto outputSize = m_deviceResources->GetOutputSize();
-    if (!m_rightEyeTex.Create(outputSize.Width, outputSize.Height, 1, D3D11_USAGE_DEFAULT, DXGI_FORMAT_B8G8R8A8_UNORM))
+    DXGI_FORMAT texFormat = m_deviceResources->GetBackBuffer().GetFormat();
+    if (!m_rightEyeTex.Create(outputSize.Width, outputSize.Height, 1, D3D11_USAGE_DEFAULT, texFormat))
     {
-      CLog::Log(LOGERROR, "%s - Failed to create right eye buffer.", __FUNCTION__);
-      g_graphicsContext.SetStereoMode(RENDER_STEREO_MODE_SPLIT_HORIZONTAL); // try fallback to split horizontal
+      CLog::LogF(LOGERROR, "Failed to create right eye buffer.");
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetStereoMode(
+          RenderStereoMode::SPLIT_HORIZONTAL); // try fallback to split horizontal
     }
     else
       m_deviceResources->Unregister(&m_rightEyeTex); // we will handle its health
@@ -188,8 +186,7 @@ bool CRenderSystemDX::CreateStates()
   m_BlendDisableState = nullptr;
 
   // Initialize the description of the stencil state.
-  D3D11_DEPTH_STENCIL_DESC depthStencilDesc;
-  ZeroMemory(&depthStencilDesc, sizeof(D3D11_DEPTH_STENCIL_DESC));
+  D3D11_DEPTH_STENCIL_DESC depthStencilDesc = {};
 
   // Set up the description of the stencil state.
   depthStencilDesc.DepthEnable = false;
@@ -216,6 +213,19 @@ bool CRenderSystemDX::CreateStates()
   if(FAILED(hr))
     return false;
 
+  // Front to back pass - read & write depth
+  depthStencilDesc.DepthEnable = true;
+  depthStencilDesc.DepthFunc = D3D11_COMPARISON_GREATER;
+  if (FAILED(m_pD3DDev->CreateDepthStencilState(&depthStencilDesc, &m_depthStencilStateRW)))
+    return false;
+
+  // Back to front pass - read depth, don't write it
+  depthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+  depthStencilDesc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+
+  if (FAILED(m_pD3DDev->CreateDepthStencilState(&depthStencilDesc, &m_depthStencilStateRO)))
+    return false;
+
   // Set the depth stencil state.
   m_pContext->OMSetDepthStencilState(m_depthStencilState.Get(), 0);
 
@@ -240,8 +250,7 @@ bool CRenderSystemDX::CreateStates()
 
   m_pContext->RSSetState(m_RSScissorDisable.Get()); // by default
 
-  D3D11_BLEND_DESC blendState = { 0 };
-  ZeroMemory(&blendState, sizeof(D3D11_BLEND_DESC));
+  D3D11_BLEND_DESC blendState = {};
   blendState.RenderTarget[0].BlendEnable = true;
   blendState.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA; // D3D11_BLEND_SRC_ALPHA;
   blendState.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA; // D3D11_BLEND_INV_SRC_ALPHA;
@@ -268,35 +277,33 @@ void CRenderSystemDX::PresentRender(bool rendered, bool videoLayer)
   if (!m_bRenderCreated)
     return;
 
-  if ( rendered 
-    && ( m_stereoMode == RENDER_STEREO_MODE_INTERLACED
-      || m_stereoMode == RENDER_STEREO_MODE_CHECKERBOARD))
+  if (rendered && (m_stereoMode == RenderStereoMode::INTERLACED ||
+                   m_stereoMode == RenderStereoMode::CHECKERBOARD))
   {
     auto m_pContext = m_deviceResources->GetD3DContext();
 
     // all views prepared, let's merge them before present
-    ID3D11RenderTargetView *const views[1] = { m_deviceResources->GetBackBufferRTV() };
-    m_pContext->OMSetRenderTargets(1, views, m_deviceResources->GetDSV());
-    
+    m_pContext->OMSetRenderTargets(1, m_deviceResources->GetBackBuffer().GetAddressOfRTV(), m_deviceResources->GetDSV());
+
     auto outputSize = m_deviceResources->GetOutputSize();
     CRect destRect = { 0.0f, 0.0f, float(outputSize.Width), float(outputSize.Height) };
 
-    SHADER_METHOD method = RENDER_STEREO_MODE_INTERLACED == m_stereoMode
-                           ? SHADER_METHOD_RENDER_STEREO_INTERLACED_RIGHT
-                           : SHADER_METHOD_RENDER_STEREO_CHECKERBOARD_RIGHT;
+    SHADER_METHOD method = RenderStereoMode::INTERLACED == m_stereoMode
+                               ? SHADER_METHOD_RENDER_STEREO_INTERLACED_RIGHT
+                               : SHADER_METHOD_RENDER_STEREO_CHECKERBOARD_RIGHT;
     SetAlphaBlendEnable(true);
-    CD3DTexture::DrawQuad(destRect, 0, &m_rightEyeTex, nullptr, method);
+    CD3DTexture::DrawQuad(destRect, 0, &m_rightEyeTex, nullptr, method, 1.f);
     CD3DHelper::PSClearShaderResources(m_pContext);
   }
 
   // time for decoder that may require the context
   {
-    CSingleLock lock(m_decoderSection);
-    XbmcThreads::EndTime timer;
-    timer.Set(5);
+    std::unique_lock lock(m_decoderSection);
+    XbmcThreads::EndTime<> timer;
+    timer.Set(5ms);
     while (!m_decodingTimer.IsTimePast() && !timer.IsTimePast())
     {
-      m_decodingEvent.wait(lock, 1);
+      m_decodingEvent.wait(lock, 1ms);
     }
   }
 
@@ -305,13 +312,13 @@ void CRenderSystemDX::PresentRender(bool rendered, bool videoLayer)
 
 void CRenderSystemDX::RequestDecodingTime()
 {
-  CSingleLock lock(m_decoderSection);
-  m_decodingTimer.Set(3);
+  std::unique_lock lock(m_decoderSection);
+  m_decodingTimer.Set(3ms);
 }
 
 void CRenderSystemDX::ReleaseDecodingTime()
 {
-  CSingleLock lock(m_decoderSection);
+  std::unique_lock lock(m_decoderSection);
   m_decodingTimer.SetExpired();
   m_decodingEvent.notify();
 }
@@ -321,6 +328,7 @@ bool CRenderSystemDX::BeginRender()
   if (!m_bRenderCreated)
     return false;
 
+  m_limitedColorRange = CServiceBroker::GetWinSystem()->UseLimitedColor();
   m_inScene = m_deviceResources->Begin();
   return m_inScene;
 }
@@ -335,65 +343,87 @@ bool CRenderSystemDX::EndRender()
   return true;
 }
 
-bool CRenderSystemDX::ClearBuffers(color_t color)
+void CRenderSystemDX::InvalidateColorBuffer()
+{
+  if (!m_bRenderCreated)
+    return;
+
+  /* clear is not affected by stipple pattern, so we can only clear on first frame */
+  if (m_stereoMode == RenderStereoMode::INTERLACED && m_stereoView == RenderStereoView::RIGHT)
+    return;
+
+  // some platforms prefer a clear, instead of rendering over
+  if (GetClearFunction() == ClearFunction::FIXED_FUNCTION)
+  {
+    ClearBuffers(0);
+    return;
+  }
+
+  if (!GetEnabledFrontToBackRendering())
+    return;
+
+  m_deviceResources->ClearDepthStencil();
+}
+
+bool CRenderSystemDX::ClearBuffers(KODI::UTILS::COLOR::Color color)
 {
   if (!m_bRenderCreated)
     return false;
 
   float fColor[4];
   CD3DHelper::XMStoreColor(fColor, color);
-  ID3D11RenderTargetView* pRTView = m_deviceResources->GetBackBufferRTV();
+  ID3D11RenderTargetView* pRTView = m_deviceResources->GetBackBuffer().GetRenderTarget();
 
-  if ( m_stereoMode != RENDER_STEREO_MODE_OFF
-    && m_stereoMode != RENDER_STEREO_MODE_MONO)
+  if (m_stereoMode != RenderStereoMode::OFF && m_stereoMode != RenderStereoMode::MONO)
   {
     // if stereo anaglyph/tab/sbs, data was cleared when left view was rendered
-    if (m_stereoView == RENDER_STEREO_VIEW_RIGHT)
+    if (m_stereoView == RenderStereoView::RIGHT)
     {
       // execute command's queue
       m_deviceResources->FinishCommandList();
 
       // do not clear RT for anaglyph modes
-      if ( m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_GREEN_MAGENTA
-        || m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_RED_CYAN
-        || m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_YELLOW_BLUE)
+      if (m_stereoMode == RenderStereoMode::ANAGLYPH_GREEN_MAGENTA ||
+          m_stereoMode == RenderStereoMode::ANAGLYPH_RED_CYAN ||
+          m_stereoMode == RenderStereoMode::ANAGLYPH_YELLOW_BLUE)
       {
         pRTView = nullptr;
       }
       // for interlaced/checkerboard clear view for right texture
-      else if (m_stereoMode == RENDER_STEREO_MODE_INTERLACED
-            || m_stereoMode == RENDER_STEREO_MODE_CHECKERBOARD)
+      else if (m_stereoMode == RenderStereoMode::INTERLACED ||
+               m_stereoMode == RenderStereoMode::CHECKERBOARD)
       {
         pRTView = m_rightEyeTex.GetRenderTarget();
       }
     }
   }
 
-  if (pRTView == nullptr)
-    return true;
-
-  auto outputSize = m_deviceResources->GetOutputSize();
-  CRect clRect(0.0f, 0.0f,
-    static_cast<float>(outputSize.Width),
-    static_cast<float>(outputSize.Height));
-
-  // Unlike Direct3D 9, D3D11 ClearRenderTargetView always clears full extent of the resource view.
-  // Viewport and scissor settings are not applied. So clear RT by drawing full sized rect with clear color
-  if (m_ScissorsEnabled && m_scissor != clRect)
+  if (pRTView)
   {
-    bool alphaEnabled = m_BlendEnabled;
-    if (alphaEnabled)
-      SetAlphaBlendEnable(false);
+    const auto outputSize = m_deviceResources->GetOutputSize();
+    CRect clRect(0.0f, 0.0f, static_cast<float>(outputSize.Width),
+                 static_cast<float>(outputSize.Height));
 
-    CGUITextureD3D::DrawQuad(clRect, color);
+    // Unlike Direct3D 9, D3D11 ClearRenderTargetView always clears full extent of the resource view.
+    // Viewport and scissor settings are not applied. So clear RT by drawing full sized rect with clear color
+    if (m_ScissorsEnabled && m_scissor != clRect)
+    {
+      bool alphaEnabled = m_BlendEnabled;
+      if (alphaEnabled)
+        SetAlphaBlendEnable(false);
 
-    if (alphaEnabled)
-      SetAlphaBlendEnable(true);
+      CGUITextureD3D::DrawQuad(clRect, color);
+
+      if (alphaEnabled)
+        SetAlphaBlendEnable(true);
+    }
+    else
+      m_deviceResources->ClearRenderTarget(pRTView, fColor);
   }
-  else
-    m_deviceResources->ClearRenderTarget(pRTView, fColor);
 
-  m_deviceResources->ClearDepthStencil();
+  if (GetEnabledFrontToBackRendering())
+    m_deviceResources->ClearDepthStencil();
+
   return true;
 }
 
@@ -411,9 +441,10 @@ void CRenderSystemDX::ApplyStateBlock()
   auto m_pContext = m_deviceResources->GetD3DContext();
 
   m_pContext->RSSetState(m_ScissorsEnabled ? m_RSScissorEnable.Get() : m_RSScissorDisable.Get());
-  m_pContext->OMSetDepthStencilState(m_depthStencilState.Get(), 0);
+  m_pContext->OMSetDepthStencilState(GetDepthStencilState(), 0);
   float factors[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-  m_pContext->OMSetBlendState(m_BlendEnabled ? m_BlendEnableState.Get() : m_BlendDisableState.Get(), factors, 0xFFFFFFFF);
+  m_pContext->OMSetBlendState(m_BlendEnabled ? m_BlendEnableState.Get() : m_BlendDisableState.Get(),
+                              factors, 0xFFFFFFFF);
 
   m_pGUIShader->ApplyStateBlock();
 }
@@ -432,7 +463,7 @@ void CRenderSystemDX::SetCameraPosition(const CPoint &camera, int screenWidth, i
   // world view.  Until this is moved onto the GPU (via a vertex shader for instance), we set it to the identity here.
   m_pGUIShader->SetWorld(XMMatrixIdentity());
 
-  // Initialize the view matrix camera view.  
+  // Initialize the view matrix camera view.
   // Multiply the Y coord by -1 then translate so that everything is relative to the camera position.
   XMMATRIX flipY = XMMatrixScaling(1.0, -1.0f, 1.0f);
   XMMATRIX translate = XMMatrixTranslation(-(w + offset.x - stereoFactor), -(h + offset.y), 2 * h);
@@ -456,11 +487,6 @@ CRect CRenderSystemDX::GetBackBufferRect()
   return CRect(0.f, 0.f, static_cast<float>(outputSize.Width), static_cast<float>(outputSize.Height));
 }
 
-bool CRenderSystemDX::TestRender()
-{
-  return true;
-}
-
 void CRenderSystemDX::GetViewPort(CRect& viewPort)
 {
   if (!m_bRenderCreated)
@@ -472,7 +498,7 @@ void CRenderSystemDX::GetViewPort(CRect& viewPort)
   viewPort.y2 = m_viewPort.TopLeftY + m_viewPort.Height;
 }
 
-void CRenderSystemDX::SetViewPort(CRect& viewPort)
+void CRenderSystemDX::SetViewPort(const CRect& viewPort)
 {
   if (!m_bRenderCreated)
     return;
@@ -526,7 +552,7 @@ void CRenderSystemDX::SetScissors(const CRect& rect)
   if (!m_bRenderCreated)
     return;
 
-  auto m_pContext = Get3D11Context();
+  auto m_pContext = m_deviceResources->GetD3DContext();
 
   m_scissor = rect;
   CD3D11_RECT scissor(MathUtils::round_int(rect.x1)
@@ -544,7 +570,7 @@ void CRenderSystemDX::ResetScissors()
   if (!m_bRenderCreated)
     return;
 
-  auto m_pContext = Get3D11Context();
+  auto m_pContext = m_deviceResources->GetD3DContext();
   auto outputSize = m_deviceResources->GetOutputSize();
 
   m_scissor.SetRect(0.0f, 0.0f,
@@ -555,17 +581,39 @@ void CRenderSystemDX::ResetScissors()
   m_ScissorsEnabled = false;
 }
 
+ID3D11DepthStencilState* CRenderSystemDX::GetDepthStencilState()
+{
+  switch (m_depthCulling)
+  {
+    case DepthCulling::BACK_TO_FRONT:
+      return m_depthStencilStateRO.Get();
+    case DepthCulling::FRONT_TO_BACK:
+      return m_depthStencilStateRW.Get();
+    default:
+      return m_depthStencilState.Get();
+  }
+}
+
+void CRenderSystemDX::SetDepthCulling(DepthCulling culling)
+{
+  if (!m_bRenderCreated)
+    return;
+
+  m_depthCulling = culling;
+  m_deviceResources->GetD3DContext()->OMSetDepthStencilState(GetDepthStencilState(), 0);
+}
+
 void CRenderSystemDX::OnDXDeviceLost()
 {
-  DestroyRenderSystem();
+  CRenderSystemDX::DestroyRenderSystem();
 }
 
 void CRenderSystemDX::OnDXDeviceRestored()
 {
-  InitRenderSystem();
+  CRenderSystemDX::InitRenderSystem();
 }
 
-void CRenderSystemDX::SetStereoMode(RENDER_STEREO_MODE mode, RENDER_STEREO_VIEW view)
+void CRenderSystemDX::SetStereoMode(RenderStereoMode mode, RenderStereoView view)
 {
   CRenderSystemBase::SetStereoMode(mode, view);
 
@@ -575,41 +623,40 @@ void CRenderSystemDX::SetStereoMode(RENDER_STEREO_MODE mode, RENDER_STEREO_VIEW 
   auto m_pContext = m_deviceResources->GetD3DContext();
 
   UINT writeMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-  if(m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_RED_CYAN)
+  if (m_stereoMode == RenderStereoMode::ANAGLYPH_RED_CYAN)
   {
-    if(m_stereoView == RENDER_STEREO_VIEW_LEFT)
+    if (m_stereoView == RenderStereoView::LEFT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_RED;
-    else if(m_stereoView == RENDER_STEREO_VIEW_RIGHT)
+    else if (m_stereoView == RenderStereoView::RIGHT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_BLUE | D3D11_COLOR_WRITE_ENABLE_GREEN;
   }
-  if(m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_GREEN_MAGENTA)
+  if (m_stereoMode == RenderStereoMode::ANAGLYPH_GREEN_MAGENTA)
   {
-    if(m_stereoView == RENDER_STEREO_VIEW_LEFT)
+    if (m_stereoView == RenderStereoView::LEFT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_GREEN;
-    else if(m_stereoView == RENDER_STEREO_VIEW_RIGHT)
+    else if (m_stereoView == RenderStereoView::RIGHT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_BLUE | D3D11_COLOR_WRITE_ENABLE_RED;
   }
-  if (m_stereoMode == RENDER_STEREO_MODE_ANAGLYPH_YELLOW_BLUE)
+  if (m_stereoMode == RenderStereoMode::ANAGLYPH_YELLOW_BLUE)
   {
-    if (m_stereoView == RENDER_STEREO_VIEW_LEFT)
+    if (m_stereoView == RenderStereoView::LEFT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN;
-    else if (m_stereoView == RENDER_STEREO_VIEW_RIGHT)
+    else if (m_stereoView == RenderStereoView::RIGHT)
       writeMask = D3D11_COLOR_WRITE_ENABLE_BLUE;
   }
-  if ( RENDER_STEREO_MODE_INTERLACED    == m_stereoMode
-    || RENDER_STEREO_MODE_CHECKERBOARD  == m_stereoMode)
+  if (RenderStereoMode::INTERLACED == m_stereoMode ||
+      RenderStereoMode::CHECKERBOARD == m_stereoMode)
   {
-    if (m_stereoView == RENDER_STEREO_VIEW_RIGHT)
+    if (m_stereoView == RenderStereoView::RIGHT)
     {
       m_pContext->OMSetRenderTargets(1, m_rightEyeTex.GetAddressOfRTV(), m_deviceResources->GetDSV());
     }
   }
-  else if (RENDER_STEREO_MODE_HARDWAREBASED == m_stereoMode)
+  else if (RenderStereoMode::HARDWAREBASED == m_stereoMode)
   {
-    m_deviceResources->SetStereoIdx(m_stereoView == RENDER_STEREO_VIEW_RIGHT ? 1 : 0);
+    m_deviceResources->SetStereoIdx(m_stereoView == RenderStereoView::RIGHT ? 1 : 0);
 
-    ID3D11RenderTargetView* const views[] = { m_deviceResources->GetBackBufferRTV() };
-    m_pContext->OMSetRenderTargets(1, views, m_deviceResources->GetDSV());
+    m_pContext->OMSetRenderTargets(1, m_deviceResources->GetBackBuffer().GetAddressOfRTV(), m_deviceResources->GetDSV());
   }
 
   auto m_pD3DDev = m_deviceResources->GetD3DDevice();
@@ -633,17 +680,17 @@ void CRenderSystemDX::SetStereoMode(RENDER_STEREO_MODE mode, RENDER_STEREO_VIEW 
   }
 }
 
-bool CRenderSystemDX::SupportsStereo(RENDER_STEREO_MODE mode) const
+bool CRenderSystemDX::SupportsStereo(RenderStereoMode mode) const
 {
   switch (mode)
   {
-    case RENDER_STEREO_MODE_ANAGLYPH_RED_CYAN:
-    case RENDER_STEREO_MODE_ANAGLYPH_GREEN_MAGENTA:
-    case RENDER_STEREO_MODE_ANAGLYPH_YELLOW_BLUE:
-    case RENDER_STEREO_MODE_INTERLACED:
-    case RENDER_STEREO_MODE_CHECKERBOARD:
+    case RenderStereoMode::ANAGLYPH_RED_CYAN:
+    case RenderStereoMode::ANAGLYPH_GREEN_MAGENTA:
+    case RenderStereoMode::ANAGLYPH_YELLOW_BLUE:
+    case RenderStereoMode::INTERLACED:
+    case RenderStereoMode::CHECKERBOARD:
       return true;
-    case RENDER_STEREO_MODE_HARDWAREBASED:
+    case RenderStereoMode::HARDWAREBASED:
       return m_deviceResources->IsStereoAvailable();
     default:
       return CRenderSystemBase::SupportsStereo(mode);
@@ -661,11 +708,13 @@ void CRenderSystemDX::FlushGPU() const
 
 bool CRenderSystemDX::InitGUIShader()
 {
-  SAFE_DELETE(m_pGUIShader);
+  delete m_pGUIShader;
+  m_pGUIShader = nullptr;
+
   m_pGUIShader = new CGUIShaderDX();
   if (!m_pGUIShader->Initialize())
   {
-    CLog::Log(LOGERROR, __FUNCTION__ " - Failed to initialize GUI shader.");
+    CLog::LogF(LOGERROR, "Failed to initialize GUI shader.");
     return false;
   }
 
@@ -682,19 +731,17 @@ void CRenderSystemDX::SetAlphaBlendEnable(bool enable)
   m_BlendEnabled = enable;
 }
 
-CD3DTexture* CRenderSystemDX::GetBackBuffer()
+CD3DTexture& CRenderSystemDX::GetBackBuffer()
 {
-  if (m_stereoView == RENDER_STEREO_VIEW_RIGHT && m_rightEyeTex.Get())
-    return &m_rightEyeTex;
+  if (m_stereoView == RenderStereoView::RIGHT && m_rightEyeTex.Get())
+    return m_rightEyeTex;
 
   return m_deviceResources->GetBackBuffer();
 }
 
 void CRenderSystemDX::CheckDeviceCaps()
 {
-  HRESULT hr;
-
-  auto feature_level = m_deviceResources->GetDeviceFeatureLevel();
+  const auto feature_level = m_deviceResources->GetDeviceFeatureLevel();
   if (feature_level < D3D_FEATURE_LEVEL_9_3)
     m_maxTextureSize = D3D_FL9_1_REQ_TEXTURE2D_U_OR_V_DIMENSION;
   else if (feature_level < D3D_FEATURE_LEVEL_10_0)
@@ -704,128 +751,16 @@ void CRenderSystemDX::CheckDeviceCaps()
   else
     // 11_x and greater feature level. Limit this size to avoid memory overheads
     m_maxTextureSize = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION >> 1;
+}
 
-  m_renderCaps = 0;
-  unsigned int usage = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
-
-  if ( IsFormatSupport(DXGI_FORMAT_BC1_UNORM, usage)
-    && IsFormatSupport(DXGI_FORMAT_BC2_UNORM, usage)
-    && IsFormatSupport(DXGI_FORMAT_BC3_UNORM, usage))
-    m_renderCaps |= RENDER_CAPS_DXT;
-
-  // MSDN: At feature levels 9_1, 9_2 and 9_3, the display device supports the use of 2D textures with dimensions that are not powers of two under two conditions.
-  // First, only one MIP-map level for each texture can be created - we are using only 1 mip level)
-  // Second, no wrap sampler modes for textures are allowed - we are using clamp everywhere
+bool CRenderSystemDX::SupportsNPOT(bool dxt) const
+{
+  // MSDN says:
+  // At feature levels 9_1, 9_2 and 9_3, the display device supports the use
+  // of 2D textures with dimensions that are not powers of two under two conditions:
+  // 1) only one MIP-map level for each texture can be created - we are using both 1 and 0 mipmap levels
+  // 2) no wrap sampler modes for textures are allowed - we are using clamp everywhere
   // At feature levels 10_0, 10_1 and 11_0, the display device unconditionally supports the use of 2D textures with dimensions that are not powers of two.
-  // so, setup caps NPOT
-  m_renderCaps |= feature_level > D3D_FEATURE_LEVEL_9_3 ? RENDER_CAPS_NPOT : 0;
-  if ((m_renderCaps & RENDER_CAPS_DXT) != 0)
-  {
-    if (feature_level > D3D_FEATURE_LEVEL_9_3 ||
-      (!IsFormatSupport(DXGI_FORMAT_BC1_UNORM, D3D11_FORMAT_SUPPORT_MIP_AUTOGEN)
-        && !IsFormatSupport(DXGI_FORMAT_BC2_UNORM, D3D11_FORMAT_SUPPORT_MIP_AUTOGEN)
-        && !IsFormatSupport(DXGI_FORMAT_BC3_UNORM, D3D11_FORMAT_SUPPORT_MIP_AUTOGEN)))
-      m_renderCaps |= RENDER_CAPS_DXT_NPOT;
-  }
-
-  // Temporary - allow limiting the caps to debug a texture problem
-  if (g_advancedSettings.m_RestrictCapsMask != 0)
-    m_renderCaps &= ~g_advancedSettings.m_RestrictCapsMask;
-
-  if (m_renderCaps & RENDER_CAPS_DXT)
-    CLog::Log(LOGDEBUG, "%s - RENDER_CAPS_DXT", __FUNCTION__);
-  if (m_renderCaps & RENDER_CAPS_NPOT)
-    CLog::Log(LOGDEBUG, "%s - RENDER_CAPS_NPOT", __FUNCTION__);
-  if (m_renderCaps & RENDER_CAPS_DXT_NPOT)
-    CLog::Log(LOGDEBUG, "%s - RENDER_CAPS_DXT_NPOT", __FUNCTION__);
-
-  m_processorFormats.clear();
-  m_sharedFormats.clear();
-  m_shaderFormats.clear();
-
-  // check video buffer caps
-  ComPtr<ID3D11Device> d3d11Dev(m_deviceResources->GetD3DDevice());
-  ComPtr<ID3D11DeviceContext> ctx(m_deviceResources->GetImmediateContext());
-  ComPtr<ID3D11VideoDevice> videoDev;
-  ComPtr<ID3D11VideoContext> videoCtx;
-  CD3D11_TEXTURE2D_DESC texDesc(DXGI_FORMAT_NV12, 1920, 1080, 1, 1, D3D11_BIND_DECODER, D3D11_USAGE_DEFAULT, 0);
-
-  if (SUCCEEDED(d3d11Dev.As(&videoDev)) && SUCCEEDED(ctx.As(&videoCtx)))
-  {
-    // VA decoding/rendering exists, let's check caps
-#ifdef _M_ARM
-    bool isNotArm = false;
-#else
-    // possible fast converting on x86/x64
-    bool isNotArm = true;
-#endif
-    // check renderer formats
-    texDesc.Usage = D3D11_USAGE_DYNAMIC;
-    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      m_processorFormats.push_back(AV_PIX_FMT_NV12);
-      if (isNotArm)
-        m_processorFormats.push_back(AV_PIX_FMT_YUV420P);
-    }
-    texDesc.Format = DXGI_FORMAT_P010;
-    if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      m_processorFormats.push_back(AV_PIX_FMT_P010);
-      if (isNotArm)
-        m_processorFormats.push_back(AV_PIX_FMT_YUV420P10);
-    }
-    texDesc.Format = DXGI_FORMAT_P016;
-    if (SUCCEEDED(hr = d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      //m_processorFormats.push_back(AV_PIX_FMT_P016);
-      if (isNotArm)
-        m_processorFormats.push_back(AV_PIX_FMT_YUV420P16);
-    }
-
-    // check shared formats between d3d11va and shaders
-    texDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
-    texDesc.Format = DXGI_FORMAT_NV12;
-    if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      m_sharedFormats.push_back(AV_PIX_FMT_NV12);
-      if (isNotArm)
-        m_sharedFormats.push_back(AV_PIX_FMT_YUV420P);
-    }
-    texDesc.Format = DXGI_FORMAT_P010;
-    if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      m_sharedFormats.push_back(AV_PIX_FMT_P010);
-      if (isNotArm)
-        m_sharedFormats.push_back(AV_PIX_FMT_YUV420P10);
-    }
-    texDesc.Format = DXGI_FORMAT_P016;
-    if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-    {
-      //m_sharedFormats.push_back(AV_PIX_FMT_P016);
-      if (isNotArm)
-        m_sharedFormats.push_back(AV_PIX_FMT_YUV420P16);
-    }
-  }
-
-  // common shader formats
-  texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  texDesc.Format = DXGI_FORMAT_R8_UNORM;
-  if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-  {
-    m_shaderFormats.push_back(AV_PIX_FMT_YUV420P);
-    m_shaderFormats.push_back(AV_PIX_FMT_NV12);
-  }
-  texDesc.Format = DXGI_FORMAT_R16_UNORM;
-  if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-  {
-    m_shaderFormats.push_back(AV_PIX_FMT_YUV420P10);
-    m_shaderFormats.push_back(AV_PIX_FMT_YUV420P16);
-  }
-  texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-  if (SUCCEEDED(d3d11Dev->CreateTexture2D(&texDesc, nullptr, nullptr)))
-  {
-    m_shaderFormats.push_back(AV_PIX_FMT_YUYV422);
-    m_shaderFormats.push_back(AV_PIX_FMT_UYVY422);
-  }
+  // taking in account first condition we setup caps NPOT for FE > 9.x only
+  return m_deviceResources->GetDeviceFeatureLevel() > D3D_FEATURE_LEVEL_9_3 ? true : false;
 }

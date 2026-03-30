@@ -1,31 +1,19 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include "TextureCacheJob.h"
+#include "dbwrappers/Database.h"
+#include "dbwrappers/DatabaseQuery.h"
+
 #include <string>
 #include <vector>
-
-#include "dbwrappers/Database.h"
-#include "TextureCacheJob.h"
-#include "dbwrappers/DatabaseQuery.h"
 
 class CVariant;
 
@@ -40,31 +28,11 @@ protected:
   int                 TranslateField(const char *field) const override;
   std::string         TranslateField(int field) const override;
   std::string         GetField(int field, const std::string& type) const override;
-  FIELD_TYPE          GetFieldType(int field) const override;
+  CDatabaseQueryRule::FieldType GetFieldType(int field) const override;
   std::string         FormatParameter(const std::string &negate,
                                               const std::string &oper,
                                               const CDatabase &db,
                                               const std::string &type) const override;
-};
-
-class CTextureUtils
-{
-public:
-  /*! \brief retrieve a wrapped URL for a image file
-   \param image name of the file
-   \param type signifies a special type of image (eg embedded video thumb, picture folder thumb)
-   \param options which options we need (eg size=thumb)
-   \return full wrapped URL of the image file
-   */
-  static std::string GetWrappedImageURL(const std::string &image, const std::string &type = "", const std::string &options = "");
-  static std::string GetWrappedThumbURL(const std::string &image);
-
-  /*! \brief Unwrap an image://<url_encoded_path> style URL
-   Such urls are used for art over the webserver or other users of the VFS
-   \param image url of the image
-   \return the unwrapped URL, or the original URL if unwrapping is inappropriate.
-   */
-  static std::string UnwrapImageURL(const std::string &image);
 };
 
 class CTextureDatabase : public CDatabase, public IDatabaseQueryRuleFactory
@@ -118,6 +86,20 @@ public:
 
   bool GetTextures(CVariant &items, const Filter &filter);
 
+  /*!
+   * @brief Get a list of the oldest cached images eligible for cleaning.
+   * @param maxImages the maximum number of images to return
+   * @return
+   */
+  std::vector<std::string> GetOldestCachedImages(unsigned int maxImages) const;
+
+  /*!
+   * @brief Set a list of images to be kept. Used to clean the image cache.
+   * @param imagesToKeep
+   * @return
+   */
+  bool SetKeepCachedImages(const std::vector<std::string>& imagesToKeep);
+
   // rule creation
   CDatabaseQueryRule *CreateRule() const override;
   CDatabaseQueryRuleCombination *CreateCombination() const override;
@@ -132,6 +114,6 @@ protected:
   void CreateTables() override;
   void CreateAnalytics() override;
   void UpdateTables(int version) override;
-  int GetSchemaVersion() const override { return 13; };
-  const char *GetBaseDBName() const override { return "Textures"; };
+  int GetSchemaVersion() const override { return 14; }
+  const char* GetBaseDBName() const override { return "Textures"; }
 };

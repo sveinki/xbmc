@@ -57,8 +57,7 @@ PLT_DeviceData::PLT_DeviceData(NPT_HttpUrl      description_url,
     m_DeviceType(device_type),
     m_FriendlyName(friendly_name),
     m_BootId(0),
-    m_NextBootId(0),
-    m_ConfigId(-1)
+    m_NextBootId(0)
 {
     if (uuid == NULL || strlen(uuid) == 0) {
         PLT_UPnPMessageHelper::GenerateGUID(m_UUID);
@@ -367,7 +366,7 @@ template <class T>
 class PLT_GetDescriptionIterator
 {
 public:
-    PLT_GetDescriptionIterator<T>(NPT_XmlElementNode* parent) :
+    PLT_GetDescriptionIterator(NPT_XmlElementNode* parent) :
       m_Parent(parent) {}
 
       NPT_Result operator()(T& data) const {

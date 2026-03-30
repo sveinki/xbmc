@@ -1,42 +1,33 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DirectoryNodeAlbumTop100.h"
-#include "music/MusicDatabase.h"
+
 #include "FileItem.h"
+#include "FileItemList.h"
+#include "music/Album.h"
+#include "music/MusicDatabase.h"
 #include "utils/StringUtils.h"
 
 using namespace XFILE::MUSICDATABASEDIRECTORY;
 
-CDirectoryNodeAlbumTop100::CDirectoryNodeAlbumTop100(const std::string& strName, CDirectoryNode* pParent)
-  : CDirectoryNode(NODE_TYPE_ALBUM_TOP100, strName, pParent)
+CDirectoryNodeAlbumTop100::CDirectoryNodeAlbumTop100(const std::string& strName,
+                                                     CDirectoryNode* pParent)
+  : CDirectoryNode(NodeType::ALBUM_TOP100, strName, pParent)
 {
-
 }
 
-NODE_TYPE CDirectoryNodeAlbumTop100::GetChildType() const
+NodeType CDirectoryNodeAlbumTop100::GetChildType() const
 {
-  if (GetName()=="-1")
-    return NODE_TYPE_ALBUM_TOP100_SONGS;
+  if (GetName() == "-1")
+    return NodeType::ALBUM_TOP100_SONGS;
 
-  return NODE_TYPE_SONG;
+  return NodeType::SONG;
 }
 
 std::string CDirectoryNodeAlbumTop100::GetLocalizedName() const
@@ -53,17 +44,16 @@ bool CDirectoryNodeAlbumTop100::GetContent(CFileItemList& items) const
   if (!musicdatabase.Open())
     return false;
 
-  VECALBUMS albums;
+  std::vector<CAlbum> albums;
   if (!musicdatabase.GetTop100Albums(albums))
   {
     musicdatabase.Close();
     return false;
   }
 
-  for (int i=0; i<(int)albums.size(); ++i)
+  for (const CAlbum& album : albums)
   {
-    CAlbum& album=albums[i];
-    std::string strDir = StringUtils::Format("%s%ld/", BuildPath().c_str(), album.idAlbum);
+    std::string strDir = StringUtils::Format("{}{}/", BuildPath(), album.idAlbum);
     CFileItemPtr pItem(new CFileItem(strDir, album));
     items.Add(pItem);
   }

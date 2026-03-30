@@ -1,53 +1,41 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 /*!
 \file GUIFont.h
 \brief
 */
 
-#ifndef CGUILIB_GUIFONTTTF_DX_H
-#define CGUILIB_GUIFONTTTF_DX_H
-#pragma once
-
 #include "D3DResource.h"
 #include "GUIFontTTF.h"
+
 #include <list>
+#include <memory>
 #include <vector>
 
-#define ELEMENT_ARRAY_MAX_CHAR_INDEX (2000)
+#include <wrl/client.h>
 
 /*!
  \ingroup textures
  \brief
  */
-class CGUIFontTTFDX : public CGUIFontTTFBase, public ID3DResource
+class CGUIFontTTFDX : public CGUIFontTTF, public ID3DResource
 {
 public:
-  CGUIFontTTFDX(const std::string& strFileName);
+  explicit CGUIFontTTFDX(const std::string& fontIdent);
   virtual ~CGUIFontTTFDX(void);
 
   bool FirstBegin() override;
   void LastEnd() override;
-  CVertexBuffer CreateVertexBuffer(const std::vector<SVertex> &vertices) const override;
-  void DestroyVertexBuffer(CVertexBuffer &bufferHandle) const override;
+  CVertexBuffer CreateVertexBuffer(const std::vector<SVertex>& vertices) const override;
+  void DestroyVertexBuffer(CVertexBuffer& bufferHandle) const override;
 
   void OnDestroyDevice(bool fatal) override;
   void OnCreateDevice() override;
@@ -56,8 +44,12 @@ public:
   static void DestroyStaticIndexBuffer(void);
 
 protected:
-  CBaseTexture* ReallocTexture(unsigned int& newHeight) override;
-  bool CopyCharToTexture(FT_BitmapGlyph bitGlyph, unsigned int x1, unsigned int y1, unsigned int x2, unsigned int y2) override;
+  std::unique_ptr<CTexture> ReallocTexture(unsigned int& newHeight) override;
+  bool CopyCharToTexture(FT_BitmapGlyph bitGlyph,
+                         unsigned int x1,
+                         unsigned int y1,
+                         unsigned int x2,
+                         unsigned int y2) override;
   void DeleteHardwareTexture() override;
 
 private:
@@ -65,14 +57,11 @@ private:
   static void AddReference(CGUIFontTTFDX* font, CD3DBuffer* pBuffer);
   static void ClearReference(CGUIFontTTFDX* font, CD3DBuffer* pBuffer);
 
-  CD3DTexture*           m_speedupTexture;  // extra texture to speed up reallocations when the main texture is in d3dpool_default.
-                                            // that's the typical situation of Windows Vista and above.
-  ID3D11Buffer*          m_vertexBuffer;
-  unsigned               m_vertexWidth;
+  unsigned m_vertexWidth{0};
+  std::unique_ptr<CD3DTexture> m_speedupTexture; // extra texture to speed up reallocations
+  Microsoft::WRL::ComPtr<ID3D11Buffer> m_vertexBuffer;
   std::list<CD3DBuffer*> m_buffers;
 
-  static bool            m_staticIndexBufferCreated;
-  static ID3D11Buffer*   m_staticIndexBuffer;
+  static bool m_staticIndexBufferCreated;
+  static Microsoft::WRL::ComPtr<ID3D11Buffer> m_staticIndexBuffer;
 };
-
-#endif

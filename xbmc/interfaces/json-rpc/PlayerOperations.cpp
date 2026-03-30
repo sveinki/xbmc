@@ -1,78 +1,118 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PlayerOperations.h"
-#include "Application.h"
-#include "PlayListPlayer.h"
-#include "guilib/GUIWindowManager.h"
-#include "input/Key.h"
-#include "GUIUserMessages.h"
-#include "pictures/GUIWindowSlideShow.h"
-#include "interfaces/builtins/Builtins.h"
-#include "PartyModeManager.h"
-#include "messaging/ApplicationMessenger.h"
-#include "FileItem.h"
-#include "VideoLibrary.h"
-#include "video/VideoDatabase.h"
-#include "AudioLibrary.h"
-#include "GUIInfoManager.h"
-#include "music/MusicDatabase.h"
-#include "pvr/PVRManager.h"
-#include "pvr/channels/PVRChannel.h"
-#include "pvr/channels/PVRChannelGroupsContainer.h"
-#include "pvr/epg/EpgInfoTag.h"
-#include "pvr/recordings/PVRRecordings.h"
-#include "cores/IPlayer.h"
-#include "cores/playercorefactory/PlayerCoreFactory.h"
-#include "utils/SeekHandler.h"
-#include "utils/Variant.h"
 
+#include "AudioLibrary.h"
+#include "FileItem.h"
+#include "FileItemList.h"
+#include "GUIInfoManager.h"
+#include "GUIUserMessages.h"
+#include "PartyModeManager.h"
+#include "PlayListPlayer.h"
+#include "SeekHandler.h"
+#include "ServiceBroker.h"
+#include "Util.h"
+#include "VideoLibrary.h"
+#include "application/Application.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationPlayer.h"
+#include "application/ApplicationPowerHandling.h"
+#include "cores/playercorefactory/PlayerCoreFactory.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "interfaces/builtins/Builtins.h"
+#include "messaging/ApplicationMessenger.h"
+#include "music/MusicDatabase.h"
+#include "music/MusicFileItemClassify.h"
+#include "pictures/SlideShowDelegator.h"
+#include "pvr/PVRManager.h"
+#include "pvr/PVRPlaybackState.h"
+#include "pvr/channels/PVRChannel.h"
+#include "pvr/channels/PVRChannelGroupMember.h"
+#include "pvr/channels/PVRChannelGroupsContainer.h"
+#include "pvr/epg/EpgContainer.h"
+#include "pvr/epg/EpgInfoTag.h"
+#include "pvr/guilib/PVRGUIActionsChannels.h"
+#include "pvr/guilib/PVRGUIActionsPlayback.h"
+#include "pvr/recordings/PVRRecordings.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/DisplaySettings.h"
+#include "settings/MediaSettings.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/MathUtils.h"
+#include "utils/PlayerUtils.h"
+#include "utils/URIUtils.h"
+#include "utils/Variant.h"
+#include "video/VideoDatabase.h"
+
+#include <map>
+#include <tuple>
+
+using namespace KODI;
 using namespace JSONRPC;
-using namespace PLAYLIST;
 using namespace PVR;
-using namespace KODI::MESSAGING;
+
+namespace
+{
+
+void AppendAudioStreamFlagsAsBooleans(CVariant& list, StreamFlags flags)
+{
+  list["isdefault"] = ((flags & StreamFlags::FLAG_DEFAULT) != 0);
+  list["isoriginal"] = ((flags & StreamFlags::FLAG_ORIGINAL) != 0);
+  list["isimpaired"] = ((flags & StreamFlags::FLAG_VISUAL_IMPAIRED) != 0);
+}
+
+void AppendSubtitleStreamFlagsAsBooleans(CVariant& list, StreamFlags flags)
+{
+  list["isdefault"] = ((flags & StreamFlags::FLAG_DEFAULT) != 0);
+  list["isforced"] = ((flags & StreamFlags::FLAG_FORCED) != 0);
+  list["isimpaired"] = ((flags & StreamFlags::FLAG_HEARING_IMPAIRED) != 0);
+}
+
+} // namespace
 
 JSONRPC_STATUS CPlayerOperations::GetActivePlayers(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
   int activePlayers = GetActivePlayers();
   result = CVariant(CVariant::VariantTypeArray);
 
+  std::string strPlayerType = "internal";
+  if (activePlayers & External)
+    strPlayerType = "external";
+  else if (activePlayers & Remote)
+    strPlayerType = "remote";
+
   if (activePlayers & Video)
   {
     CVariant video = CVariant(CVariant::VariantTypeObject);
-    video["playerid"] = GetPlaylist(Video);
+    video["playerid"] = static_cast<int>(GetPlaylist(Video));
     video["type"] = "video";
+    video["playertype"] = strPlayerType;
     result.append(video);
   }
   if (activePlayers & Audio)
   {
     CVariant audio = CVariant(CVariant::VariantTypeObject);
-    audio["playerid"] = GetPlaylist(Audio);
+    audio["playerid"] = static_cast<int>(GetPlaylist(Audio));
     audio["type"] = "audio";
+    audio["playertype"] = strPlayerType;
     result.append(audio);
   }
   if (activePlayers & Picture)
   {
     CVariant picture = CVariant(CVariant::VariantTypeObject);
-    picture["playerid"] = GetPlaylist(Picture);
+    picture["playerid"] = static_cast<int>(GetPlaylist(Picture));
     picture["type"] = "picture";
+    picture["playertype"] = "internal";
     result.append(picture);
   }
 
@@ -81,30 +121,32 @@ JSONRPC_STATUS CPlayerOperations::GetActivePlayers(const std::string &method, IT
 
 JSONRPC_STATUS CPlayerOperations::GetPlayers(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
+  const CPlayerCoreFactory &playerCoreFactory = CServiceBroker::GetPlayerCoreFactory();
+
   std::string media = parameterObject["media"].asString();
   result = CVariant(CVariant::VariantTypeArray);
   std::vector<std::string> players;
 
   if (media == "all")
   {
-    CPlayerCoreFactory::GetInstance().GetPlayers(players);
+    playerCoreFactory.GetPlayers(players);
   }
   else
   {
     bool video = false;
     if (media == "video")
       video = true;
-    CPlayerCoreFactory::GetInstance().GetPlayers(players, true, video);
+    playerCoreFactory.GetPlayers(players, true, video);
   }
 
-  for (auto playername: players)
+  for (const auto& playername : players)
   {
     CVariant player(CVariant::VariantTypeObject);
     player["name"] = playername;
 
-    player["playsvideo"] = CPlayerCoreFactory::GetInstance().PlaysVideo(playername);
-    player["playsaudio"] = CPlayerCoreFactory::GetInstance().PlaysAudio(playername);
-    player["type"] = CPlayerCoreFactory::GetInstance().GetPlayerType(playername);
+    player["playsvideo"] = playerCoreFactory.PlaysVideo(playername);
+    player["playsaudio"] = playerCoreFactory.PlaysAudio(playername);
+    player["type"] = playerCoreFactory.GetPlayerType(playername);
 
     result.push_back(player);
   }
@@ -143,51 +185,33 @@ JSONRPC_STATUS CPlayerOperations::GetItem(const std::string &method, ITransportL
     case Video:
     case Audio:
     {
-      fileItem = CFileItemPtr(new CFileItem(g_application.CurrentFileItem()));
-      if (IsPVRChannel())
-      {
-        CPVRChannelPtr currentChannel(CServiceBroker::GetPVRManager().GetCurrentChannel());
-        if (currentChannel)
-          fileItem = CFileItemPtr(new CFileItem(currentChannel));
-      }
-      else if (player == Video)
-      {
-        if (!CVideoLibrary::FillFileItem(g_application.CurrentFile(), fileItem, parameterObject))
-        {
-          const CVideoInfoTag *currentVideoTag = g_infoManager.GetCurrentMovieTag();
-          if (currentVideoTag != NULL)
-          {
-            std::string originalLabel = fileItem->GetLabel();
-            fileItem->SetFromVideoInfoTag(*currentVideoTag);
-            if (fileItem->GetLabel().empty())
-              fileItem->SetLabel(originalLabel);
-          }
-          fileItem->SetPath(g_application.CurrentFileItem().GetPath());
-        }
-      }
-      else
-      {
-        if (!CAudioLibrary::FillFileItem(g_application.CurrentFile(), fileItem, parameterObject))
-        {
-          const MUSIC_INFO::CMusicInfoTag *currentMusicTag = g_infoManager.GetCurrentSongTag();
-          if (currentMusicTag != NULL)
-          {
-            std::string originalLabel = fileItem->GetLabel();
-            fileItem->SetFromMusicInfoTag(*currentMusicTag);
-            if (fileItem->GetLabel().empty())
-              fileItem->SetLabel(originalLabel);
-          }
-          fileItem->SetPath(g_application.CurrentFileItem().GetPath());
-        }
-      }
-
+      fileItem = std::make_shared<CFileItem>(g_application.CurrentFileItem());
       if (IsPVRChannel())
         break;
 
       if (player == Video)
       {
+        if (!CVideoLibrary::FillFileItem(fileItem->GetPath(), fileItem, parameterObject))
+        {
+          // Fallback to item details held by GUI but ensure path unchanged
+          //! @todo  remove this once there is no route to playback that updates
+          // GUI item without also updating app item e.g. start playback of a
+          // non-library item via JSON
+          const CVideoInfoTag *currentVideoTag = CServiceBroker::GetGUI()->GetInfoManager().GetCurrentMovieTag();
+          if (currentVideoTag != NULL)
+          {
+            std::string originalLabel = fileItem->GetLabel();
+            std::string originalPath = fileItem->GetPath();
+            fileItem->SetFromVideoInfoTag(*currentVideoTag);
+            if (fileItem->GetLabel().empty())
+              fileItem->SetLabel(originalLabel);
+            fileItem->SetPath(originalPath);   // Ensure path unchanged
+          }
+        }
+
         bool additionalInfo = false;
-        for (CVariant::const_iterator_array itr = parameterObject["properties"].begin_array(); itr != parameterObject["properties"].end_array(); itr++)
+        for (CVariant::const_iterator_array itr = parameterObject["properties"].begin_array();
+             itr != parameterObject["properties"].end_array(); ++itr)
         {
           std::string fieldValue = itr->asString();
           if (fieldValue == "cast" || fieldValue == "set" || fieldValue == "setid" || fieldValue == "showlink" || fieldValue == "resume" ||
@@ -199,35 +223,56 @@ JSONRPC_STATUS CPlayerOperations::GetItem(const std::string &method, ITransportL
         if ((additionalInfo) &&
             videodatabase.Open())
         {
-          if (additionalInfo)
+          switch (fileItem->GetVideoContentType())
           {
-            switch (fileItem->GetVideoContentType())
-            {
-              case VIDEODB_CONTENT_MOVIES:
-                videodatabase.GetMovieInfo("", *(fileItem->GetVideoInfoTag()), fileItem->GetVideoInfoTag()->m_iDbId);
-                break;
+            case VideoDbContentType::MOVIES:
+              videodatabase.GetMovieInfo("", *(fileItem->GetVideoInfoTag()),
+                                         fileItem->GetVideoInfoTag()->m_iDbId,
+                                         fileItem->GetVideoInfoTag()->GetAssetInfo().GetId(),
+                                         fileItem->GetVideoInfoTag()->m_iFileId);
+              break;
 
-              case VIDEODB_CONTENT_MUSICVIDEOS:
-                videodatabase.GetMusicVideoInfo("", *(fileItem->GetVideoInfoTag()), fileItem->GetVideoInfoTag()->m_iDbId);
-                break;
+            case VideoDbContentType::MUSICVIDEOS:
+              videodatabase.GetMusicVideoInfo("", *(fileItem->GetVideoInfoTag()),
+                                              fileItem->GetVideoInfoTag()->m_iDbId);
+              break;
 
-              case VIDEODB_CONTENT_EPISODES:
-                videodatabase.GetEpisodeInfo("", *(fileItem->GetVideoInfoTag()), fileItem->GetVideoInfoTag()->m_iDbId);
-                break;
+            case VideoDbContentType::EPISODES:
+              videodatabase.GetEpisodeInfo("", *(fileItem->GetVideoInfoTag()),
+                                           fileItem->GetVideoInfoTag()->m_iDbId);
+              break;
 
-              case VIDEODB_CONTENT_TVSHOWS:
-              case VIDEODB_CONTENT_MOVIE_SETS:
-              default:
-                break;
-            }
+            case VideoDbContentType::TVSHOWS:
+            case VideoDbContentType::MOVIE_SETS:
+            default:
+              break;
           }
 
           videodatabase.Close();
         }
       }
-      else if (player == Audio)
+      else // Audio
       {
-        if (fileItem->IsMusicDb())
+        if (!CAudioLibrary::FillFileItem(fileItem->GetPath(), fileItem, parameterObject))
+        {
+          // Fallback to item details held by GUI but ensure path unchanged
+          //! @todo  remove this once there is no route to playback that updates
+          // GUI item without also updating app item e.g. start playback of a
+          // non-library item via JSON
+          const MUSIC_INFO::CMusicInfoTag* currentMusicTag =
+              CServiceBroker::GetGUI()->GetInfoManager().GetCurrentSongTag();
+          if (currentMusicTag != NULL)
+          {
+            std::string originalLabel = fileItem->GetLabel();
+            std::string originalPath = fileItem->GetPath();
+            fileItem->SetFromMusicInfoTag(*currentMusicTag);
+            if (fileItem->GetLabel().empty())
+              fileItem->SetLabel(originalLabel);
+            fileItem->SetPath(originalPath); // Ensure path unchanged
+          }
+        }
+
+        if (MUSIC::IsMusicDb(*fileItem))
         {
           CMusicDatabase musicdb;
           CFileItemList items;
@@ -240,13 +285,10 @@ JSONRPC_STATUS CPlayerOperations::GetItem(const std::string &method, ITransportL
 
     case Picture:
     {
-      CGUIWindowSlideShow *slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-      if (!slideshow)
-        return FailedToExecute;
-
+      CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
       CFileItemList slides;
-      slideshow->GetSlideShowContents(slides);
-      fileItem = slides[slideshow->CurrentSlide() - 1];
+      slideShow.GetSlideShowContents(slides);
+      fileItem = slides[slideShow.CurrentSlide() - 1];
       break;
     }
 
@@ -261,44 +303,47 @@ JSONRPC_STATUS CPlayerOperations::GetItem(const std::string &method, ITransportL
 
 JSONRPC_STATUS CPlayerOperations::PlayPause(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
-  CGUIWindowSlideShow *slideshow = NULL;
   switch (GetPlayer(parameterObject["playerid"]))
   {
     case Video:
     case Audio:
-      if (!g_application.m_pPlayer->CanPause())
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      if (!appPlayer->CanPause())
         return FailedToExecute;
-      
+
       if (parameterObject["play"].isString())
         CBuiltins::GetInstance().Execute("playercontrol(play)");
       else
       {
         if (parameterObject["play"].asBoolean())
         {
-          if (g_application.m_pPlayer->IsPausedPlayback())
-            CApplicationMessenger::GetInstance().SendMsg(TMSG_MEDIA_PAUSE);
-          else if (g_application.m_pPlayer->GetPlaySpeed() != 1)
-            g_application.m_pPlayer->SetPlaySpeed(1);
+          if (appPlayer->IsPausedPlayback())
+            CServiceBroker::GetAppMessenger()->SendMsg(TMSG_MEDIA_PAUSE);
+          else if (appPlayer->GetPlaySpeed() != 1)
+            appPlayer->SetPlaySpeed(1);
         }
-        else if (!g_application.m_pPlayer->IsPausedPlayback())
-          CApplicationMessenger::GetInstance().SendMsg(TMSG_MEDIA_PAUSE);
+        else if (!appPlayer->IsPausedPlayback())
+          CServiceBroker::GetAppMessenger()->SendMsg(TMSG_MEDIA_PAUSE);
       }
-      result["speed"] = g_application.m_pPlayer->IsPausedPlayback() ? 0 : (int)lrint(g_application.m_pPlayer->GetPlaySpeed());
+      result["speed"] = appPlayer->IsPausedPlayback() ? 0 : (int)lrint(appPlayer->GetPlaySpeed());
       return OK;
-
+    }
     case Picture:
-      slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-      if (slideshow && slideshow->IsPlaying() &&
-         (parameterObject["play"].isString() ||
-         (parameterObject["play"].isBoolean() && parameterObject["play"].asBoolean() == slideshow->IsPaused())))
+    {
+      CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+      if (slideShow.IsPlaying() && (parameterObject["play"].isString() ||
+                                    (parameterObject["play"].isBoolean() &&
+                                     parameterObject["play"].asBoolean() == slideShow.IsPaused())))
         SendSlideshowAction(ACTION_PAUSE);
 
-      if (slideshow && slideshow->IsPlaying() && !slideshow->IsPaused())
-        result["speed"] = slideshow->GetDirection();
+      if (slideShow.IsPlaying() && !slideShow.IsPaused())
+        result["speed"] = slideShow.GetDirection();
       else
         result["speed"] = 0;
       return OK;
-
+    }
     case None:
     default:
       return FailedToExecute;
@@ -311,7 +356,8 @@ JSONRPC_STATUS CPlayerOperations::Stop(const std::string &method, ITransportLaye
   {
     case Video:
     case Audio:
-      CApplicationMessenger::GetInstance().SendMsg(TMSG_MEDIA_STOP, static_cast<int>(parameterObject["playerid"].asInteger()));
+      CServiceBroker::GetAppMessenger()->PostMsg(
+          TMSG_MEDIA_STOP, static_cast<int>(parameterObject["playerid"].asInteger()));
       return ACK;
 
     case Picture:
@@ -324,24 +370,99 @@ JSONRPC_STATUS CPlayerOperations::Stop(const std::string &method, ITransportLaye
   }
 }
 
+JSONRPC_STATUS CPlayerOperations::GetAudioDelay(const std::string& method,
+                                                ITransportLayer* transport,
+                                                IClient* client,
+                                                const CVariant& parameterObject,
+                                                CVariant& result)
+{
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+  result["offset"] = appPlayer->GetVideoSettings().m_AudioDelay;
+  return OK;
+}
+
+JSONRPC_STATUS CPlayerOperations::SetAudioDelay(const std::string& method,
+                                                ITransportLayer* transport,
+                                                IClient* client,
+                                                const CVariant& parameterObject,
+                                                CVariant& result)
+{
+  switch (GetPlayer(parameterObject["playerid"]))
+  {
+    case Video:
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      float videoAudioDelayRange =
+          CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoAudioDelayRange;
+      float videoAudioDelayStep =
+          CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoAudioDelayStep;
+
+      if (parameterObject["offset"].isDouble())
+      {
+        float offset = static_cast<float>(parameterObject["offset"].asDouble());
+        offset = MathUtils::RoundF(offset, videoAudioDelayStep);
+        if (offset > videoAudioDelayRange)
+          offset = videoAudioDelayRange;
+        else if (offset < -videoAudioDelayRange)
+          offset = -videoAudioDelayRange;
+
+        appPlayer->SetAVDelay(offset);
+      }
+      else if (parameterObject["offset"].isString())
+      {
+        CVideoSettings vs = appPlayer->GetVideoSettings();
+        if (parameterObject["offset"].asString().compare("increment") == 0)
+        {
+          vs.m_AudioDelay += videoAudioDelayStep;
+          if (vs.m_AudioDelay > videoAudioDelayRange)
+            vs.m_AudioDelay = videoAudioDelayRange;
+          appPlayer->SetAVDelay(vs.m_AudioDelay);
+        }
+        else
+        {
+          vs.m_AudioDelay -= videoAudioDelayStep;
+          if (vs.m_AudioDelay < -videoAudioDelayRange)
+            vs.m_AudioDelay = -videoAudioDelayRange;
+          appPlayer->SetAVDelay(vs.m_AudioDelay);
+        }
+      }
+      else
+        return InvalidParams;
+
+      result["offset"] = appPlayer->GetVideoSettings().m_AudioDelay;
+      return OK;
+    }
+    case Audio:
+    case Picture:
+    case None:
+    default:
+      return FailedToExecute;
+  }
+}
+
 JSONRPC_STATUS CPlayerOperations::SetSpeed(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
   switch (GetPlayer(parameterObject["playerid"]))
   {
     case Video:
     case Audio:
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
       if (parameterObject["speed"].isInteger())
       {
         int speed = (int)parameterObject["speed"].asInteger();
         if (speed != 0)
         {
           // If the player is paused we first need to unpause
-          if (g_application.m_pPlayer->IsPausedPlayback())
-            g_application.m_pPlayer->Pause();
-          g_application.m_pPlayer->SetPlaySpeed(speed);
+          if (appPlayer->IsPausedPlayback())
+            appPlayer->Pause();
+          appPlayer->SetPlaySpeed(speed);
         }
         else
-          g_application.m_pPlayer->Pause();
+          appPlayer->Pause();
       }
       else if (parameterObject["speed"].isString())
       {
@@ -353,8 +474,9 @@ JSONRPC_STATUS CPlayerOperations::SetSpeed(const std::string &method, ITransport
       else
         return InvalidParams;
 
-      result["speed"] = g_application.m_pPlayer->IsPausedPlayback() ? 0 : (int)lrint(g_application.m_pPlayer->GetPlaySpeed());
+      result["speed"] = appPlayer->IsPausedPlayback() ? 0 : (int)lrint(appPlayer->GetPlaySpeed());
       return OK;
+    }
 
     case Picture:
     case None:
@@ -362,6 +484,73 @@ JSONRPC_STATUS CPlayerOperations::SetSpeed(const std::string &method, ITransport
       return FailedToExecute;
   }
 }
+
+JSONRPC_STATUS CPlayerOperations::SetTempo(const std::string& method,
+                                           ITransportLayer* transport,
+                                           IClient* client,
+                                           const CVariant& parameterObject,
+                                           CVariant& result)
+{
+  switch (GetPlayer(parameterObject["playerid"]))
+  {
+    case Video:
+    case Audio:
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      if (!appPlayer->SupportsTempo() || appPlayer->IsPausedPlayback())
+        return FailedToExecute;
+
+      if (parameterObject["tempo"].isDouble())
+        appPlayer->SetTempo(parameterObject["tempo"].asFloat());
+      else if (parameterObject["tempo"].isString())
+      {
+        if (parameterObject["tempo"].asString().compare("increment") == 0)
+          CPlayerUtils::AdvanceTempoStep(appPlayer, TempoStepChange::INCREASE);
+        else
+          CPlayerUtils::AdvanceTempoStep(appPlayer, TempoStepChange::DECREASE);
+      }
+      else
+        return InvalidParams;
+
+      result["tempo"] = appPlayer->GetPlayTempo();
+      return OK;
+    }
+
+    case Picture:
+    case None:
+    default:
+      return FailedToExecute;
+  }
+}
+
+namespace
+{
+double ParseTimeInSeconds(const CVariant& time)
+{
+  double seconds = 0.0;
+  if (time.isMember("hours"))
+    seconds += time["hours"].asInteger() * 60 * 60;
+  if (time.isMember("minutes"))
+    seconds += time["minutes"].asInteger() * 60;
+  if (time.isMember("seconds"))
+    seconds += time["seconds"].asInteger();
+  if (time.isMember("milliseconds"))
+    seconds += time["milliseconds"].asDouble() / 1000.0;
+
+  return seconds;
+}
+
+void HandleResumeOption(const CVariant& optionResume, CFileItem& item)
+{
+  if (optionResume.isBoolean() && optionResume.asBoolean())
+    item.SetStartOffset(STARTOFFSET_RESUME);
+  else if (optionResume.isDouble())
+    item.SetProperty("StartPercent", optionResume);
+  else if (optionResume.isObject())
+    item.SetStartOffset(CUtil::ConvertSecsToMilliSecs(ParseTimeInSeconds(optionResume)));
+}
+} // unnamed namespace
 
 JSONRPC_STATUS CPlayerOperations::Seek(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
@@ -371,15 +560,17 @@ JSONRPC_STATUS CPlayerOperations::Seek(const std::string &method, ITransportLaye
     case Video:
     case Audio:
     {
-      if (!g_application.m_pPlayer->CanSeek())
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      if (!appPlayer->CanSeek())
         return FailedToExecute;
 
       const CVariant& value = parameterObject["value"];
-      if (IsType(value, NumberValue) || value.isMember("percentage"))
-        g_application.SeekPercentage(IsType(value, NumberValue) ? value.asFloat() : value["percentage"].asFloat());
-      else if (value.isString() || value.isMember("step"))
+      if (value.isMember("percentage"))
+        g_application.SeekPercentage(value["percentage"].asFloat());
+      else if (value.isMember("step"))
       {
-        std::string step = value.isString() ? value.asString() : value["step"].asString();
+        std::string step = value["step"].asString();
         if (step == "smallforward")
           CBuiltins::GetInstance().Execute("playercontrol(smallskipforward)");
         else if (step == "smallbackward")
@@ -391,10 +582,10 @@ JSONRPC_STATUS CPlayerOperations::Seek(const std::string &method, ITransportLaye
         else
           return InvalidParams;
       }
-      else if (value.isMember("seconds") && value.size() == 1)
-        CSeekHandler::GetInstance().SeekSeconds(static_cast<int>(value["seconds"].asInteger()));
-      else if (value.isObject())
-        g_application.SeekTime(ParseTimeInSeconds(value.isMember("time") ? value["time"] : value));
+      else if (value.isMember("seconds"))
+        appPlayer->GetSeekHandler().SeekSeconds(static_cast<int>(value["seconds"].asInteger()));
+      else if (value.isMember("time"))
+        g_application.SeekTime(ParseTimeInSeconds(value["time"]));
       else
         return InvalidParams;
 
@@ -433,9 +624,11 @@ JSONRPC_STATUS CPlayerOperations::Move(const std::string &method, ITransportLaye
     case Video:
     case Audio:
       if (direction == "left" || direction == "up")
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(ACTION_PREV_ITEM)));
+        CServiceBroker::GetAppMessenger()->SendMsg(
+            TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(ACTION_PREV_ITEM)));
       else if (direction == "right" || direction == "down")
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(ACTION_NEXT_ITEM)));
+        CServiceBroker::GetAppMessenger()->SendMsg(
+            TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(ACTION_NEXT_ITEM)));
       else
         return InvalidParams;
 
@@ -478,6 +671,137 @@ JSONRPC_STATUS CPlayerOperations::Zoom(const std::string &method, ITransportLaye
   }
 }
 
+// Matching pairs of values from JSON type "Player.ViewMode" and C++ enum ViewMode
+// Additions to enum ViewMode need to be added here and in the JSON type
+std::map<std::string, ViewMode> viewModes =
+{
+  {"normal", ViewModeNormal},
+  {"zoom", ViewModeZoom},
+  {"stretch4x3", ViewModeStretch4x3},
+  {"widezoom", ViewModeWideZoom, },
+  {"stretch16x9", ViewModeStretch16x9},
+  {"original", ViewModeOriginal},
+  {"stretch16x9nonlin", ViewModeStretch16x9Nonlin},
+  {"zoom120width", ViewModeZoom120Width},
+  {"zoom110width", ViewModeZoom110Width}
+};
+
+std::string GetStringFromViewMode(ViewMode viewMode)
+{
+  std::string result = "custom";
+
+  auto it = find_if(viewModes.begin(), viewModes.end(), [viewMode](const std::pair<std::string, ViewMode> & p)
+  {
+    return p.second == viewMode;
+  });
+
+  if (it != viewModes.end())
+  {
+    std::pair<std::string, ViewMode> value = *it;
+    result = value.first;
+  }
+
+  return result;
+}
+
+void GetNewValueForViewModeParameter(const CVariant &parameter, float stepSize, float minValue, float maxValue, float &result)
+{
+  if (parameter.isDouble())
+  {
+    result = parameter.asDouble();
+  }
+  else if (parameter.isString())
+  {
+    if (parameter == "decrease")
+    {
+      stepSize *= -1;
+    }
+
+    result += stepSize;
+  }
+
+  result = std::max(minValue, std::min(result, maxValue));
+}
+
+JSONRPC_STATUS CPlayerOperations::SetViewMode(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
+{
+  JSONRPC_STATUS jsonStatus = InvalidParams;
+  // init with current values from settings
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+
+  CVideoSettings vs = appPlayer->GetVideoSettings();
+  ViewMode mode = ViewModeNormal;
+
+  CVariant viewMode = parameterObject["viewmode"];
+  if (viewMode.isString())
+  {
+    std::string modestr = viewMode.asString();
+    if (viewModes.contains(modestr))
+    {
+      mode = viewModes[modestr];
+      jsonStatus = ACK;
+    }
+  }
+  else if (viewMode.isObject())
+  {
+    mode = ViewModeCustom;
+    CVariant zoom = viewMode["zoom"];
+    CVariant pixelRatio = viewMode["pixelratio"];
+    CVariant verticalShift = viewMode["verticalshift"];
+    CVariant stretch = viewMode["nonlinearstretch"];
+
+    if (!zoom.isNull())
+    {
+      GetNewValueForViewModeParameter(zoom, 0.01f, 0.5f, 2.f, vs.m_CustomZoomAmount);
+      jsonStatus = ACK;
+    }
+
+    if (!pixelRatio.isNull())
+    {
+      GetNewValueForViewModeParameter(pixelRatio, 0.01f, 0.5f, 2.f, vs.m_CustomPixelRatio);
+      jsonStatus = ACK;
+    }
+
+    if (!verticalShift.isNull())
+    {
+      GetNewValueForViewModeParameter(verticalShift, -0.01f, -2.f, 2.f, vs.m_CustomVerticalShift);
+      jsonStatus = ACK;
+    }
+
+    if (stretch.isBoolean())
+    {
+      vs.m_CustomNonLinStretch = stretch.asBoolean();
+      jsonStatus = ACK;
+    }
+  }
+
+  if (jsonStatus == ACK)
+  {
+    appPlayer->SetRenderViewMode(static_cast<int>(mode), vs.m_CustomZoomAmount,
+                                 vs.m_CustomPixelRatio, vs.m_CustomVerticalShift,
+                                 vs.m_CustomNonLinStretch);
+  }
+
+  return jsonStatus;
+}
+
+JSONRPC_STATUS CPlayerOperations::GetViewMode(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
+{
+  const auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+
+  int mode = appPlayer->GetVideoSettings().m_ViewMode;
+
+  result["viewmode"] = GetStringFromViewMode(static_cast<ViewMode>(mode));
+
+  result["zoom"] = CDisplaySettings::GetInstance().GetZoomAmount();
+  result["pixelratio"] = CDisplaySettings::GetInstance().GetPixelRatio();
+  result["verticalshift"] = CDisplaySettings::GetInstance().GetVerticalShift();
+  result["nonlinearstretch"] = CDisplaySettings::GetInstance().IsNonLinearStretched();
+  return OK;
+}
+
 JSONRPC_STATUS CPlayerOperations::Rotate(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
   switch (GetPlayer(parameterObject["playerid"]))
@@ -507,46 +831,46 @@ JSONRPC_STATUS CPlayerOperations::Open(const std::string &method, ITransportLaye
 
   if (parameterObject["item"].isMember("playlistid"))
   {
-    int playlistid = (int)parameterObject["item"]["playlistid"].asInteger();
+    PLAYLIST::Id playlistid = PLAYLIST::Id{parameterObject["item"]["playlistid"].asInteger32()};
 
-    if (playlistid < PLAYLIST_PICTURE)
+    if (playlistid == PLAYLIST::Id::TYPE_MUSIC || playlistid == PLAYLIST::Id::TYPE_VIDEO)
     {
       // Apply the "shuffled" option if available
       if (optionShuffled.isBoolean())
         CServiceBroker::GetPlaylistPlayer().SetShuffle(playlistid, optionShuffled.asBoolean(), false);
       // Apply the "repeat" option if available
       if (!optionRepeat.isNull())
-        CServiceBroker::GetPlaylistPlayer().SetRepeat(playlistid, (REPEAT_STATE)ParseRepeatState(optionRepeat), false);
+        CServiceBroker::GetPlaylistPlayer().SetRepeat(playlistid, ParseRepeatState(optionRepeat),
+                                                      false);
     }
 
     int playlistStartPosition = (int)parameterObject["item"]["position"].asInteger();
 
     switch (playlistid)
     {
-      case PLAYLIST_MUSIC:
-      case PLAYLIST_VIDEO:
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_MEDIA_PLAY, playlistid, playlistStartPosition);
-        OnPlaylistChanged();
+      case PLAYLIST::Id::TYPE_MUSIC:
+      case PLAYLIST::Id::TYPE_VIDEO:
+        CServiceBroker::GetAppMessenger()->PostMsg(TMSG_MEDIA_PLAY, static_cast<int>(playlistid),
+                                                   playlistStartPosition);
         break;
 
-      case PLAYLIST_PICTURE:
+      case PLAYLIST::Id::TYPE_PICTURE:
       {
         std::string firstPicturePath;
         if (playlistStartPosition > 0)
         {
-          CGUIWindowSlideShow *slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-          if (slideshow != NULL)
-          {
-            CFileItemList list;
-            slideshow->GetSlideShowContents(list);
-            if (playlistStartPosition < list.Size())
-              firstPicturePath = list.Get(playlistStartPosition)->GetPath();
-          }
+          CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+          CFileItemList list;
+          slideShow.GetSlideShowContents(list);
+          if (playlistStartPosition < list.Size())
+            firstPicturePath = list.Get(playlistStartPosition)->GetPath();
         }
 
         return StartSlideshow("", false, optionShuffled.isBoolean() && optionShuffled.asBoolean(), firstPicturePath);
         break;
       }
+      default:
+        break;
     }
 
     return ACK;
@@ -561,44 +885,63 @@ JSONRPC_STATUS CPlayerOperations::Open(const std::string &method, ITransportLaye
   {
     if (g_partyModeManager.IsEnabled())
       g_partyModeManager.Disable();
-    CApplicationMessenger::GetInstance().SendMsg(TMSG_EXECUTE_BUILT_IN, -1, -1, nullptr, "playercontrol(partymode(" + parameterObject["item"]["partymode"].asString() + "))");
+    CServiceBroker::GetAppMessenger()->PostMsg(
+        TMSG_EXECUTE_BUILT_IN, -1, -1, nullptr,
+        "playercontrol(partymode(" + parameterObject["item"]["partymode"].asString() + "))");
+    return ACK;
+  }
+  else if (parameterObject["item"].isMember("broadcastid"))
+  {
+    const std::shared_ptr<CPVREpgInfoTag> epgTag =
+        CServiceBroker::GetPVRManager().EpgContainer().GetTagByDatabaseId(
+            static_cast<unsigned int>(parameterObject["item"]["broadcastid"].asInteger()));
+
+    if (!epgTag || !epgTag->IsPlayable())
+      return InvalidParams;
+
+    if (!CServiceBroker::GetPVRManager().Get<PVR::GUI::Playback>().PlayEpgTag(CFileItem(epgTag)))
+      return FailedToExecute;
+
     return ACK;
   }
   else if (parameterObject["item"].isMember("channelid"))
   {
-    if (!CServiceBroker::GetPVRManager().IsStarted())
-      return FailedToExecute;
-
-    CPVRChannelGroupsContainerPtr channelGroupContainer = CServiceBroker::GetPVRManager().ChannelGroups();
+    const std::shared_ptr<const CPVRChannelGroupsContainer> channelGroupContainer =
+        CServiceBroker::GetPVRManager().ChannelGroups();
     if (!channelGroupContainer)
       return FailedToExecute;
 
-    CPVRChannelPtr channel = channelGroupContainer->GetChannelById((int)parameterObject["item"]["channelid"].asInteger());
-    if (channel == NULL)
+    const std::shared_ptr<const CPVRChannel> channel = channelGroupContainer->GetChannelById(
+        static_cast<int>(parameterObject["item"]["channelid"].asInteger()));
+    if (!channel)
       return InvalidParams;
 
-    CFileItemList *l = new CFileItemList; //don't delete,
-    l->Add(std::make_shared<CFileItem>(channel));
-    CApplicationMessenger::GetInstance().PostMsg(TMSG_MEDIA_PLAY, -1, -1, static_cast<void*>(l));
+    const std::shared_ptr<CPVRChannelGroupMember> groupMember =
+        CServiceBroker::GetPVRManager().Get<PVR::GUI::Channels>().GetChannelGroupMember(channel);
+    if (!groupMember)
+      return InvalidParams;
+
+    if (!CServiceBroker::GetPVRManager().Get<PVR::GUI::Playback>().PlayMedia(
+            CFileItem(groupMember)))
+      return FailedToExecute;
 
     return ACK;
   }
   else if (parameterObject["item"].isMember("recordingid"))
   {
-    if (!CServiceBroker::GetPVRManager().IsStarted())
-      return FailedToExecute;
-
-    CPVRRecordingsPtr recordingsContainer = CServiceBroker::GetPVRManager().Recordings();
+    const std::shared_ptr<const CPVRRecordings> recordingsContainer =
+        CServiceBroker::GetPVRManager().Recordings();
     if (!recordingsContainer)
       return FailedToExecute;
 
-    CFileItemPtr fileItem = recordingsContainer->GetById((int)parameterObject["item"]["recordingid"].asInteger());
-    if (fileItem == NULL)
+    const std::shared_ptr<CPVRRecording> recording = recordingsContainer->GetById(static_cast<int>(parameterObject["item"]["recordingid"].asInteger()));
+    if (!recording)
       return InvalidParams;
 
-    CFileItemList *l = new CFileItemList; //don't delete,
-    l->Add(std::make_shared<CFileItem>(*fileItem));
-    CApplicationMessenger::GetInstance().PostMsg(TMSG_MEDIA_PLAY, -1, -1, static_cast<void*>(l));
+    CFileItem recItem{recording};
+    HandleResumeOption(optionResume, recItem);
+    if (!CServiceBroker::GetPVRManager().Get<PVR::GUI::Playback>().PlayMedia(recItem))
+      return FailedToExecute;
 
     return ACK;
   }
@@ -619,16 +962,39 @@ JSONRPC_STATUS CPlayerOperations::Open(const std::string &method, ITransportLaye
 
       if (slideshow)
       {
-        CGUIWindowSlideShow *slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-        if (!slideshow)
-          return FailedToExecute;
-
+        //! @todo: This should be a delegator method instead of going via GUI!
+        //! look into triggering stop from Reset() itself!
         SendSlideshowAction(ACTION_STOP);
-        slideshow->Reset();
+        CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+        slideShow.Reset();
         for (int index = 0; index < list.Size(); index++)
-          slideshow->Add(list[index].get());
+          slideShow.Add(list[index].get());
 
         return StartSlideshow("", false, optionShuffled.isBoolean() && optionShuffled.asBoolean());
+      }
+      else if (list.Size() == 1 && URIUtils::IsPVRChannel(list[0]->GetPath()))
+      {
+        if (!CServiceBroker::GetPVRManager().Get<PVR::GUI::Playback>().PlayMedia(*list[0]))
+          return FailedToExecute;
+      }
+      else if (list.Size() == 1 && URIUtils::IsPVRRecording(list[0]->GetPath()))
+      {
+        const std::shared_ptr<const CPVRRecordings> recordingsContainer{
+            CServiceBroker::GetPVRManager().Recordings()};
+        if (!recordingsContainer)
+          return FailedToExecute;
+
+        std::shared_ptr<CPVRRecording> recording{list[0]->GetPVRRecordingInfoTag()};
+        if (!recording)
+          recording = recordingsContainer->GetByPath(list[0]->GetPath());
+
+        if (!recording)
+          return InvalidParams;
+
+        CFileItem recItem{recording};
+        HandleResumeOption(optionResume, recItem);
+        if (!CServiceBroker::GetPVRManager().Get<PVR::GUI::Playback>().PlayMedia(recItem))
+          return FailedToExecute;
       }
       else
       {
@@ -642,17 +1008,20 @@ JSONRPC_STATUS CPlayerOperations::Open(const std::string &method, ITransportLaye
 
             if (playername != "default")
             {
+              const CPlayerCoreFactory &playerCoreFactory = CServiceBroker::GetPlayerCoreFactory();
+
               // check if the there's actually a player with the given name
-              if (CPlayerCoreFactory::GetInstance().GetPlayerType(playername).empty())
+              if (playerCoreFactory.GetPlayerType(playername).empty())
                 return InvalidParams;
 
               // check if the player can handle at least the first item in the list
               std::vector<std::string> possiblePlayers;
-              CPlayerCoreFactory::GetInstance().GetPlayers(*list.Get(0).get(), possiblePlayers);
+              playerCoreFactory.GetPlayers(*list.Get(0).get(), possiblePlayers);
+
               bool match = false;
-              for (auto entry : possiblePlayers)
+              for (const auto& entry : possiblePlayers)
               {
-                if (StringUtils::CompareNoCase(entry, playername))
+                if (StringUtils::EqualsNoCase(entry, playername))
                 {
                   match = true;
                   break;
@@ -671,21 +1040,15 @@ JSONRPC_STATUS CPlayerOperations::Open(const std::string &method, ITransportLaye
           list.SetProperty("shuffled", optionShuffled);
         // Handle "repeat" option
         if (!optionRepeat.isNull())
-          list.SetProperty("repeat", ParseRepeatState(optionRepeat));
+          list.SetProperty("repeat", static_cast<int>(ParseRepeatState(optionRepeat)));
         // Handle "resume" option
         if (list.Size() == 1)
-        {
-          if (optionResume.isBoolean() && optionResume.asBoolean())
-            list[0]->m_lStartOffset = STARTOFFSET_RESUME;
-          else if (optionResume.isDouble())
-            list[0]->SetProperty("StartPercent", optionResume);
-          else if (optionResume.isObject())
-            list[0]->m_lStartOffset = (int)(ParseTimeInSeconds(optionResume) * 75.0);
-        }
+          HandleResumeOption(optionResume, *list[0]);
 
         auto l = new CFileItemList(); //don't delete
         l->Copy(list);
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_MEDIA_PLAY, -1, -1, static_cast<void*>(l), playername);
+        CServiceBroker::GetAppMessenger()->PostMsg(TMSG_MEDIA_PLAY, -1, -1, static_cast<void*>(l),
+                                                   playername);
       }
 
       return ACK;
@@ -715,15 +1078,19 @@ JSONRPC_STATUS CPlayerOperations::GoTo(const std::string &method, ITransportLaye
         else
           return InvalidParams;
 
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(actionID)));
+        CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1,
+                                                   static_cast<void*>(new CAction(actionID)));
       }
       else if (to.isInteger())
       {
         if (IsPVRChannel())
-          CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(
-            new CAction(ACTION_CHANNEL_SWITCH, static_cast<float>(to.asInteger()))));
+          CServiceBroker::GetAppMessenger()->SendMsg(
+              TMSG_GUI_ACTION, WINDOW_INVALID, -1,
+              static_cast<void*>(
+                  new CAction(ACTION_CHANNEL_SWITCH, static_cast<float>(to.asInteger()))));
         else
-          CApplicationMessenger::GetInstance().SendMsg(TMSG_PLAYLISTPLAYER_PLAY, static_cast<int>(to.asInteger()));
+          CServiceBroker::GetAppMessenger()->SendMsg(TMSG_PLAYLISTPLAYER_PLAY,
+                                                     static_cast<int>(to.asInteger()));
       }
       else
         return InvalidParams;
@@ -752,13 +1119,11 @@ JSONRPC_STATUS CPlayerOperations::GoTo(const std::string &method, ITransportLaye
       return FailedToExecute;
   }
 
-  OnPlaylistChanged();
   return ACK;
 }
 
 JSONRPC_STATUS CPlayerOperations::SetShuffle(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
-  CGUIWindowSlideShow *slideshow = NULL;
   CVariant shuffle = parameterObject["shuffle"];
   switch (GetPlayer(parameterObject["playerid"]))
   {
@@ -768,14 +1133,14 @@ JSONRPC_STATUS CPlayerOperations::SetShuffle(const std::string &method, ITranspo
       if (IsPVRChannel())
         return FailedToExecute;
 
-      int playlistid = GetPlaylist(GetPlayer(parameterObject["playerid"]));
+      PLAYLIST::Id playlistid = GetPlaylist(GetPlayer(parameterObject["playerid"]));
       if (CServiceBroker::GetPlaylistPlayer().IsShuffled(playlistid))
       {
         if ((shuffle.isBoolean() && !shuffle.asBoolean()) ||
             (shuffle.isString() && shuffle.asString() == "toggle"))
         {
-          CApplicationMessenger::GetInstance().SendMsg(TMSG_PLAYLISTPLAYER_SHUFFLE, playlistid, 0);
-          OnPlaylistChanged();
+          CServiceBroker::GetAppMessenger()->SendMsg(TMSG_PLAYLISTPLAYER_SHUFFLE,
+                                                     static_cast<int>(playlistid), 0);
         }
       }
       else
@@ -783,18 +1148,22 @@ JSONRPC_STATUS CPlayerOperations::SetShuffle(const std::string &method, ITranspo
         if ((shuffle.isBoolean() && shuffle.asBoolean()) ||
             (shuffle.isString() && shuffle.asString() == "toggle"))
         {
-          CApplicationMessenger::GetInstance().SendMsg(TMSG_PLAYLISTPLAYER_SHUFFLE, playlistid, 1);
-          OnPlaylistChanged();
+          CServiceBroker::GetAppMessenger()->SendMsg(TMSG_PLAYLISTPLAYER_SHUFFLE,
+                                                     static_cast<int>(playlistid), 1);
         }
       }
       break;
     }
 
     case Picture:
-      slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-      if (slideshow == NULL)
+    {
+      CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+      if (slideShow.NumSlides() < 0)
+      {
         return FailedToExecute;
-      if (slideshow->IsShuffled())
+      }
+
+      if (slideShow.IsShuffled())
       {
         if ((shuffle.isBoolean() && !shuffle.asBoolean()) ||
             (shuffle.isString() && shuffle.asString() == "toggle"))
@@ -804,10 +1173,10 @@ JSONRPC_STATUS CPlayerOperations::SetShuffle(const std::string &method, ITranspo
       {
         if ((shuffle.isBoolean() && shuffle.asBoolean()) ||
             (shuffle.isString() && shuffle.asString() == "toggle"))
-          slideshow->Shuffle();
+          slideShow.Shuffle();
       }
       break;
-
+    }
     default:
       return FailedToExecute;
   }
@@ -824,23 +1193,24 @@ JSONRPC_STATUS CPlayerOperations::SetRepeat(const std::string &method, ITranspor
       if (IsPVRChannel())
         return FailedToExecute;
 
-      REPEAT_STATE repeat = REPEAT_NONE;
-      int playlistid = GetPlaylist(GetPlayer(parameterObject["playerid"]));
+      PLAYLIST::RepeatState repeat = PLAYLIST::RepeatState::NONE;
+      PLAYLIST::Id playlistid = GetPlaylist(GetPlayer(parameterObject["playerid"]));
       if (parameterObject["repeat"].asString() == "cycle")
       {
-        REPEAT_STATE repeatPrev = CServiceBroker::GetPlaylistPlayer().GetRepeat(playlistid);
-        if (repeatPrev == REPEAT_NONE)
-          repeat = REPEAT_ALL;
-        else if (repeatPrev == REPEAT_ALL)
-          repeat = REPEAT_ONE;
+        PLAYLIST::RepeatState repeatPrev =
+            CServiceBroker::GetPlaylistPlayer().GetRepeat(playlistid);
+        if (repeatPrev == PLAYLIST::RepeatState::NONE)
+          repeat = PLAYLIST::RepeatState::ALL;
+        else if (repeatPrev == PLAYLIST::RepeatState::ALL)
+          repeat = PLAYLIST::RepeatState::ONE;
         else
-          repeat = REPEAT_NONE;
+          repeat = PLAYLIST::RepeatState::NONE;
       }
       else
-        repeat = (REPEAT_STATE)ParseRepeatState(parameterObject["repeat"]);
+        repeat = ParseRepeatState(parameterObject["repeat"]);
 
-      CApplicationMessenger::GetInstance().SendMsg(TMSG_PLAYLISTPLAYER_REPEAT, playlistid, repeat);
-      OnPlaylistChanged();
+      CServiceBroker::GetAppMessenger()->SendMsg(
+          TMSG_PLAYLISTPLAYER_REPEAT, static_cast<int>(playlistid), static_cast<int>(repeat));
       break;
     }
 
@@ -864,16 +1234,16 @@ JSONRPC_STATUS CPlayerOperations::SetPartymode(const std::string &method, ITrans
         return FailedToExecute;
 
       bool change = false;
-      PartyModeContext context = PARTYMODECONTEXT_UNKNOWN;
+      PartyModeContext context = PartyModeContext::UNKNOWN;
       std::string strContext;
       if (player == Video)
       {
-        context = PARTYMODECONTEXT_VIDEO;
+        context = PartyModeContext::VIDEO;
         strContext = "video";
       }
       else if (player == Audio)
       {
-        context = PARTYMODECONTEXT_MUSIC;
+        context = PartyModeContext::MUSIC;
         strContext = "music";
       }
 
@@ -893,7 +1263,8 @@ JSONRPC_STATUS CPlayerOperations::SetPartymode(const std::string &method, ITrans
       }
 
       if (change)
-        CApplicationMessenger::GetInstance().SendMsg(TMSG_EXECUTE_BUILT_IN, -1, -1, nullptr, "playercontrol(partymode(" + strContext + "))");
+        CServiceBroker::GetAppMessenger()->PostMsg(TMSG_EXECUTE_BUILT_IN, -1, -1, nullptr,
+                                                   "playercontrol(partymode(" + strContext + "))");
       break;
     }
 
@@ -910,7 +1281,10 @@ JSONRPC_STATUS CPlayerOperations::SetAudioStream(const std::string &method, ITra
   switch (GetPlayer(parameterObject["playerid"]))
   {
     case Video:
-      if (g_application.m_pPlayer->HasPlayer())
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      if (appPlayer->HasPlayer())
       {
         int index = -1;
         if (parameterObject["stream"].isString())
@@ -918,14 +1292,14 @@ JSONRPC_STATUS CPlayerOperations::SetAudioStream(const std::string &method, ITra
           std::string action = parameterObject["stream"].asString();
           if (action.compare("previous") == 0)
           {
-            index = g_application.m_pPlayer->GetAudioStream() - 1;
+            index = appPlayer->GetAudioStream() - 1;
             if (index < 0)
-              index = g_application.m_pPlayer->GetAudioStreamCount() - 1;
+              index = appPlayer->GetAudioStreamCount() - 1;
           }
           else if (action.compare("next") == 0)
           {
-            index = g_application.m_pPlayer->GetAudioStream() + 1;
-            if (index >= g_application.m_pPlayer->GetAudioStreamCount())
+            index = appPlayer->GetAudioStream() + 1;
+            if (index >= appPlayer->GetAudioStreamCount())
               index = 0;
           }
           else
@@ -934,15 +1308,16 @@ JSONRPC_STATUS CPlayerOperations::SetAudioStream(const std::string &method, ITra
         else if (parameterObject["stream"].isInteger())
           index = (int)parameterObject["stream"].asInteger();
 
-        if (index < 0 || g_application.m_pPlayer->GetAudioStreamCount() <= index)
+        if (index < 0 || appPlayer->GetAudioStreamCount() <= index)
           return InvalidParams;
 
-        g_application.m_pPlayer->SetAudioStream(index);
+        appPlayer->SetAudioStream(index);
       }
       else
         return FailedToExecute;
       break;
-      
+    }
+
     case Audio:
     case Picture:
     default:
@@ -952,12 +1327,34 @@ JSONRPC_STATUS CPlayerOperations::SetAudioStream(const std::string &method, ITra
   return ACK;
 }
 
+JSONRPC_STATUS CPlayerOperations::AddSubtitle(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
+{
+  if (GetPlayer(parameterObject["playerid"]) != Video)
+    return FailedToExecute;
+
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+
+  if (!appPlayer->HasPlayer())
+    return FailedToExecute;
+
+  if (!parameterObject["subtitle"].isString())
+    return FailedToExecute;
+
+  std::string sub = parameterObject["subtitle"].asString();
+  appPlayer->AddSubtitle(sub);
+  return ACK;
+}
+
 JSONRPC_STATUS CPlayerOperations::SetSubtitle(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
   switch (GetPlayer(parameterObject["playerid"]))
   {
     case Video:
-      if (g_application.m_pPlayer->HasPlayer())
+    {
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      if (appPlayer->HasPlayer())
       {
         int index = -1;
         if (parameterObject["subtitle"].isString())
@@ -965,24 +1362,24 @@ JSONRPC_STATUS CPlayerOperations::SetSubtitle(const std::string &method, ITransp
           std::string action = parameterObject["subtitle"].asString();
           if (action.compare("previous") == 0)
           {
-            index = g_application.m_pPlayer->GetSubtitle() - 1;
+            index = appPlayer->GetSubtitle() - 1;
             if (index < 0)
-              index = g_application.m_pPlayer->GetSubtitleCount() - 1;
+              index = appPlayer->GetSubtitleCount() - 1;
           }
           else if (action.compare("next") == 0)
           {
-            index = g_application.m_pPlayer->GetSubtitle() + 1;
-            if (index >= g_application.m_pPlayer->GetSubtitleCount())
+            index = appPlayer->GetSubtitle() + 1;
+            if (index >= appPlayer->GetSubtitleCount())
               index = 0;
           }
           else if (action.compare("off") == 0)
           {
-            g_application.m_pPlayer->SetSubtitleVisible(false);
+            appPlayer->SetSubtitleVisible(false);
             return ACK;
           }
           else if (action.compare("on") == 0)
           {
-            g_application.m_pPlayer->SetSubtitleVisible(true);
+            appPlayer->SetSubtitleVisible(true);
             return ACK;
           }
           else
@@ -991,19 +1388,20 @@ JSONRPC_STATUS CPlayerOperations::SetSubtitle(const std::string &method, ITransp
         else if (parameterObject["subtitle"].isInteger())
           index = (int)parameterObject["subtitle"].asInteger();
 
-        if (index < 0 || g_application.m_pPlayer->GetSubtitleCount() <= index)
+        if (index < 0 || appPlayer->GetSubtitleCount() <= index)
           return InvalidParams;
 
-        g_application.m_pPlayer->SetSubtitle(index);
+        appPlayer->SetSubtitle(index);
 
         // Check if we need to enable subtitles to be displayed
-        if (parameterObject["enable"].asBoolean() && !g_application.m_pPlayer->GetSubtitleVisible())
-          g_application.m_pPlayer->SetSubtitleVisible(true);
+        if (parameterObject["enable"].asBoolean() && !appPlayer->GetSubtitleVisible())
+          appPlayer->SetSubtitleVisible(true);
       }
       else
         return FailedToExecute;
       break;
-      
+    }
+
     case Audio:
     case Picture:
     default:
@@ -1019,10 +1417,12 @@ JSONRPC_STATUS CPlayerOperations::SetVideoStream(const std::string &method, ITra
   {
   case Video:
   {
-    int streamCount = g_application.m_pPlayer->GetVideoStreamCount();
+    auto& components = CServiceBroker::GetAppComponents();
+    const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+    int streamCount = appPlayer->GetVideoStreamCount();
     if (streamCount > 0)
     {
-      int index = g_application.m_pPlayer->GetVideoStream();
+      int index = appPlayer->GetVideoStream();
       if (parameterObject["stream"].isString())
       {
         std::string action = parameterObject["stream"].asString();
@@ -1047,7 +1447,7 @@ JSONRPC_STATUS CPlayerOperations::SetVideoStream(const std::string &method, ITra
       if (index < 0 || streamCount <= index)
         return InvalidParams;
 
-      g_application.m_pPlayer->SetVideoStream(index);
+      appPlayer->SetVideoStream(index);
     }
     else
       return FailedToExecute;
@@ -1064,34 +1464,43 @@ JSONRPC_STATUS CPlayerOperations::SetVideoStream(const std::string &method, ITra
 
 int CPlayerOperations::GetActivePlayers()
 {
-  int activePlayers = 0;
+  const auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
 
-  if (g_application.m_pPlayer->IsPlayingVideo() || CServiceBroker::GetPVRManager().IsPlayingTV() || CServiceBroker::GetPVRManager().IsPlayingRecording())
+  int activePlayers = 0;
+  if (appPlayer->IsPlayingVideo() ||
+      CServiceBroker::GetPVRManager().PlaybackState()->IsPlayingTV() ||
+      CServiceBroker::GetPVRManager().PlaybackState()->IsPlayingRecording())
     activePlayers |= Video;
-  if (g_application.m_pPlayer->IsPlayingAudio() || CServiceBroker::GetPVRManager().IsPlayingRadio())
+  if (appPlayer->IsPlayingAudio() ||
+      CServiceBroker::GetPVRManager().PlaybackState()->IsPlayingRadio())
     activePlayers |= Audio;
-  if (g_windowManager.IsWindowActive(WINDOW_SLIDESHOW))
+  if (CServiceBroker::GetGUI()->GetWindowManager().IsWindowActive(WINDOW_SLIDESHOW))
     activePlayers |= Picture;
+  if (appPlayer->IsExternalPlaying())
+    activePlayers |= External;
+  if (appPlayer->IsRemotePlaying())
+    activePlayers |= Remote;
 
   return activePlayers;
 }
 
 PlayerType CPlayerOperations::GetPlayer(const CVariant &player)
 {
-  int iPlayer = (int)player.asInteger();
+  PLAYLIST::Id playerPlaylistId = PLAYLIST::Id{player.asInteger32()};
   PlayerType playerID;
 
-  switch (iPlayer)
+  switch (playerPlaylistId)
   {
-    case PLAYLIST_VIDEO:
+    case PLAYLIST::Id::TYPE_VIDEO:
       playerID = Video;
       break;
 
-    case PLAYLIST_MUSIC:
+    case PLAYLIST::Id::TYPE_MUSIC:
       playerID = Audio;
       break;
 
-    case PLAYLIST_PICTURE:
+    case PLAYLIST::Id::TYPE_PICTURE:
       playerID = Picture;
       break;
 
@@ -1100,31 +1509,35 @@ PlayerType CPlayerOperations::GetPlayer(const CVariant &player)
       break;
   }
 
-  if (GetPlaylist(playerID) == iPlayer)
+  if (GetPlaylist(playerID) == playerPlaylistId)
     return playerID;
   else
     return None;
 }
 
-int CPlayerOperations::GetPlaylist(PlayerType player)
+PLAYLIST::Id CPlayerOperations::GetPlaylist(PlayerType player)
 {
-  int playlist = CServiceBroker::GetPlaylistPlayer().GetCurrentPlaylist();
-  if (playlist == PLAYLIST_NONE) // No active playlist, try guessing
-    playlist = g_application.m_pPlayer->GetPreferredPlaylist();
+  PLAYLIST::Id playlistId = CServiceBroker::GetPlaylistPlayer().GetCurrentPlaylist();
+  if (playlistId == PLAYLIST::Id::TYPE_NONE) // No active playlist, try guessing
+  {
+    const auto& components = CServiceBroker::GetAppComponents();
+    const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+    playlistId = appPlayer->GetPreferredPlaylist();
+  }
 
   switch (player)
   {
     case Video:
-      return playlist == PLAYLIST_NONE ? PLAYLIST_VIDEO : playlist;
+      return playlistId == PLAYLIST::Id::TYPE_NONE ? PLAYLIST::Id::TYPE_VIDEO : playlistId;
 
     case Audio:
-      return playlist == PLAYLIST_NONE ? PLAYLIST_MUSIC : playlist;
+      return playlistId == PLAYLIST::Id::TYPE_NONE ? PLAYLIST::Id::TYPE_MUSIC : playlistId;
 
     case Picture:
-      return PLAYLIST_PICTURE;
+      return PLAYLIST::Id::TYPE_PICTURE;
 
     default:
-      return playlist;
+      return playlistId;
   }
 }
 
@@ -1144,24 +1557,21 @@ JSONRPC_STATUS CPlayerOperations::StartSlideshow(const std::string& path, bool r
     params.push_back(firstPicturePath);
 
   // Reset screensaver when started from JSON only to avoid potential conflict with slideshow screensavers
-  g_application.ResetScreenSaver();
-  g_application.WakeUpScreenSaverAndDPMS();
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+  appPower->ResetScreenSaver();
+  appPower->WakeUpScreenSaverAndDPMS();
   CGUIMessage msg(GUI_MSG_START_SLIDESHOW, 0, 0, flags);
   msg.SetStringParams(params);
-  CApplicationMessenger::GetInstance().SendGUIMessage(msg, WINDOW_SLIDESHOW);
+  CServiceBroker::GetAppMessenger()->SendGUIMessage(msg, WINDOW_SLIDESHOW);
 
   return ACK;
 }
 
 void CPlayerOperations::SendSlideshowAction(int actionID)
 {
-  CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_SLIDESHOW, -1, static_cast<void*>(new CAction(actionID)));
-}
-
-void CPlayerOperations::OnPlaylistChanged()
-{
-  CGUIMessage msg(GUI_MSG_PLAYLIST_CHANGED, 0, 0);
-  g_windowManager.SendThreadMessage(msg);
+  CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_ACTION, WINDOW_SLIDESHOW, -1,
+                                             static_cast<void*>(new CAction(actionID)));
 }
 
 JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std::string &property, CVariant &result)
@@ -1169,7 +1579,7 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   if (player == None)
     return FailedToExecute;
 
-  int playlist = GetPlaylist(player);
+  PLAYLIST::Id playlistId = GetPlaylist(player);
 
   if (property == "type")
   {
@@ -1216,22 +1626,25 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   }
   else if (property == "speed")
   {
-    CGUIWindowSlideShow *slideshow = NULL;
     switch (player)
     {
       case Video:
       case Audio:
-        result = g_application.m_pPlayer->IsPausedPlayback() ? 0 : (int)lrint(g_application.m_pPlayer->GetPlaySpeed());
+      {
+        const auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        result = appPlayer->IsPausedPlayback() ? 0 : (int)lrint(appPlayer->GetPlaySpeed());
         break;
-
+      }
       case Picture:
-        slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-        if (slideshow && slideshow->IsPlaying() && !slideshow->IsPaused())
-          result = slideshow->GetDirection();
+      {
+        CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+        if (slideShow.IsPlaying() && !slideShow.IsPaused())
+          result = slideShow.GetDirection();
         else
           result = 0;
         break;
-
+      }
       default:
         return FailedToExecute;
     }
@@ -1248,7 +1661,7 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
           ms = (int)(g_application.GetTime() * 1000.0);
         else
         {
-          CPVREpgInfoTagPtr epg(GetCurrentEpg());
+          std::shared_ptr<CPVREpgInfoTag> epg(GetCurrentEpg());
           if (epg)
             ms = epg->Progress() * 1000;
         }
@@ -1267,7 +1680,6 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   }
   else if (property == "percentage")
   {
-    CGUIWindowSlideShow *slideshow = NULL;
     switch (player)
     {
       case Video:
@@ -1277,7 +1689,7 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
           result = g_application.GetPercentage();
         else
         {
-          CPVREpgInfoTagPtr epg(GetCurrentEpg());
+          std::shared_ptr<CPVREpgInfoTag> epg(GetCurrentEpg());
           if (epg)
             result = epg->ProgressPercentage();
           else
@@ -1285,14 +1697,35 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
         }
         break;
       }
-
       case Picture:
-        slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-        if (slideshow && slideshow->NumSlides() > 0)
-          result = (double)slideshow->CurrentSlide() / slideshow->NumSlides();
+      {
+        CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+        if (slideShow.NumSlides() > 0)
+          result = static_cast<double>(slideShow.CurrentSlide()) / slideShow.NumSlides();
         else
           result = 0.0;
         break;
+      }
+      default:
+        return FailedToExecute;
+    }
+  }
+  else if (property == "cachepercentage")
+  {
+    switch (player)
+    {
+      case Video:
+      case Audio:
+      {
+        result = g_application.GetCachePercentage();
+        break;
+      }
+
+      case Picture:
+      {
+        result = 0.0;
+        break;
+      }
 
       default:
         return FailedToExecute;
@@ -1310,11 +1743,11 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
           ms = (int)(g_application.GetTotalTime() * 1000.0);
         else
         {
-          CPVREpgInfoTagPtr epg(GetCurrentEpg());
+          std::shared_ptr<CPVREpgInfoTag> epg(GetCurrentEpg());
           if (epg)
             ms = epg->GetDuration() * 1000;
         }
-        
+
         MillisecondsToTimeObject(ms, result);
         break;
       }
@@ -1329,32 +1762,38 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   }
   else if (property == "playlistid")
   {
-    result = playlist;
+    result = static_cast<int>(playlistId);
   }
   else if (property == "position")
   {
-    CGUIWindowSlideShow *slideshow = NULL;
     switch (player)
     {
       case Video:
       case Audio: /* Return the position of current item if there is an active playlist */
-        if (!IsPVRChannel() && CServiceBroker::GetPlaylistPlayer().GetCurrentPlaylist() == playlist)
-          result = CServiceBroker::GetPlaylistPlayer().GetCurrentSong();
+      {
+        if (!IsPVRChannel() &&
+            CServiceBroker::GetPlaylistPlayer().GetCurrentPlaylist() == playlistId)
+        {
+          result = CServiceBroker::GetPlaylistPlayer().GetCurrentItemIdx();
+        }
         else
           result = -1;
         break;
-
+      }
       case Picture:
-        slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-        if (slideshow && slideshow->IsPlaying())
-          result = slideshow->CurrentSlide() - 1;
+      {
+        CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+        if (slideShow.IsPlaying())
+          result = slideShow.CurrentSlide() - 1;
         else
           result = -1;
         break;
-
+      }
       default:
+      {
         result = -1;
         break;
+      }
     }
   }
   else if (property == "repeat")
@@ -1369,17 +1808,17 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
           break;
         }
 
-        switch (CServiceBroker::GetPlaylistPlayer().GetRepeat(playlist))
+        switch (CServiceBroker::GetPlaylistPlayer().GetRepeat(playlistId))
         {
-        case REPEAT_ONE:
-          result = "one";
-          break;
-        case REPEAT_ALL:
-          result = "all";
-          break;
-        default:
-          result = "off";
-          break;
+          case PLAYLIST::RepeatState::ONE:
+            result = "one";
+            break;
+          case PLAYLIST::RepeatState::ALL:
+            result = "all";
+            break;
+          default:
+            result = "off";
+            break;
         }
         break;
 
@@ -1391,31 +1830,34 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   }
   else if (property == "shuffled")
   {
-    CGUIWindowSlideShow *slideshow = NULL;
     switch (player)
     {
       case Video:
       case Audio:
+      {
         if (IsPVRChannel())
         {
           result = false;
           break;
         }
 
-        result = CServiceBroker::GetPlaylistPlayer().IsShuffled(playlist);
+        result = CServiceBroker::GetPlaylistPlayer().IsShuffled(playlistId);
         break;
-
+      }
       case Picture:
-        slideshow = g_windowManager.GetWindow<CGUIWindowSlideShow>(WINDOW_SLIDESHOW);
-        if (slideshow && slideshow->IsPlaying())
-          result = slideshow->IsShuffled();
+      {
+        CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
+        if (slideShow.IsPlaying())
+          result = slideShow.IsShuffled();
         else
           result = -1;
         break;
-
+      }
       default:
+      {
         result = -1;
         break;
+      }
     }
   }
   else if (property == "canseek")
@@ -1424,8 +1866,12 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     {
       case Video:
       case Audio:
-        result = g_application.m_pPlayer->CanSeek();
+      {
+        const auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        result = appPlayer->CanSeek();
         break;
+      }
 
       case Picture:
       default:
@@ -1529,27 +1975,34 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     {
       case Video:
       case Audio:
-        if (g_application.m_pPlayer->HasPlayer())
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        if (appPlayer->HasPlayer())
         {
           result = CVariant(CVariant::VariantTypeObject);
-          int index = g_application.m_pPlayer->GetAudioStream();
+          int index = appPlayer->GetAudioStream();
           if (index >= 0)
           {
-            SPlayerAudioStreamInfo info;
-            g_application.m_pPlayer->GetAudioStreamInfo(index, info);
+            AudioStreamInfo info;
+            appPlayer->GetAudioStreamInfo(index, info);
 
             result["index"] = index;
             result["name"] = info.name;
             result["language"] = info.language;
-            result["codec"] = info.audioCodecName;
+            result["codec"] = info.codecName;
             result["bitrate"] = info.bitrate;
             result["channels"] = info.channels;
+            result["samplerate"] = info.samplerate;
+            result["bitspersample"] = info.bitspersample;
+            AppendAudioStreamFlagsAsBooleans(result, info.flags);
           }
         }
         else
           result = CVariant(CVariant::VariantTypeNull);
         break;
-        
+      }
+
       case Picture:
       default:
         result = CVariant(CVariant::VariantTypeNull);
@@ -1562,27 +2015,34 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     switch (player)
     {
       case Video:
-        if (g_application.m_pPlayer->HasPlayer())
+      case Audio:
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        if (appPlayer->HasPlayer())
         {
-          for (int index = 0; index < g_application.m_pPlayer->GetAudioStreamCount(); index++)
+          for (int index = 0; index < appPlayer->GetAudioStreamCount(); index++)
           {
-            SPlayerAudioStreamInfo info;
-            g_application.m_pPlayer->GetAudioStreamInfo(index, info);
+            AudioStreamInfo info;
+            appPlayer->GetAudioStreamInfo(index, info);
 
             CVariant audioStream(CVariant::VariantTypeObject);
             audioStream["index"] = index;
             audioStream["name"] = info.name;
             audioStream["language"] = info.language;
-            audioStream["codec"] = info.audioCodecName;
+            audioStream["codec"] = info.codecName;
             audioStream["bitrate"] = info.bitrate;
             audioStream["channels"] = info.channels;
+            audioStream["samplerate"] = info.samplerate;
+            audioStream["bitspersample"] = info.bitspersample;
+            AppendAudioStreamFlagsAsBooleans(audioStream, info.flags);
 
             result.append(audioStream);
           }
         }
         break;
-        
-      case Audio:
+      }
+
       case Picture:
       default:
         break;
@@ -1594,17 +2054,19 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     {
     case Video:
     {
-      int index = g_application.m_pPlayer->GetVideoStream();
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      int index = appPlayer->GetVideoStream();
       if (index >= 0)
       {
         result = CVariant(CVariant::VariantTypeObject);
-        SPlayerVideoStreamInfo info;
-        g_application.m_pPlayer->GetVideoStreamInfo(index, info);
+        VideoStreamInfo info;
+        appPlayer->GetVideoStreamInfo(index, info);
 
         result["index"] = index;
         result["name"] = info.name;
         result["language"] = info.language;
-        result["codec"] = info.videoCodecName;
+        result["codec"] = info.codecName;
         result["width"] = info.width;
         result["height"] = info.height;
       }
@@ -1626,19 +2088,21 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     {
     case Video:
     {
-      int streamCount = g_application.m_pPlayer->GetVideoStreamCount();
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+      int streamCount = appPlayer->GetVideoStreamCount();
       if (streamCount >= 0)
       {
         for (int index = 0; index < streamCount; ++index)
         {
-          SPlayerVideoStreamInfo info;
-          g_application.m_pPlayer->GetVideoStreamInfo(index, info);
+          VideoStreamInfo info;
+          appPlayer->GetVideoStreamInfo(index, info);
 
           CVariant videoStream(CVariant::VariantTypeObject);
           videoStream["index"] = index;
           videoStream["name"] = info.name;
           videoStream["language"] = info.language;
-          videoStream["codec"] = info.videoCodecName;
+          videoStream["codec"] = info.codecName;
           videoStream["width"] = info.width;
           videoStream["height"] = info.height;
 
@@ -1658,9 +2122,13 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     switch (player)
     {
       case Video:
-        result = g_application.m_pPlayer->GetSubtitleVisible();
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        result = appPlayer->GetSubtitleVisible();
         break;
-        
+      }
+
       case Audio:
       case Picture:
       default:
@@ -1673,24 +2141,29 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     switch (player)
     {
       case Video:
-        if (g_application.m_pPlayer->HasPlayer())
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        if (appPlayer->HasPlayer())
         {
           result = CVariant(CVariant::VariantTypeObject);
-          int index = g_application.m_pPlayer->GetSubtitle();
+          int index = appPlayer->GetSubtitle();
           if (index >= 0)
           {
-            SPlayerSubtitleStreamInfo info;
-            g_application.m_pPlayer->GetSubtitleStreamInfo(index, info);
+            SubtitleStreamInfo info;
+            appPlayer->GetSubtitleStreamInfo(index, info);
 
             result["index"] = index;
             result["name"] = info.name;
             result["language"] = info.language;
+            AppendSubtitleStreamFlagsAsBooleans(result, info.flags);
           }
         }
         else
           result = CVariant(CVariant::VariantTypeNull);
         break;
-        
+      }
+
       case Audio:
       case Picture:
       default:
@@ -1704,23 +2177,28 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
     switch (player)
     {
       case Video:
-        if (g_application.m_pPlayer->HasPlayer())
+      {
+        auto& components = CServiceBroker::GetAppComponents();
+        const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+        if (appPlayer->HasPlayer())
         {
-          for (int index = 0; index < g_application.m_pPlayer->GetSubtitleCount(); index++)
+          for (int index = 0; index < appPlayer->GetSubtitleCount(); index++)
           {
-            SPlayerSubtitleStreamInfo info;
-            g_application.m_pPlayer->GetSubtitleStreamInfo(index, info);
+            SubtitleStreamInfo info;
+            appPlayer->GetSubtitleStreamInfo(index, info);
 
             CVariant subtitle(CVariant::VariantTypeObject);
             subtitle["index"] = index;
             subtitle["name"] = info.name;
             subtitle["language"] = info.language;
+            AppendSubtitleStreamFlagsAsBooleans(subtitle, info.flags);
 
             result.append(subtitle);
           }
         }
         break;
-        
+      }
+
       case Audio:
       case Picture:
       default:
@@ -1735,47 +2213,81 @@ JSONRPC_STATUS CPlayerOperations::GetPropertyValue(PlayerType player, const std:
   return OK;
 }
 
-int CPlayerOperations::ParseRepeatState(const CVariant &repeat)
+PLAYLIST::RepeatState CPlayerOperations::ParseRepeatState(const CVariant& repeat)
 {
-  REPEAT_STATE state = REPEAT_NONE;
+  PLAYLIST::RepeatState state = PLAYLIST::RepeatState::NONE;
   std::string strState = repeat.asString();
 
   if (strState.compare("one") == 0)
-    state = REPEAT_ONE;
+    state = PLAYLIST::RepeatState::ONE;
   else if (strState.compare("all") == 0)
-    state = REPEAT_ALL;
+    state = PLAYLIST::RepeatState::ALL;
 
   return state;
 }
 
-double CPlayerOperations::ParseTimeInSeconds(const CVariant &time)
-{
-  double seconds = 0.0;
-  if (time.isMember("hours"))
-    seconds += time["hours"].asInteger() * 60 * 60;
-  if (time.isMember("minutes"))
-    seconds += time["minutes"].asInteger() * 60;
-  if (time.isMember("seconds"))
-    seconds += time["seconds"].asInteger();
-  if (time.isMember("milliseconds"))
-    seconds += time["milliseconds"].asDouble() / 1000.0;
-
-  return seconds;
-}
-
 bool CPlayerOperations::IsPVRChannel()
 {
-  return CServiceBroker::GetPVRManager().IsPlayingTV() || CServiceBroker::GetPVRManager().IsPlayingRadio();
+  const std::shared_ptr<const CPVRPlaybackState> state =
+      CServiceBroker::GetPVRManager().PlaybackState();
+  return state->IsPlayingTV() || state->IsPlayingRadio();
 }
 
-CPVREpgInfoTagPtr CPlayerOperations::GetCurrentEpg()
+std::shared_ptr<CPVREpgInfoTag> CPlayerOperations::GetCurrentEpg()
 {
-  if (!CServiceBroker::GetPVRManager().IsPlayingTV() && !CServiceBroker::GetPVRManager().IsPlayingRadio())
-    return CPVREpgInfoTagPtr();
+  const std::shared_ptr<const CPVRPlaybackState> state =
+      CServiceBroker::GetPVRManager().PlaybackState();
+  if (!state->IsPlayingTV() && !state->IsPlayingRadio())
+    return {};
 
-  CPVRChannelPtr currentChannel(CServiceBroker::GetPVRManager().GetCurrentChannel());
+  const std::shared_ptr<const CPVRChannel> currentChannel = state->GetPlayingChannel();
   if (!currentChannel)
-    return CPVREpgInfoTagPtr();
+    return {};
 
   return currentChannel->GetEPGNow();
+}
+
+JSONRPC_STATUS CPlayerOperations::GetChapters(const std::string& method,
+                                              ITransportLayer* transport,
+                                              IClient* client,
+                                              const CVariant& parameterObject,
+                                              CVariant& result)
+{
+  // Return the chapters list of the running video or empty list if none
+  switch (GetPlayer(parameterObject["playerid"]))
+  {
+    case Video:
+      break;
+    default:
+      return InvalidParams;
+  }
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+
+  if (!appPlayer->IsPlayingVideo())
+    return FailedToExecute; // No running video
+
+  // Extract chapters from CApplicationPlayer
+  const int chapterCount = appPlayer->GetChapterCount();
+  CVariant chapters(CVariant::VariantTypeArray);
+
+  for (int i = 1; i <= chapterCount; ++i)
+  {
+    CVariant chapter(CVariant::VariantTypeObject);
+    chapter["index"] = i;
+    // Chapter name
+    std::string name;
+    appPlayer->GetChapterName(name, i);
+    if (!name.empty())
+      chapter["name"] = name;
+    // Chapter position in seconds
+    int64_t position = appPlayer->GetChapterPos(i);
+    if (position < 0)
+      continue;
+    chapter["time"] = position;
+    chapters.push_back(chapter);
+  }
+
+  result["chapters"] = std::move(chapters);
+  return OK;
 }

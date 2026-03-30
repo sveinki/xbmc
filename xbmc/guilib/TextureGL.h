@@ -1,47 +1,63 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
 #include "Texture.h"
 
-#if defined(HAS_GL) || defined(HAS_GLES)
-
 #include "system_gl.h"
+
+struct TextureFormat
+{
+  GLenum internalFormat{GL_FALSE};
+  GLenum internalFormatSRGB{GL_FALSE};
+  GLint format{GL_FALSE};
+  GLenum type{GL_UNSIGNED_BYTE};
+};
+
+struct Textureswizzle
+{
+  GLint r{GL_RED};
+  GLint g{GL_GREEN};
+  GLint b{GL_BLUE};
+  GLint a{GL_ALPHA};
+};
 
 /************************************************************************/
 /*    CGLTexture                                                       */
 /************************************************************************/
-class CGLTexture : public CBaseTexture
+class CGLTexture : public CTexture
 {
 public:
-  CGLTexture(unsigned int width = 0, unsigned int height = 0, unsigned int format = XB_FMT_A8R8G8B8);
+  CGLTexture(unsigned int width = 0, unsigned int height = 0, XB_FMT format = XB_FMT_A8R8G8B8);
   ~CGLTexture() override;
 
+  // Implementation of CTexture
   void CreateTextureObject() override;
   void DestroyTextureObject() override;
   void LoadToGPU() override;
+  void SyncGPU() override;
   void BindToUnit(unsigned int unit) override;
 
+  bool SupportsFormat(KD_TEX_FMT textureFormat, KD_TEX_SWIZ textureSwizzle) override
+  {
+    return true;
+  }
+
+  // GL interface
+  GLuint GetTextureID() const;
+
 protected:
-  GLuint m_texture;
+  void SetSwizzle();
+  TextureFormat GetFormatGL(KD_TEX_FMT textureFormat);
+
+  GLuint m_texture{0};
+  bool m_isOglVersion3orNewer{false};
+  bool m_isOglVersion33orNewer{false};
 };
 
-#endif

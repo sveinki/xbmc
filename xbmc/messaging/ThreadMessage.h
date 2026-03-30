@@ -1,26 +1,17 @@
-#pragma once
 /*
-*      Copyright (C) 2005-2015 Team XBMC
-*      http://xbmc.org
-*
-*  This Program is free software; you can redistribute it and/or modify
-*  it under the terms of the GNU General Public License as published by
-*  the Free Software Foundation; either version 2, or (at your option)
-*  any later version.
-*
-*  This Program is distributed in the hope that it will be useful,
-*  but WITHOUT ANY WARRANTY; without even the implied warranty of
-*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-*  GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License
-*  along with XBMC; see the file COPYING.  If not, see
-*  <http://www.gnu.org/licenses/>.
-*
-*/
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
 
+#pragma once
+
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class CEvent;
@@ -46,45 +37,48 @@ public:
   {
   }
 
-  ThreadMessage(uint32_t messageId, int p1, int p2, void* payload)
+  ThreadMessage(uint32_t messageId, int64_t p3)
+  : ThreadMessage{ messageId, -1, -1, nullptr, p3 }
+  {
+  }
+
+  ThreadMessage(uint32_t messageId, int p1, int p2, void* payload, int64_t p3 = 0)
     : dwMessage{ messageId }
     , param1{ p1 }
     , param2{ p2 }
+    , param3{ p3 }
     , lpVoid{ payload }
   {
   }
 
-  ThreadMessage(uint32_t messageId, int p1, int p2, void* payload, std::string param, std::vector<std::string> vecParams)
-    : dwMessage{ messageId }
-    , param1{ p1 }
-    , param2{ p2 }
-    , lpVoid{ payload }
-    , strParam( param )
-    , params( vecParams )
+  ThreadMessage(uint32_t messageId,
+                int p1,
+                int p2,
+                void* payload,
+                std::string param,
+                std::vector<std::string> vecParams)
+    : dwMessage{messageId},
+      param1{p1},
+      param2{p2},
+      param3{0},
+      lpVoid{payload},
+      strParam(std::move(param)),
+      params(std::move(vecParams))
   {
   }
 
-  ThreadMessage(const ThreadMessage& other)
-    : dwMessage(other.dwMessage),
-    param1(other.param1),
-    param2(other.param2),
-    lpVoid(other.lpVoid),
-    strParam(other.strParam),
-    params(other.params),
-    waitEvent(other.waitEvent),
-    result(other.result)
-  {
-  }
+  ThreadMessage(const ThreadMessage& other) = default;
 
-  ThreadMessage(ThreadMessage&& other)
+  ThreadMessage(ThreadMessage&& other) noexcept
     : dwMessage(other.dwMessage),
-    param1(other.param1),
-    param2(other.param2),
-    lpVoid(other.lpVoid),
-    strParam(std::move(other.strParam)),
-    params(std::move(other.params)),
-    waitEvent(std::move(other.waitEvent)),
-    result(std::move(other.result))
+      param1(other.param1),
+      param2(other.param2),
+      param3(other.param3),
+      lpVoid(other.lpVoid),
+      strParam(std::move(other.strParam)),
+      params(std::move(other.params)),
+      waitEvent(std::move(other.waitEvent)),
+      result(std::move(other.result))
   {
   }
 
@@ -95,6 +89,7 @@ public:
     dwMessage = other.dwMessage;
     param1 = other.param1;
     param2 = other.param2;
+    param3 = other.param3;
     lpVoid = other.lpVoid;
     strParam = other.strParam;
     params = other.params;
@@ -103,13 +98,14 @@ public:
     return *this;
   }
 
-  ThreadMessage& operator=(ThreadMessage&& other)
+  ThreadMessage& operator=(ThreadMessage&& other) noexcept
   {
     if (this == &other)
       return *this;
     dwMessage = other.dwMessage;
     param1 = other.param1;
     param2 = other.param2;
+    param3 = other.param3;
     lpVoid = other.lpVoid;
     strParam = std::move(other.strParam);
     params = std::move(other.params);
@@ -121,6 +117,7 @@ public:
   uint32_t dwMessage;
   int param1;
   int param2;
+  int64_t param3;
   void* lpVoid;
   std::string strParam;
   std::vector<std::string> params;

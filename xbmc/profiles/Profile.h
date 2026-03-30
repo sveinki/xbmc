@@ -1,30 +1,22 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "GUIPassword.h"
+#pragma once
+
+#include "LockMode.h"
+#include "SettingsLock.h"
 
 #include <string>
-#include <vector>
 
 class TiXmlNode;
+
+constexpr int INVALID_PROFILE_ID = -1;
+constexpr int MASTER_PROFILE_ID = 0; // id of the master profile
 
 class CProfile
 {
@@ -34,13 +26,13 @@ public:
   class CLock
   {
   public:
-    CLock(LockType type = LOCK_MODE_EVERYONE, const std::string &password = "");
+    CLock(LockMode type = LockMode::EVERYONE, const std::string& password = "");
     void Validate();
 
-    LockType mode;
+    LockMode mode;
     std::string code;
     bool addonManager;
-    LOCK_LEVEL::SETTINGS_LOCK settings;
+    SettingsLock settings = SettingsLock::NONE;
     bool music;
     bool video;
     bool files;
@@ -49,9 +41,11 @@ public:
     bool games;
   };
 
-  CProfile(const std::string &directory = "", const std::string &name = "", const int id = -1);
+  explicit CProfile(const std::string& directory = "",
+                    const std::string& name = "",
+                    const int id = INVALID_PROFILE_ID);
   ~CProfile(void);
-  
+
   void Load(const TiXmlNode *node, int nextIdProfile);
   void Save(TiXmlNode *root) const;
 
@@ -61,7 +55,7 @@ public:
   const std::string& getDirectory() const { return m_directory;}
   const std::string& getThumb() const { return m_thumb;}
   const std::string& getLockCode() const { return m_locks.code;}
-  LockType getLockMode() const { return m_locks.mode; }
+  LockMode getLockMode() const { return m_locks.mode; }
 
   bool hasDatabases() const { return m_bDatabases; }
   bool canWriteDatabases() const { return m_bCanWrite; }
@@ -69,10 +63,10 @@ public:
   bool canWriteSources() const { return m_bCanWriteSources; }
   bool hasAddons() const { return m_bAddons; }
   /**
-   \brief Returns wich settings levels are locked for the current profile
+   \brief Returns which settings levels are locked for the current profile
    \sa LOCK_LEVEL::SETTINGS_LOCK
    */
-  LOCK_LEVEL::SETTINGS_LOCK settingsLockLevel() const { return m_locks.settings; }
+  SettingsLock settingsLockLevel() const { return m_locks.settings; }
   bool addonmanagerLocked() const { return m_locks.addonManager; }
   bool musicLocked() const { return m_locks.music; }
   bool videoLocked() const { return m_locks.video; }

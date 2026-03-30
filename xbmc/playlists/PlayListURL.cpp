@@ -1,29 +1,18 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PlayListURL.h"
-#include "filesystem/File.h"
-#include "utils/URIUtils.h"
-#include "utils/StringUtils.h"
 
-using namespace PLAYLIST;
+#include "FileItem.h"
+#include "filesystem/File.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+
 using namespace XFILE;
 
 // example url file
@@ -32,14 +21,17 @@ using namespace XFILE;
 //[InternetShortcut]
 //URL=http://msdn2.microsoft.com/en-us/library/ms812698.aspx
 
+namespace KODI::PLAYLIST
+{
+
 CPlayListURL::CPlayListURL(void) = default;
 
 CPlayListURL::~CPlayListURL(void) = default;
 
 bool CPlayListURL::Load(const std::string& strFileName)
 {
-  char szLine[4096];
   std::string strLine;
+  strLine.reserve(1024);
 
   Clear();
 
@@ -53,22 +45,17 @@ bool CPlayListURL::Load(const std::string& strFileName)
     return false;
   }
 
-  while (file.ReadString(szLine, 1024))
+  while (file.ReadLine(strLine))
   {
-    strLine = szLine;
     StringUtils::RemoveCRLF(strLine);
 
     if (StringUtils::StartsWith(strLine, "[InternetShortcut]"))
     {
-      if (file.ReadString(szLine,1024))
+      if (file.ReadLine(strLine))
       {
-        strLine  = szLine;
         StringUtils::RemoveCRLF(strLine);
         if (StringUtils::StartsWith(strLine, "URL="))
-        {
-          CFileItemPtr newItem(new CFileItem(strLine.substr(4), false));
-          Add(newItem);
-        }
+          Add(std::make_shared<CFileItem>(strLine.substr(4), false));
       }
     }
   }
@@ -77,3 +64,4 @@ bool CPlayListURL::Load(const std::string& strFileName)
   return true;
 }
 
+} // namespace KODI::PLAYLIST

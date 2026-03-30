@@ -1,83 +1,92 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "view/GUIViewState.h"
 
+class CFileItemList;
+
 namespace PVR
 {
-  class CGUIViewStatePVR : public CGUIViewState
+class CGUIViewStatePVR : public CGUIViewState
+{
+public:
+  CGUIViewStatePVR(const int windowId, const CFileItemList& items)
+    : CGUIViewState(items),
+      m_windowId(windowId)
   {
-  public:
-    CGUIViewStatePVR(const int windowId, const CFileItemList& items) : CGUIViewState(items) { m_windowId = windowId; }
+  }
 
-  protected:
-    bool HideParentDirItems(void) override { return true; }
+  int GetWindowId() const { return m_windowId; }
 
-    int m_windowId;
-  };
+protected:
+  bool HideParentDirItems() override { return true; }
 
-  class CGUIViewStateWindowPVRChannels : public CGUIViewStatePVR
-  {
-  public:
-    CGUIViewStateWindowPVRChannels(const int windowId, const CFileItemList& items);
+private:
+  const int m_windowId{-1};
+};
 
-  protected:
-    void SaveViewState() override;
-  };
+class CGUIViewStateWindowPVRChannels : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRChannels(const int windowId, const CFileItemList& items);
 
-  class CGUIViewStateWindowPVRRecordings : public CGUIViewStatePVR
-  {
-  public:
-    CGUIViewStateWindowPVRRecordings(const int windowId, const CFileItemList& items);
+protected:
+  void SaveViewState() override;
+};
 
-  protected:
-    void SaveViewState() override;
-    bool HideParentDirItems(void) override;
-  };
+class CGUIViewStateWindowPVRRecordings : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRRecordings(const int windowId, const CFileItemList& items);
 
-  class CGUIViewStateWindowPVRGuide : public CGUIViewStatePVR
-  {
-  public:
-    CGUIViewStateWindowPVRGuide(const int windowId, const CFileItemList& items);
+protected:
+  void SaveViewState() override;
+  bool HideParentDirItems() override;
+};
 
-  protected:
-    void SaveViewState() override;
-  };
+class CGUIViewStateWindowPVRGuide : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRGuide(const int windowId, const CFileItemList& items);
 
-  class CGUIViewStateWindowPVRTimers : public CGUIViewStatePVR
-  {
-  public:
-    CGUIViewStateWindowPVRTimers(const int windowId, const CFileItemList& items);
+protected:
+  void SaveViewState() override;
+};
 
-  protected:
-    void SaveViewState() override;
-    bool HideParentDirItems(void) override;
-  };
+class CGUIViewStateWindowPVRTimers : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRTimers(const int windowId, const CFileItemList& items);
 
-  class CGUIViewStateWindowPVRSearch : public CGUIViewStatePVR
-  {
-  public:
-    CGUIViewStateWindowPVRSearch(const int windowId, const CFileItemList& items);
+protected:
+  void SaveViewState() override;
+  bool HideParentDirItems() override;
+};
 
-  protected:
-    void SaveViewState() override;
-  };
-}
+class CGUIViewStateWindowPVRSearch : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRSearch(const int windowId, const CFileItemList& items);
+
+protected:
+  void SaveViewState() override;
+  bool HideParentDirItems() override;
+};
+
+class CGUIViewStateWindowPVRProviders : public CGUIViewStatePVR
+{
+public:
+  CGUIViewStateWindowPVRProviders(const int windowId, const CFileItemList& items);
+
+protected:
+  void SaveViewState() override;
+  bool HideParentDirItems() override;
+};
+} // namespace PVR

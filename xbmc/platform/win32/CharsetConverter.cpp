@@ -1,27 +1,18 @@
 /*
- *      Copyright (C) 2005-2016 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#if defined(TARGET_WINDOWS)
-#include <memory>
-
 #include "CharsetConverter.h"
+
+#include <cassert>
+#include <limits>
+
+#include <Windows.h>
+
 namespace KODI
 {
 namespace PLATFORM
@@ -30,44 +21,69 @@ namespace WINDOWS
 {
 std::string FromW(const wchar_t* str, size_t length)
 {
-  int result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, str, length, nullptr, 0, nullptr, nullptr);
-  if (result == 0)
-    return std::string();
+  std::string newStr;
 
-  auto newStr = std::make_unique<char[]>(result);
-  result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, str, length, newStr.get(), result, nullptr, nullptr);
-  if (result == 0)
-    return std::string();
+  if (length == 0 || length > std::numeric_limits<int>::max())
+    return newStr;
 
-  return std::string(newStr.get(), result);
+  const int result1 =
+      WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, str, length, nullptr, 0, nullptr, nullptr);
+  if (result1 == 0)
+    return newStr;
+
+  newStr.resize(result1, '\0');
+  const int result2 = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, str, length, newStr.data(),
+                                          result1, nullptr, nullptr);
+  assert(result1 == result2);
+
+  if (result1 != result2)
+  {
+    if (result2 < result1) // less data written than expected is recoverable though still a problem
+      newStr.resize(result2, '\0');
+    else
+      newStr.clear();
+  }
+
+  return newStr;
 }
 
-std::string FromW(const std::wstring& str)
+std::string FromW(std::wstring_view str)
 {
-  return FromW(str.c_str(), str.length());
+  return FromW(str.data(), str.length());
 }
 
 std::wstring ToW(const char* str, size_t length)
 {
-  int result = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, length, nullptr, 0);
-  if (result == 0)
-    return std::wstring();
+  std::wstring newStr;
 
-  auto newStr = std::make_unique<wchar_t[]>(result);
-  result = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, length, newStr.get(), result);
+  if (length == 0 || length > std::numeric_limits<int>::max())
+    return newStr;
 
-  if (result == 0)
-    return std::wstring();
+  const int result1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, length, nullptr, 0);
+  if (result1 == 0)
+    return newStr;
 
-  return std::wstring(newStr.get(), result);
+  newStr.resize(result1, L'\0');
+  const int result2 =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, length, newStr.data(), result1);
+  assert(result1 == result2);
+
+  if (result1 != result2)
+  {
+    if (result2 < result1) // less data written than expected is recoverable though still a problem
+      newStr.resize(result2, L'\0');
+    else
+      newStr.clear();
+  }
+
+  return newStr;
 }
 
-std::wstring ToW(const std::string& str)
+std::wstring ToW(std::string_view str)
 {
-  return ToW(str.c_str(), str.length());
+  return ToW(str.data(), str.length());
 }
 
 }
 }
 }
-#endif

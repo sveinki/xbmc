@@ -1,29 +1,22 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIStaticItem.h"
-#include "utils/XMLUtils.h"
+
 #include "GUIControlFactory.h"
 #include "GUIInfoManager.h"
-#include "utils/Variant.h"
+#include "ServiceBroker.h"
+#include "guilib/GUIComponent.h"
 #include "utils/StringUtils.h"
+#include "utils/Variant.h"
+#include "utils/XMLUtils.h"
+
+using namespace KODI::GUILIB;
 
 CGUIStaticItem::CGUIStaticItem(const TiXmlElement *item, int parentID) : CFileItem()
 {
@@ -31,7 +24,7 @@ CGUIStaticItem::CGUIStaticItem(const TiXmlElement *item, int parentID) : CFileIt
 
   assert(item);
 
-  CGUIInfoLabel label, label2, thumb, icon;
+  GUIINFO::CGUIInfoLabel label, label2, thumb, icon;
   CGUIControlFactory::GetInfoLabel(item, "label", label, parentID);
   CGUIControlFactory::GetInfoLabel(item, "label2", label2, parentID);
   CGUIControlFactory::GetInfoLabel(item, "thumb", thumb, parentID);
@@ -44,23 +37,27 @@ CGUIStaticItem::CGUIStaticItem(const TiXmlElement *item, int parentID) : CFileIt
   SetLabel(label.GetLabel(parentID));
   SetLabel2(label2.GetLabel(parentID));
   SetArt("thumb", thumb.GetLabel(parentID, true));
-  SetIconImage(icon.GetLabel(parentID, true));
-  if (!label.IsConstant())  m_info.push_back(std::make_pair(label, "label"));
-  if (!label2.IsConstant()) m_info.push_back(std::make_pair(label2, "label2"));
-  if (!thumb.IsConstant())  m_info.push_back(std::make_pair(thumb, "thumb"));
-  if (!icon.IsConstant())   m_info.push_back(std::make_pair(icon, "icon"));
-  m_iprogramCount = id ? atoi(id) : 0;
+  SetArt("icon", icon.GetLabel(parentID, true));
+  if (!label.IsConstant())
+    m_info.emplace_back(label, "label");
+  if (!label2.IsConstant())
+    m_info.emplace_back(label2, "label2");
+  if (!thumb.IsConstant())
+    m_info.emplace_back(thumb, "thumb");
+  if (!icon.IsConstant())
+    m_info.emplace_back(icon, "icon");
+  SetProgramCount(id ? std::atoi(id) : 0);
   // add any properties
   const TiXmlElement *property = item->FirstChildElement("property");
   while (property)
   {
     std::string name = XMLUtils::GetAttribute(property, "name");
-    CGUIInfoLabel prop;
+    GUIINFO::CGUIInfoLabel prop;
     if (!name.empty() && CGUIControlFactory::GetInfoLabelFromElement(property, prop, parentID))
     {
       SetProperty(name, prop.GetLabel(parentID, true).c_str());
       if (!prop.IsConstant())
-        m_info.push_back(std::make_pair(prop, name));
+        m_info.emplace_back(prop, name);
     }
     property = property->NextSiblingElement("property");
   }
@@ -72,14 +69,23 @@ CGUIStaticItem::CGUIStaticItem(const CFileItem &item)
   m_visState = false;
 }
 
+CGUIStaticItem::CGUIStaticItem(const CGUIStaticItem& other)
+  : CFileItem(other),
+    m_info(other.m_info),
+    m_visCondition(other.m_visCondition),
+    m_visState(other.m_visState),
+    m_clickActions(other.m_clickActions)
+{
+}
+
 void CGUIStaticItem::UpdateProperties(int contextWindow)
 {
-  for (InfoVector::const_iterator i = m_info.begin(); i != m_info.end(); ++i)
+  for (const auto& i : m_info)
   {
-    const CGUIInfoLabel &info = i->first;
-    const std::string &name = i->second;
-    bool preferTexture = strnicmp("label", name.c_str(), 5) != 0;
-    std::string value(info.GetLabel(contextWindow, preferTexture));
+    const GUIINFO::CGUIInfoLabel& info = i.first;
+    const std::string& name = i.second;
+    bool preferTexture = StringUtils::CompareNoCase("label", name, 5) != 0;
+    const std::string& value(info.GetLabel(contextWindow, preferTexture));
     if (StringUtils::EqualsNoCase(name, "label"))
       SetLabel(value);
     else if (StringUtils::EqualsNoCase(name, "label2"))
@@ -87,7 +93,7 @@ void CGUIStaticItem::UpdateProperties(int contextWindow)
     else if (StringUtils::EqualsNoCase(name, "thumb"))
       SetArt("thumb", value);
     else if (StringUtils::EqualsNoCase(name, "icon"))
-      SetIconImage(value);
+      SetArt("icon", value);
     else
       SetProperty(name, value.c_str());
   }
@@ -97,7 +103,7 @@ bool CGUIStaticItem::UpdateVisibility(int contextWindow)
 {
   if (!m_visCondition)
     return false;
-  bool state = m_visCondition->Get();
+  bool state = m_visCondition->Get(contextWindow);
   if (state != m_visState)
   {
     m_visState = state;
@@ -115,6 +121,6 @@ bool CGUIStaticItem::IsVisible() const
 
 void CGUIStaticItem::SetVisibleCondition(const std::string &condition, int context)
 {
-  m_visCondition = g_infoManager.Register(condition, context);
+  m_visCondition = CServiceBroker::GetGUI()->GetInfoManager().Register(condition, context);
   m_visState = false;
 }

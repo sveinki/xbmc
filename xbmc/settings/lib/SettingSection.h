@@ -1,32 +1,24 @@
-#pragma once
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <string>
-#include <vector>
+#pragma once
 
 #include "ISetting.h"
 #include "Setting.h"
 #include "SettingCategoryAccess.h"
+#include "utils/logtypes.h"
+
+#include <string>
+#include <utility>
+#include <vector>
 
 class CSettingsManager;
+class TiXmlNode;
 
 /*!
  \ingroup settings
@@ -65,18 +57,29 @@ public:
    */
   SettingList GetSettings(SettingLevel level) const;
 
-  void AddSetting(std::shared_ptr<CSetting> setting);
+  /*
+   * \brief Determine if there are visible settings assigned to the given setting level (or below)
+   *        and that they meet the requirements conditions belonging to the setting group.
+   * \param level Level the settings should be assigned to
+   * \return True if there are visible settings belonging to the setting group, otherwise false
+   */
+  bool ContainsVisibleSettings(const SettingLevel level) const;
+
+  void AddSetting(const std::shared_ptr<CSetting>& setting);
   void AddSettings(const SettingList &settings);
 
-  bool ReplaceSetting(std::shared_ptr<const CSetting> currentSetting, std::shared_ptr<CSetting> newSetting);
+  bool ReplaceSetting(const std::shared_ptr<const CSetting>& currentSetting,
+                      const std::shared_ptr<CSetting>& newSetting);
 
   std::shared_ptr<const ISettingControl> GetControl() const { return m_control; }
   std::shared_ptr<ISettingControl> GetControl() { return m_control; }
-  void SetControl(std::shared_ptr<ISettingControl> control) { m_control = control; }
+  void SetControl(std::shared_ptr<ISettingControl> control) { m_control = std::move(control); }
 
 private:
   SettingList m_settings;
   std::shared_ptr<ISettingControl> m_control;
+
+  static Logger s_logger;
 };
 
 using SettingGroupPtr = std::shared_ptr<CSettingGroup>;
@@ -127,12 +130,15 @@ public:
    */
   bool CanAccess() const;
 
-  void AddGroup(SettingGroupPtr group);
+  void AddGroup(const SettingGroupPtr& group);
+  void AddGroupToFront(const SettingGroupPtr& group);
   void AddGroups(const SettingGroupList &groups);
 
 private:
   SettingGroupList m_groups;
   CSettingCategoryAccess m_accessCondition;
+
+  static Logger s_logger;
 };
 
 using SettingCategoryPtr = std::shared_ptr<CSettingCategory>;
@@ -176,11 +182,13 @@ public:
    */
   SettingCategoryList GetCategories(SettingLevel level) const;
 
-  void AddCategory(SettingCategoryPtr category);
+  void AddCategory(const SettingCategoryPtr& category);
   void AddCategories(const SettingCategoryList &categories);
 
 private:
   SettingCategoryList m_categories;
+
+  static Logger s_logger;
 };
 
 using SettingSectionPtr = std::shared_ptr<CSettingSection>;

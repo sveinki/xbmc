@@ -1,57 +1,34 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "guilib/GUIDialog.h"
-#include "view/GUIViewControl.h"
+#pragma once
 
-#include "pvr/PVRTypes.h"
+#include "pvr/dialogs/GUIDialogPVRItemsViewBase.h"
 
-class CFileItemList;
+#include <memory>
 
 namespace PVR
 {
-  class CGUIDialogPVRChannelGuide : public CGUIDialog
-  {
-  public:
-    CGUIDialogPVRChannelGuide(void);
-    ~CGUIDialogPVRChannelGuide(void) override;
-    bool OnMessage(CGUIMessage& message) override;
-    void OnWindowLoaded() override;
-    void OnWindowUnload() override;
+class CPVRChannel;
 
-    void Open(const CPVRChannelPtr &channel);
+class CGUIDialogPVRChannelGuide : public CGUIDialogPVRItemsViewBase
+{
+public:
+  CGUIDialogPVRChannelGuide();
+  ~CGUIDialogPVRChannelGuide() override = default;
 
-  protected:
-    void OnInitWindow() override;
-    void OnDeinitWindow(int nextWindowID) override;
+  void Open(const std::shared_ptr<const CPVRChannel>& channel);
 
-    CGUIControl *GetFirstFocusableControl(int id) override;
+protected:
+  void OnInitWindow() override;
+  void OnDeinitWindow(int nextWindowID) override;
 
-    std::unique_ptr<CFileItemList> m_vecItems;
-    CGUIViewControl m_viewControl;
-
-  private:
-    void ShowInfo(int iItem);
-    void Clear();
-
-    CPVRChannelPtr m_channel;
-  };
-}
+private:
+  std::shared_ptr<const CPVRChannel> m_channel;
+};
+} // namespace PVR

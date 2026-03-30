@@ -1,43 +1,37 @@
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
 #include "DVDVideoCodec.h"
-#include "cores/VideoPlayer/Process/VideoBuffer.h"
-#include "settings/VideoSettings.h"
+#include "cores/VideoPlayer/Buffers/VideoBuffer.h"
+#include "cores/VideoSettings.h"
 #include "threads/CriticalSection.h"
-#include "threads/SharedSection.h"
 #include "threads/Event.h"
+#include "threads/SharedSection.h"
 #include "threads/Thread.h"
 #include "utils/ActorProtocol.h"
-#include "guilib/Geometry.h"
+#include "utils/Geometry.h"
+
+#include "platform/linux/sse4/DllLibSSE4.h"
+
 #include <list>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <utility>
 #include <vector>
+
 #include <va/va.h>
-#include "linux/sse4/DllLibSSE4.h"
 
 extern "C" {
-#include "libavutil/avutil.h"
-#include "libavfilter/avfilter.h"
+#include <libavutil/avutil.h>
+#include <libavfilter/avfilter.h>
 }
 
 using namespace Actor;
@@ -48,6 +42,9 @@ class CProcessInfo;
 
 namespace VAAPI
 {
+
+void VaErrorCallback(void *user_context, const char *message);
+void VaInfoCallback(void *user_context, const char *message);
 
 //-----------------------------------------------------------------------------
 // VAAPI data structs
@@ -62,30 +59,105 @@ class CDecoder;
 class CVaapiBufferStats
 {
 public:
-  uint16_t decodedPics;
-  uint16_t processedPics;
-  uint16_t renderPics;
-  uint64_t latency;         // time decoder has waited for a frame, ideally there is no latency
-  int codecFlags;
-  bool canSkipDeint;
-  int processCmd;
-  bool isVpp;
+  uint16_t decodedPics{};
+  uint16_t processedPics{};
+  uint16_t renderPics{};
+  uint64_t latency{}; // time decoder has waited for a frame, ideally there is no latency
+  int codecFlags{};
+  bool canSkipDeint{};
+  int processCmd{};
+  bool isVpp{};
 
-  void IncDecoded() { CSingleLock l(m_sec); decodedPics++;}
-  void DecDecoded() { CSingleLock l(m_sec); decodedPics--;}
-  void IncProcessed() { CSingleLock l(m_sec); processedPics++;}
-  void DecProcessed() { CSingleLock l(m_sec); processedPics--;}
-  void IncRender() { CSingleLock l(m_sec); renderPics++;}
-  void DecRender() { CSingleLock l(m_sec); renderPics--;}
-  void Reset() { CSingleLock l(m_sec); decodedPics=0; processedPics=0;renderPics=0;latency=0;isVpp=false;}
-  void Get(uint16_t &decoded, uint16_t &processed, uint16_t &render, bool &vpp) {CSingleLock l(m_sec); decoded = decodedPics, processed=processedPics, render=renderPics; vpp=isVpp;}
-  void SetParams(uint64_t time, int flags) { CSingleLock l(m_sec); latency = time; codecFlags = flags; }
-  void GetParams(uint64_t &lat, int &flags) { CSingleLock l(m_sec); lat = latency; flags = codecFlags; }
-  void SetCmd(int cmd) { CSingleLock l(m_sec); processCmd = cmd; }
-  void GetCmd(int &cmd) { CSingleLock l(m_sec); cmd = processCmd; processCmd = 0; }
-  void SetCanSkipDeint(bool canSkip) { CSingleLock l(m_sec); canSkipDeint = canSkip; }
-  bool CanSkipDeint() { CSingleLock l(m_sec); if (canSkipDeint) return true; else return false;}
-  void SetVpp(bool vpp) {CSingleLock l(m_sec); isVpp = vpp;}
+  void IncDecoded()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics++;
+  }
+  void DecDecoded()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics--;
+  }
+  void IncProcessed()
+  {
+    std::unique_lock l(m_sec);
+    processedPics++;
+  }
+  void DecProcessed()
+  {
+    std::unique_lock l(m_sec);
+    processedPics--;
+  }
+  void IncRender()
+  {
+    std::unique_lock l(m_sec);
+    renderPics++;
+  }
+  void DecRender()
+  {
+    std::unique_lock l(m_sec);
+    renderPics--;
+  }
+  void Reset()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics = 0;
+    processedPics = 0;
+    renderPics = 0;
+    latency = 0;
+    codecFlags = 0;
+    canSkipDeint = false;
+    processCmd = 0;
+    isVpp = false;
+  }
+  void Get(uint16_t& decoded, uint16_t& processed, uint16_t& render, bool& vpp)
+  {
+    std::unique_lock l(m_sec);
+    decoded = decodedPics, processed = processedPics, render = renderPics;
+    vpp = isVpp;
+  }
+  void SetParams(uint64_t time, int flags)
+  {
+    std::unique_lock l(m_sec);
+    latency = time;
+    codecFlags = flags;
+  }
+  void GetParams(uint64_t& lat, int& flags)
+  {
+    std::unique_lock l(m_sec);
+    lat = latency;
+    flags = codecFlags;
+  }
+  void SetCmd(int cmd)
+  {
+    std::unique_lock l(m_sec);
+    processCmd = cmd;
+  }
+  void GetCmd(int& cmd)
+  {
+    std::unique_lock l(m_sec);
+    cmd = processCmd;
+    processCmd = 0;
+  }
+  void SetCanSkipDeint(bool canSkip)
+  {
+    std::unique_lock l(m_sec);
+    canSkipDeint = canSkip;
+  }
+  bool CanSkipDeint()
+  {
+    std::unique_lock l(m_sec);
+    if (canSkipDeint)
+      return true;
+    else
+      return false;
+  }
+  void SetVpp(bool vpp)
+  {
+    std::unique_lock l(m_sec);
+    isVpp = vpp;
+  }
+
 private:
   CCriticalSection m_sec;
 };
@@ -118,6 +190,8 @@ struct CVaapiConfig
   VAProfile profile;
   VAConfigAttrib attrib;
   CProcessInfo *processInfo;
+  bool driverIsMesa;
+  int bitDepth;
 };
 
 /**
@@ -146,6 +220,7 @@ struct CVaapiDecodedPicture
 /**
  * Frame after having been processed by vpp
  */
+class CPostproc;
 struct CVaapiProcessedPicture
 {
   CVaapiProcessedPicture() = default;
@@ -168,19 +243,16 @@ struct CVaapiProcessedPicture
   VASurfaceID videoSurface;
   AVFrame *frame;
   int id;
-  enum
-  {
-    VPP_SRC,
-    FFMPEG_SRC,
-    SKIP_SRC
-  }source;
-  bool crop;
+  CPostproc *source = nullptr;
+  bool crop = false;
 };
 
 class CVaapiRenderPicture : public CVideoBuffer
 {
 public:
-  CVaapiRenderPicture(int id) : CVideoBuffer(id) { }
+  explicit CVaapiRenderPicture(int id) : CVideoBuffer(id) { }
+  void GetPlanes(uint8_t*(&planes)[YuvImage::MAX_PLANES]) override;
+  void GetStrides(int(&strides)[YuvImage::MAX_PLANES]) override;
   VideoPicture DVDPic;
   CVaapiProcessedPicture procPic;
   AVFrame *avFrame = nullptr;
@@ -196,7 +268,10 @@ public:
 class COutputControlProtocol : public Protocol
 {
 public:
-  COutputControlProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Protocol(name, inEvent, outEvent) {};
+  COutputControlProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     INIT,
@@ -215,7 +290,10 @@ public:
 class COutputDataProtocol : public Protocol
 {
 public:
-  COutputDataProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Protocol(name, inEvent, outEvent) {};
+  COutputDataProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     NEWFRAME = 0,
@@ -268,13 +346,12 @@ protected:
   void ProcessReturnProcPicture(int id);
   void ProcessSyncPicture();
   void ReleaseProcessedPicture(CVaapiProcessedPicture &pic);
-  void DropVppProcessedPictures();
   bool Init();
   bool Uninit();
   void Flush();
   void EnsureBufferPool();
   void ReleaseBufferPool(bool precleanup = false);
-  bool CheckSuccess(VAStatus status);
+  void ReadyForDisposal(CPostproc *pp);
   CEvent m_outMsgEvent;
   CEvent *m_inMsgEvent;
   int m_state;
@@ -282,14 +359,15 @@ protected:
   CDecoder &m_vaapi;
 
   // extended state variables for state machine
-  int m_extTimeout;
-  bool m_vaError;
+  std::chrono::milliseconds m_extTimeout = std::chrono::milliseconds::zero();
+  /// \brief Whether at least one interlaced frame was encountered in the video stream (indicating that more interlaced frames could potentially follow)
+  bool m_seenInterlaced;
   CVaapiConfig m_config;
   std::shared_ptr<CVaapiBufferPool> m_bufferPool;
   CVaapiDecodedPicture m_currentPicture;
   CPostproc *m_pp;
+  std::list<std::shared_ptr<CPostproc>> m_discardedPostprocs;
   SDiMethods m_diMethods;
-  EINTERLACEMETHOD m_currentDiMethod;
 };
 
 //-----------------------------------------------------------------------------
@@ -339,24 +417,36 @@ private:
   bool CreateContext();
   void DestroyContext();
   void QueryCaps();
-  bool CheckSuccess(VAStatus status);
+  bool CheckSuccess(VAStatus status, const std::string& function);
   bool IsValidDecoder(CDecoder *decoder);
   void SetValidDRMVaDisplayFromRenderNode();
   static CVAAPIContext *m_context;
   static CCriticalSection m_section;
-  VADisplay m_display;
+  VADisplay m_display = NULL;
   int m_refCount;
-  int m_attributeCount;
-  VADisplayAttribute *m_attributes;
   int m_profileCount;
   VAProfile *m_profiles;
   std::vector<CDecoder*> m_decoders;
   int m_renderNodeFD{-1};
 };
 
-/**
- *  VAAPI main class
- */
+//-----------------------------------------------------------------------------
+// Interface into windowing
+//-----------------------------------------------------------------------------
+
+class IVaapiWinSystem
+{
+public:
+  virtual ~IVaapiWinSystem() = default;
+
+  virtual VADisplay GetVADisplay() = 0;
+  virtual void* GetEGLDisplay() { return nullptr; }
+};
+
+//-----------------------------------------------------------------------------
+// VAAPI main class
+//-----------------------------------------------------------------------------
+
 class CDecoder
  : public IHardwareDecoder
 {
@@ -364,7 +454,7 @@ class CDecoder
 
 public:
 
-  CDecoder(CProcessInfo& processInfo);
+  explicit CDecoder(CProcessInfo& processInfo);
   ~CDecoder() override;
 
   bool Open (AVCodecContext* avctx, AVCodecContext* mainctx, const enum AVPixelFormat) override;
@@ -384,7 +474,9 @@ public:
   static int FFGetBuffer(AVCodecContext *avctx, AVFrame *pic, int flags);
 
   static IHardwareDecoder* Create(CDVDStreamInfo &hint, CProcessInfo &processInfo, AVPixelFormat fmt);
-  static void Register(bool hevc);
+  static void Register(IVaapiWinSystem *winSystem, bool deepColor);
+
+  static IVaapiWinSystem* m_pWinSystem;
 
 protected:
   void SetWidthHeight(int width, int height);
@@ -393,7 +485,7 @@ protected:
   void FiniVAAPIOutput();
   void ReturnRenderPicture(CVaapiRenderPicture *renderPic);
   long ReleasePicReference();
-  bool CheckSuccess(VAStatus status);
+  bool CheckSuccess(VAStatus status, const std::string& function);
 
   enum EDisplayState
   { VAAPI_OPEN
@@ -405,11 +497,9 @@ protected:
   CEvent m_DisplayEvent;
   int m_ErrorCount;
 
-  ThreadIdentifier m_decoderThread;
   bool m_vaapiConfigured;
   CVaapiConfig  m_vaapiConfig;
   CVideoSurfaces m_videoSurfaces;
-  AVCodecContext* m_avctx;
   int m_getBufferError;
 
   COutput m_vaapiOutput;
@@ -421,7 +511,15 @@ protected:
   CProcessInfo& m_processInfo;
 
   static bool m_capGeneral;
-  static bool m_capHevc;
+  static bool m_capDeepColor;
+
+private:
+  struct AVBufferRefDeleter
+  {
+    void operator()(AVBufferRef* p) const;
+  };
+
+  std::unique_ptr<AVBufferRef, AVBufferRefDeleter> m_deviceRef;
 };
 
 //-----------------------------------------------------------------------------
@@ -431,6 +529,7 @@ protected:
 /**
  *  Base class
  */
+typedef void (COutput::*ReadyToDispose)(CPostproc *pool);
 class CPostproc
 {
 public:
@@ -439,11 +538,14 @@ public:
   virtual bool Init(EINTERLACEMETHOD method) = 0;
   virtual bool AddPicture(CVaapiDecodedPicture &inPic) = 0;
   virtual bool Filter(CVaapiProcessedPicture &outPic) = 0;
-  virtual void ClearRef(VASurfaceID surf) = 0;
+  virtual void ClearRef(CVaapiProcessedPicture &pic) = 0;
   virtual void Flush() = 0;
-  virtual bool Compatible(EINTERLACEMETHOD method) = 0;
+  virtual bool UpdateDeintMethod(EINTERLACEMETHOD method) = 0;
   virtual bool DoesSync() = 0;
   virtual bool WantsPic() {return true;}
+  virtual bool UseVideoSurface() = 0;
+  virtual void Discard(COutput* output, ReadyToDispose cb) { (output->*cb)(this); }
+
 protected:
   CVaapiConfig m_config;
   int m_step;
@@ -459,12 +561,17 @@ public:
   bool Init(EINTERLACEMETHOD method) override;
   bool AddPicture(CVaapiDecodedPicture &inPic) override;
   bool Filter(CVaapiProcessedPicture &outPic) override;
-  void ClearRef(VASurfaceID surf) override;
+  void ClearRef(CVaapiProcessedPicture &pic) override;
   void Flush() override;
-  bool Compatible(EINTERLACEMETHOD method) override;
+  bool UpdateDeintMethod(EINTERLACEMETHOD method) override;
   bool DoesSync() override;
+  bool UseVideoSurface() override;
+  void Discard(COutput *output, ReadyToDispose cb) override;
 protected:
   CVaapiDecodedPicture m_pic;
+  ReadyToDispose m_cbDispose = nullptr;
+  COutput *m_pOut;
+  int m_refsToSurfaces = 0;
 };
 
 /**
@@ -479,24 +586,28 @@ public:
   bool Init(EINTERLACEMETHOD method) override;
   bool AddPicture(CVaapiDecodedPicture &inPic) override;
   bool Filter(CVaapiProcessedPicture &outPic) override;
-  void ClearRef(VASurfaceID surf) override;
+  void ClearRef(CVaapiProcessedPicture &pic) override;
   void Flush() override;
-  bool Compatible(EINTERLACEMETHOD method) override;
+  bool UpdateDeintMethod(EINTERLACEMETHOD method) override;
   bool DoesSync() override;
   bool WantsPic() override;
+  bool UseVideoSurface() override;
+  void Discard(COutput *output, ReadyToDispose cb) override;
 protected:
-  bool CheckSuccess(VAStatus status);
+  bool CheckSuccess(VAStatus status, const std::string& function);
   void Dispose();
   void Advance();
-  VAConfigID m_configId;
-  VAContextID m_contextId;
+  VAConfigID m_configId = VA_INVALID_ID;
+  VAContextID m_contextId = VA_INVALID_ID;
   CVideoSurfaces m_videoSurfaces;
   std::deque<CVaapiDecodedPicture> m_decodedPics;
-  VABufferID m_filter;
+  VABufferID m_filter = VA_INVALID_ID;
   int m_forwardRefs, m_backwardRefs;
   int m_currentIdx;
   int m_frameCount;
   EINTERLACEMETHOD m_vppMethod;
+  ReadyToDispose m_cbDispose = nullptr;
+  COutput *m_pOut = nullptr;
 };
 
 /**
@@ -511,12 +622,14 @@ public:
   bool Init(EINTERLACEMETHOD method) override;
   bool AddPicture(CVaapiDecodedPicture &inPic) override;
   bool Filter(CVaapiProcessedPicture &outPic) override;
-  void ClearRef(VASurfaceID surf) override;
+  void ClearRef(CVaapiProcessedPicture &pic) override;
   void Flush() override;
-  bool Compatible(EINTERLACEMETHOD method) override;
+  bool UpdateDeintMethod(EINTERLACEMETHOD method) override;
   bool DoesSync() override;
+  bool UseVideoSurface() override;
+  void Discard(COutput *output, ReadyToDispose cb) override;
 protected:
-  bool CheckSuccess(VAStatus status);
+  bool CheckSuccess(VAStatus status, const std::string& function);
   void Close();
   DllLibSSE4 m_dllSSE4;
   uint8_t *m_cache;
@@ -529,6 +642,9 @@ protected:
   VideoPicture m_DVDPic;
   double m_frametime;
   double m_lastOutPts;
+  ReadyToDispose m_cbDispose = nullptr;
+  COutput *m_pOut;
+  int m_refsToPics = 0;
 };
 
 }

@@ -1,33 +1,21 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "threads/Thread.h"
-#include "Socket.h"
+#pragma once
+
 #include "EventClient.h"
+#include "Socket.h"
 #include "threads/CriticalSection.h"
-#include "threads/SingleLock.h"
+#include "threads/Thread.h"
 
 #include <atomic>
 #include <map>
+#include <mutex>
 #include <queue>
 #include <vector>
 
@@ -42,6 +30,8 @@ namespace EVENTSERVER
   public:
     static void RemoveInstance();
     static CEventServer* GetInstance();
+
+    CEventServer();
     ~CEventServer() override = default;
 
     // IRunnable entry point for thread
@@ -54,7 +44,7 @@ namespace EVENTSERVER
 
     void RefreshSettings()
     {
-      CSingleLock lock(m_critSection);
+      std::unique_lock lock(m_critSection);
       m_bRefreshSettings = true;
     }
 
@@ -69,21 +59,20 @@ namespace EVENTSERVER
     int GetNumberOfClients();
 
   protected:
-    CEventServer();
     void Cleanup();
     void Run();
     void ProcessPacket(SOCKETS::CAddress& addr, int packetSize);
     void ProcessEvents();
     void RefreshClients();
 
-    std::map<unsigned long, EVENTCLIENT::CEventClient*>  m_clients;
-    static CEventServer* m_pInstance;
-    SOCKETS::CUDPSocket* m_pSocket;
+    std::map<unsigned long, std::unique_ptr<EVENTCLIENT::CEventClient>> m_clients;
+    static std::unique_ptr<CEventServer> m_pInstance;
+    std::unique_ptr<SOCKETS::CUDPSocket> m_pSocket;
     int              m_iPort;
     int              m_iListenTimeout;
     int              m_iMaxClients;
-    unsigned char*   m_pPacketBuffer;
-    std::atomic<bool>  m_bRunning;
+    std::vector<uint8_t> m_pPacketBuffer;
+    std::atomic<bool> m_bRunning = false;
     CCriticalSection m_critSection;
     bool             m_bRefreshSettings;
   };

@@ -1,29 +1,17 @@
+/*
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#pragma once
+
 /*!
 \file GUIRadioButtonControl.h
 \brief
 */
-
-#pragma once
-
-/*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
- *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
- */
 
 #include "GUIButtonControl.h"
 
@@ -43,8 +31,8 @@ public:
                          const CTextureInfo& radioOffFocus, const CTextureInfo& radioOffNoFocus,
                          const CTextureInfo& radioOnDisabled, const CTextureInfo& radioOffDisabled);
 
-  ~CGUIRadioButtonControl(void) override;
-  CGUIRadioButtonControl *Clone() const override { return new CGUIRadioButtonControl(*this); };
+  ~CGUIRadioButtonControl() override = default;
+  CGUIRadioButtonControl* Clone() const override { return new CGUIRadioButtonControl(*this); }
 
   void Process(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
   void Render() override;
@@ -60,17 +48,21 @@ public:
   std::string GetDescription() const override;
   void SetRadioDimensions(float posX, float posY, float width, float height);
   void SetToggleSelect(const std::string &toggleSelect);
-  bool IsSelected() const { return m_bSelected; };
+  bool IsSelected() const { return m_bSelected; }
+
 protected:
-  bool UpdateColors() override;
-  CGUITexture m_imgRadioOnFocus;
-  CGUITexture m_imgRadioOnNoFocus;
-  CGUITexture m_imgRadioOffFocus;
-  CGUITexture m_imgRadioOffNoFocus;
-  CGUITexture m_imgRadioOnDisabled;
-  CGUITexture m_imgRadioOffDisabled;
+  bool UpdateColors(const CGUIListItem* item) override;
+  std::unique_ptr<CGUITexture> m_imgRadioOnFocus;
+  std::unique_ptr<CGUITexture> m_imgRadioOnNoFocus;
+  std::unique_ptr<CGUITexture> m_imgRadioOffFocus;
+  std::unique_ptr<CGUITexture> m_imgRadioOffNoFocus;
+  std::unique_ptr<CGUITexture> m_imgRadioOnDisabled;
+  std::unique_ptr<CGUITexture> m_imgRadioOffDisabled;
   float m_radioPosX;
   float m_radioPosY;
   INFO::InfoPtr m_toggleSelect;
   bool m_useLabel2;
+
+private:
+  CGUIRadioButtonControl(const CGUIRadioButtonControl& control);
 };

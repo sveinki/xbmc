@@ -1,25 +1,17 @@
 /*
- *      Copyright (C) 2011-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2011-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "HTTPWebinterfaceAddonsHandler.h"
+
+#include "ServiceBroker.h"
+#include "addons/Addon.h"
 #include "addons/AddonManager.h"
+#include "addons/addoninfo/AddonType.h"
 #include "network/WebServer.h"
 
 #define ADDON_HEADER      "<html><head><title>Add-on List</title></head><body>\n<h1>Available web interfaces:</h1>\n<ul>\n"
@@ -29,11 +21,12 @@ bool CHTTPWebinterfaceAddonsHandler::CanHandleRequest(const HTTPRequest &request
   return (request.pathUrl.compare("/addons") == 0 || request.pathUrl.compare("/addons/") == 0);
 }
 
-int CHTTPWebinterfaceAddonsHandler::HandleRequest()
+MHD_RESULT CHTTPWebinterfaceAddonsHandler::HandleRequest()
 {
   m_responseData = ADDON_HEADER;
   ADDON::VECADDONS addons;
-  if (!ADDON::CAddonMgr::GetInstance().GetAddons(addons, ADDON::ADDON_WEB_INTERFACE) || addons.empty())
+  if (!CServiceBroker::GetAddonMgr().GetAddons(addons, ADDON::AddonType::WEB_INTERFACE) ||
+      addons.empty())
   {
     m_response.type = HTTPError;
     m_response.status = MHD_HTTP_INTERNAL_SERVER_ERROR;
@@ -41,8 +34,8 @@ int CHTTPWebinterfaceAddonsHandler::HandleRequest()
     return MHD_YES;
   }
 
-  for (ADDON::IVECADDONS addon = addons.begin(); addon != addons.end(); ++addon)
-    m_responseData += "<li><a href=/addons/" + (*addon)->ID() + "/>" + (*addon)->Name() + "</a></li>\n";
+  for (const auto& addon : addons)
+    m_responseData += "<li><a href=/addons/" + addon->ID() + "/>" + addon->Name() + "</a></li>\n";
 
   m_responseData += "</ul>\n</body></html>";
 

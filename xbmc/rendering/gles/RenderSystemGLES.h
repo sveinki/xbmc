@@ -1,54 +1,92 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2024 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-
-#ifndef RENDER_SYSTEM_GLES_H
-#define RENDER_SYSTEM_GLES_H
 
 #pragma once
 
-#include "system.h"
-#include "system_gl.h"
+#include "GLESShader.h"
 #include "rendering/RenderSystem.h"
-#include "xbmc/guilib/GUIShader.h"
+#include "utils/ColorUtils.h"
+#include "utils/Map.h"
 
-enum ESHADERMETHOD
+#include <map>
+
+#include <fmt/format.h>
+
+#include "system_gl.h"
+
+enum class ShaderMethodGLES
 {
   SM_DEFAULT,
   SM_TEXTURE,
+  SM_TEXTURE_111R,
   SM_MULTI,
+  SM_MULTI_RGBA_111R,
   SM_FONTS,
+  SM_FONTS_SHADER_CLIP,
   SM_TEXTURE_NOBLEND,
   SM_MULTI_BLENDCOLOR,
+  SM_MULTI_RGBA_111R_BLENDCOLOR,
+  SM_MULTI_111R_111R_BLENDCOLOR,
   SM_TEXTURE_RGBA,
   SM_TEXTURE_RGBA_OES,
   SM_TEXTURE_RGBA_BLENDCOLOR,
   SM_TEXTURE_RGBA_BOB,
   SM_TEXTURE_RGBA_BOB_OES,
-  SM_ESHADERCOUNT
+  SM_TEXTURE_NOALPHA,
+  SM_MAX
+};
+
+template<>
+struct fmt::formatter<ShaderMethodGLES> : fmt::formatter<std::string_view>
+{
+  template<typename FormatContext>
+  constexpr auto format(const ShaderMethodGLES& shaderMethod, FormatContext& ctx)
+  {
+    const auto it = ShaderMethodGLESMap.find(shaderMethod);
+    if (it == ShaderMethodGLESMap.cend())
+      throw std::range_error("no string mapping found for shader method");
+
+    return fmt::formatter<string_view>::format(it->second, ctx);
+  }
+
+private:
+  static constexpr auto ShaderMethodGLESMap = make_map<ShaderMethodGLES, std::string_view>({
+      {ShaderMethodGLES::SM_DEFAULT, "default"},
+      {ShaderMethodGLES::SM_TEXTURE, "texture"},
+      {ShaderMethodGLES::SM_TEXTURE_111R, "alpha texture with diffuse color"},
+      {ShaderMethodGLES::SM_MULTI, "multi"},
+      {ShaderMethodGLES::SM_MULTI_RGBA_111R, "multi with color/alpha texture"},
+      {ShaderMethodGLES::SM_FONTS, "fonts"},
+      {ShaderMethodGLES::SM_FONTS_SHADER_CLIP, "fonts with vertex shader based clipping"},
+      {ShaderMethodGLES::SM_TEXTURE_NOBLEND, "texture no blending"},
+      {ShaderMethodGLES::SM_MULTI_BLENDCOLOR, "multi blend colour"},
+      {ShaderMethodGLES::SM_MULTI_RGBA_111R_BLENDCOLOR,
+       "multi with color/alpha texture and blend color"},
+      {ShaderMethodGLES::SM_MULTI_111R_111R_BLENDCOLOR,
+       "multi with alpha/alpha texture and blend color"},
+      {ShaderMethodGLES::SM_TEXTURE_RGBA, "texture rgba"},
+      {ShaderMethodGLES::SM_TEXTURE_RGBA_OES, "texture rgba OES"},
+      {ShaderMethodGLES::SM_TEXTURE_RGBA_BLENDCOLOR, "texture rgba blend colour"},
+      {ShaderMethodGLES::SM_TEXTURE_RGBA_BOB, "texture rgba bob"},
+      {ShaderMethodGLES::SM_TEXTURE_RGBA_BOB_OES, "texture rgba bob OES"},
+      {ShaderMethodGLES::SM_TEXTURE_NOALPHA, "texture no alpha"},
+  });
+
+  static_assert(static_cast<size_t>(ShaderMethodGLES::SM_MAX) == ShaderMethodGLESMap.size(),
+                "ShaderMethodGLESMap doesn't match the size of ShaderMethodGLES, did you forget to "
+                "add/remove a mapping?");
 };
 
 class CRenderSystemGLES : public CRenderSystemBase
 {
 public:
   CRenderSystemGLES();
-  virtual ~CRenderSystemGLES();
+  ~CRenderSystemGLES() override = default;
 
   bool InitRenderSystem() override;
   bool DestroyRenderSystem() override;
@@ -57,13 +95,14 @@ public:
   bool BeginRender() override;
   bool EndRender() override;
   void PresentRender(bool rendered, bool videoLayer) override;
-  bool ClearBuffers(color_t color) override;
-  bool IsExtSupported(const char* extension) override;
+  void InvalidateColorBuffer() override;
+  bool ClearBuffers(KODI::UTILS::COLOR::Color color) override;
+  bool IsExtSupported(const char* extension) const override;
 
   void SetVSync(bool vsync);
   void ResetVSync() { m_bVsyncInit = false; }
 
-  void SetViewPort(CRect& viewPort) override;
+  void SetViewPort(const CRect& viewPort) override;
   void GetViewPort(CRect& viewPort) override;
 
   bool ScissorsCanEffectClipping() override;
@@ -71,21 +110,22 @@ public:
   void SetScissors(const CRect& rect) override;
   void ResetScissors() override;
 
+  void SetDepthCulling(DepthCulling culling) override;
+
   void CaptureStateBlock() override;
   void ApplyStateBlock() override;
 
   void SetCameraPosition(const CPoint &camera, int screenWidth, int screenHeight, float stereoFactor = 0.0f) override;
 
-  void ApplyHardwareTransform(const TransformMatrix &matrix) override;
-  void RestoreHardwareTransform() override;
-  bool SupportsStereo(RENDER_STEREO_MODE mode) const override;
-
-  bool TestRender() override;
+  bool SupportsStereo(RenderStereoMode mode) const override;
 
   void Project(float &x, float &y, float &z) override;
 
-  void InitialiseGUIShader();
-  void EnableGUIShader(ESHADERMETHOD method);
+  std::string GetShaderPath(const std::string& filename) override;
+
+  void InitialiseShaders();
+  void ReleaseShaders();
+  void EnableGUIShader(ShaderMethodGLES method);
   void DisableGUIShader();
 
   GLint GUIShaderGetPos();
@@ -99,24 +139,24 @@ public:
   GLint GUIShaderGetContrast();
   GLint GUIShaderGetBrightness();
   GLint GUIShaderGetModel();
+  GLint GUIShaderGetMatrix();
+  GLint GUIShaderGetClip();
+  GLint GUIShaderGetCoordStep();
+  GLint GUIShaderGetDepth();
 
 protected:
   virtual void SetVSyncImpl(bool enable) = 0;
   virtual void PresentRenderImpl(bool rendered) = 0;
   void CalculateMaxTexturesize();
 
-  int        m_iVSyncMode;
-  int        m_iVSyncErrors;
-  bool       m_bVsyncInit;
-  int        m_width;
-  int        m_height;
+  bool m_bVsyncInit{false};
+  int m_width;
+  int m_height;
 
   std::string m_RenderExtensions;
 
-  CGUIShader  **m_pGUIshader = nullptr; // One GUI shader for each method
-  ESHADERMETHOD m_method = SM_DEFAULT; // Current GUI Shader method
+  std::map<ShaderMethodGLES, std::unique_ptr<CGLESShader>> m_pShader;
+  ShaderMethodGLES m_method = ShaderMethodGLES::SM_DEFAULT;
 
   GLint      m_viewPort[4];
 };
-
-#endif // RENDER_SYSTEM_H

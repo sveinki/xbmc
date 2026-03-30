@@ -1,45 +1,36 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DirectoryNodeAlbum.h"
+
 #include "QueryParams.h"
-#include "guilib/LocalizeStrings.h"
+#include "ServiceBroker.h"
 #include "music/MusicDatabase.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 
 using namespace XFILE::MUSICDATABASEDIRECTORY;
 
 CDirectoryNodeAlbum::CDirectoryNodeAlbum(const std::string& strName, CDirectoryNode* pParent)
-  : CDirectoryNode(NODE_TYPE_ALBUM, strName, pParent)
+  : CDirectoryNode(NodeType::ALBUM, strName, pParent)
 {
 
 }
 
-NODE_TYPE CDirectoryNodeAlbum::GetChildType() const
+NodeType CDirectoryNodeAlbum::GetChildType() const
 {
-  return NODE_TYPE_SONG;
+  return NodeType::DISC;
 }
 
 std::string CDirectoryNodeAlbum::GetLocalizedName() const
 {
   if (GetID() == -1)
-    return g_localizeStrings.Get(15102); // All Albums
+    return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(15102); // All Albums
   CMusicDatabase db;
   if (db.Open())
     return db.GetAlbumById(GetID());
@@ -55,7 +46,8 @@ bool CDirectoryNodeAlbum::GetContent(CFileItemList& items) const
   CQueryParams params;
   CollectQueryParams(params);
 
-  bool bSuccess=musicdatabase.GetAlbumsNav(BuildPath(), items, params.GetGenreId(), params.GetArtistId());
+  bool bSuccess = musicdatabase.GetAlbumsNav(BuildPath(), items, SortDescription(),
+                                             params.GetGenreId(), params.GetArtistId());
 
   musicdatabase.Close();
 

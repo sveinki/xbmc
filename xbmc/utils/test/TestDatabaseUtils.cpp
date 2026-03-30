@@ -1,31 +1,20 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "utils/DatabaseUtils.h"
-#include "video/VideoDatabase.h"
-#include "music/MusicDatabase.h"
 #include "dbwrappers/qry_dat.h"
-#include "utils/Variant.h"
+#include "music/MusicDatabase.h"
+#include "utils/DatabaseUtils.h"
 #include "utils/StringUtils.h"
+#include "utils/Variant.h"
+#include "video/VideoDatabase.h"
+#include "video/VideoDatabaseColumns.h"
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
 class TestDatabaseUtilsHelper
 {
@@ -36,8 +25,9 @@ public:
     album_strAlbum = CMusicDatabase::album_strAlbum;
     album_strArtists = CMusicDatabase::album_strArtists;
     album_strGenres = CMusicDatabase::album_strGenres;
-    album_iYear = CMusicDatabase::album_iYear;
     album_strMoods = CMusicDatabase::album_strMoods;
+    album_strReleaseDate = CMusicDatabase::album_strReleaseDate;
+    album_strOrigReleaseDate = CMusicDatabase::album_strOrigReleaseDate;
     album_strStyles = CMusicDatabase::album_strStyles;
     album_strThemes = CMusicDatabase::album_strThemes;
     album_strReview = CMusicDatabase::album_strReview;
@@ -46,13 +36,14 @@ public:
     album_fRating = CMusicDatabase::album_fRating;
     album_iVotes = CMusicDatabase::album_iVotes;
     album_iUserrating = CMusicDatabase::album_iUserrating;
-    album_dtDateAdded = CMusicDatabase::album_dtDateAdded;
+    album_dtDateAdded = CMusicDatabase::album_dateAdded;
 
     song_idSong = CMusicDatabase::song_idSong;
     song_strTitle = CMusicDatabase::song_strTitle;
     song_iTrack = CMusicDatabase::song_iTrack;
     song_iDuration = CMusicDatabase::song_iDuration;
-    song_iYear = CMusicDatabase::song_iYear;
+    song_strReleaseDate = CMusicDatabase::song_strReleaseDate;
+    song_strOrigReleaseDate = CMusicDatabase::song_strOrigReleaseDate;
     song_strFileName = CMusicDatabase::song_strFileName;
     song_iTimesPlayed = CMusicDatabase::song_iTimesPlayed;
     song_iStartOffset = CMusicDatabase::song_iStartOffset;
@@ -72,8 +63,9 @@ public:
   int album_strAlbum;
   int album_strArtists;
   int album_strGenres;
-  int album_iYear;
   int album_strMoods;
+  int album_strReleaseDate;
+  int album_strOrigReleaseDate;
   int album_strStyles;
   int album_strThemes;
   int album_strReview;
@@ -88,7 +80,8 @@ public:
   int song_strTitle;
   int song_iTrack;
   int song_iDuration;
-  int song_iYear;
+  int song_strReleaseDate;
+  int song_strOrigReleaseDate;
   int song_strFileName;
   int song_iTimesPlayed;
   int song_iStartOffset;
@@ -109,12 +102,10 @@ TEST(TestDatabaseUtils, GetField_None)
   std::string refstr, varstr;
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldNone, MediaTypeNone,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::NONE, MediaTypeNone, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  varstr = DatabaseUtils::GetField(FieldNone, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::NONE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -123,97 +114,82 @@ TEST(TestDatabaseUtils, GetField_MediaTypeAlbum)
   std::string refstr, varstr;
 
   refstr = "albumview.idAlbum";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strAlbum";
-  varstr = DatabaseUtils::GetField(FieldAlbum, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ALBUM, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strArtists";
-  varstr = DatabaseUtils::GetField(FieldArtist, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ARTIST, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strArtists";
-  varstr = DatabaseUtils::GetField(FieldAlbumArtist, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ALBUM_ARTIST, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = "albumview.strGenre";
-  varstr = DatabaseUtils::GetField(FieldGenre, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  refstr = "albumview.strGenres";
+  varstr = DatabaseUtils::GetField(Field::GENRE, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = "albumview.iYear";
-  varstr = DatabaseUtils::GetField(FieldYear, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  refstr = "albumview.strReleaseDate";
+  varstr = DatabaseUtils::GetField(Field::YEAR, MediaTypeAlbum, DatabaseQueryPart::SELECT);
+  EXPECT_STREQ(refstr.c_str(), varstr.c_str());
+
+  refstr = "albumview.strOrigReleaseDate";
+  varstr = DatabaseUtils::GetField(Field::ORIG_YEAR, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strMoods";
-  varstr = DatabaseUtils::GetField(FieldMoods, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::MOODS, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strStyles";
-  varstr = DatabaseUtils::GetField(FieldStyles, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::STYLES, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strThemes";
-  varstr = DatabaseUtils::GetField(FieldThemes, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::THEMES, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strReview";
-  varstr = DatabaseUtils::GetField(FieldReview, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::REVIEW, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strLabel";
-  varstr = DatabaseUtils::GetField(FieldMusicLabel, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::MUSIC_LABEL, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strType";
-  varstr = DatabaseUtils::GetField(FieldAlbumType, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ALBUM_TYPE, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.fRating";
-  varstr = DatabaseUtils::GetField(FieldRating, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RATING, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.iVotes";
-  varstr = DatabaseUtils::GetField(FieldVotes, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VOTES, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.iUserrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::USER_RATING, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldNone, MediaTypeAlbum,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::NONE, MediaTypeAlbum, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "albumview.strAlbum";
-  varstr = DatabaseUtils::GetField(FieldAlbum, MediaTypeAlbum,
-                                   DatabaseQueryPartWhere);
+  varstr = DatabaseUtils::GetField(Field::ALBUM, MediaTypeAlbum, DatabaseQueryPart::WHERE);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  varstr = DatabaseUtils::GetField(FieldAlbum, MediaTypeAlbum,
-                                   DatabaseQueryPartOrderBy);
+  varstr = DatabaseUtils::GetField(Field::ALBUM, MediaTypeAlbum, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -222,112 +198,94 @@ TEST(TestDatabaseUtils, GetField_MediaTypeSong)
   std::string refstr, varstr;
 
   refstr = "songview.idSong";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strTitle";
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.iTrack";
-  varstr = DatabaseUtils::GetField(FieldTrackNumber, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::TRACK_NUMBER, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.iDuration";
-  varstr = DatabaseUtils::GetField(FieldTime, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
-  EXPECT_STREQ(refstr.c_str(), varstr.c_str());
-
-  refstr = "songview.iYear";
-  varstr = DatabaseUtils::GetField(FieldYear, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::TIME, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strFilename";
-  varstr = DatabaseUtils::GetField(FieldFilename, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::FILENAME, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.iTimesPlayed";
-  varstr = DatabaseUtils::GetField(FieldPlaycount, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PLAYCOUNT, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.iStartOffset";
-  varstr = DatabaseUtils::GetField(FieldStartOffset, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::START_OFFSET, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.iEndOffset";
-  varstr = DatabaseUtils::GetField(FieldEndOffset, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::END_OFFSET, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.lastPlayed";
-  varstr = DatabaseUtils::GetField(FieldLastPlayed, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::LAST_PLAYED, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.rating";
-  varstr = DatabaseUtils::GetField(FieldRating, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RATING, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.votes";
-  varstr = DatabaseUtils::GetField(FieldVotes, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VOTES, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.userrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::USER_RATING, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.comment";
-  varstr = DatabaseUtils::GetField(FieldComment, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::COMMENT, MediaTypeSong, DatabaseQueryPart::SELECT);
+  EXPECT_STREQ(refstr.c_str(), varstr.c_str());
+
+  refstr = "songview.strReleaseDate";
+  varstr = DatabaseUtils::GetField(Field::YEAR, MediaTypeSong, DatabaseQueryPart::SELECT);
+  EXPECT_STREQ(refstr.c_str(), varstr.c_str());
+
+  refstr = "songview.strOrigReleaseDate";
+  varstr = DatabaseUtils::GetField(Field::ORIG_YEAR, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strAlbum";
-  varstr = DatabaseUtils::GetField(FieldAlbum, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ALBUM, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strArtists";
-  varstr = DatabaseUtils::GetField(FieldArtist, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ARTIST, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strArtists";
-  varstr = DatabaseUtils::GetField(FieldAlbumArtist, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ALBUM_ARTIST, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = "songview.strGenre";
-  varstr = DatabaseUtils::GetField(FieldGenre, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  refstr = "songview.strGenres";
+  varstr = DatabaseUtils::GetField(Field::GENRE, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeSong,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeSong, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "songview.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeSong,
-                                   DatabaseQueryPartWhere);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeSong, DatabaseQueryPart::WHERE);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeSong,
-                                   DatabaseQueryPartOrderBy);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeSong, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -336,98 +294,85 @@ TEST(TestDatabaseUtils, GetField_MediaTypeMusicVideo)
   std::string refstr, varstr;
 
   refstr = "musicvideo_view.idMVideo";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_RUNTIME);
-  varstr = DatabaseUtils::GetField(FieldTime, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_RUNTIME);
+  varstr = DatabaseUtils::GetField(Field::TIME, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_DIRECTOR);
-  varstr = DatabaseUtils::GetField(FieldDirector, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_DIRECTOR);
+  varstr = DatabaseUtils::GetField(Field::DIRECTOR, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_STUDIOS);
-  varstr = DatabaseUtils::GetField(FieldStudio, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_STUDIOS);
+  varstr = DatabaseUtils::GetField(Field::STUDIO, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_PLOT);
-  varstr = DatabaseUtils::GetField(FieldPlot, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_PLOT);
+  varstr = DatabaseUtils::GetField(Field::PLOT, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_ALBUM);
-  varstr = DatabaseUtils::GetField(FieldAlbum, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_ALBUM);
+  varstr = DatabaseUtils::GetField(Field::ALBUM, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_ARTIST);
-  varstr = DatabaseUtils::GetField(FieldArtist, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_ARTIST);
+  varstr = DatabaseUtils::GetField(Field::ARTIST, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_GENRE);
-  varstr = DatabaseUtils::GetField(FieldGenre, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_GENRE);
+  varstr = DatabaseUtils::GetField(Field::GENRE, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("musicvideo_view.c%02d",VIDEODB_ID_MUSICVIDEO_TRACK);
-  varstr = DatabaseUtils::GetField(FieldTrackNumber, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("musicvideo_view.c{:02}", VIDEODB_ID_MUSICVIDEO_TRACK);
+  varstr =
+      DatabaseUtils::GetField(Field::TRACK_NUMBER, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.strFilename";
-  varstr = DatabaseUtils::GetField(FieldFilename, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::FILENAME, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.playCount";
-  varstr = DatabaseUtils::GetField(FieldPlaycount, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr =
+      DatabaseUtils::GetField(Field::PLAYCOUNT, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.lastPlayed";
-  varstr = DatabaseUtils::GetField(FieldLastPlayed, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr =
+      DatabaseUtils::GetField(Field::LAST_PLAYED, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr =
+      DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldVideoResolution, MediaTypeMusicVideo,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VIDEO_RESOLUTION, MediaTypeMusicVideo,
+                                   DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeMusicVideo,
-                                   DatabaseQueryPartWhere);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeMusicVideo, DatabaseQueryPart::WHERE);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeMusicVideo,
-                                   DatabaseQueryPartOrderBy);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeMusicVideo, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "musicvideo_view.userrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeMusicVideo,
-    DatabaseQueryPartSelect);
+  varstr =
+      DatabaseUtils::GetField(Field::USER_RATING, MediaTypeMusicVideo, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -436,130 +381,105 @@ TEST(TestDatabaseUtils, GetField_MediaTypeMovie)
   std::string refstr, varstr;
 
   refstr = "movie_view.idMovie";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("CASE WHEN length(movie_view.c%02d) > 0 THEN movie_view.c%02d "
-                "ELSE movie_view.c%02d END", VIDEODB_ID_SORTTITLE,
-                VIDEODB_ID_SORTTITLE, VIDEODB_ID_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeMovie,
-                                   DatabaseQueryPartOrderBy);
+  refstr = StringUtils::Format("CASE WHEN length(movie_view.c{:02}) > 0 THEN movie_view.c{:02} "
+                               "ELSE movie_view.c{:02} END",
+                               VIDEODB_ID_SORTTITLE, VIDEODB_ID_SORTTITLE, VIDEODB_ID_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeMovie, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_PLOT);
-  varstr = DatabaseUtils::GetField(FieldPlot, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_PLOT);
+  varstr = DatabaseUtils::GetField(Field::PLOT, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_PLOTOUTLINE);
-  varstr = DatabaseUtils::GetField(FieldPlotOutline, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_PLOTOUTLINE);
+  varstr = DatabaseUtils::GetField(Field::PLOT_OUTLINE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_TAGLINE);
-  varstr = DatabaseUtils::GetField(FieldTagline, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_TAGLINE);
+  varstr = DatabaseUtils::GetField(Field::TAGLINE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.votes";
-  varstr = DatabaseUtils::GetField(FieldVotes, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VOTES, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.rating";
-  varstr = DatabaseUtils::GetField(FieldRating, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RATING, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_CREDITS);
-  varstr = DatabaseUtils::GetField(FieldWriter, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_CREDITS);
+  varstr = DatabaseUtils::GetField(Field::WRITER, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_SORTTITLE);
-  varstr = DatabaseUtils::GetField(FieldSortTitle, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_SORTTITLE);
+  varstr = DatabaseUtils::GetField(Field::SORT_TITLE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_RUNTIME);
-  varstr = DatabaseUtils::GetField(FieldTime, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_RUNTIME);
+  varstr = DatabaseUtils::GetField(Field::TIME, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_MPAA);
-  varstr = DatabaseUtils::GetField(FieldMPAA, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_MPAA);
+  varstr = DatabaseUtils::GetField(Field::MPAA, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_TOP250);
-  varstr = DatabaseUtils::GetField(FieldTop250, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_TOP250);
+  varstr = DatabaseUtils::GetField(Field::TOP250, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_GENRE);
-  varstr = DatabaseUtils::GetField(FieldGenre, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_GENRE);
+  varstr = DatabaseUtils::GetField(Field::GENRE, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_DIRECTOR);
-  varstr = DatabaseUtils::GetField(FieldDirector, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_DIRECTOR);
+  varstr = DatabaseUtils::GetField(Field::DIRECTOR, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_STUDIOS);
-  varstr = DatabaseUtils::GetField(FieldStudio, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_STUDIOS);
+  varstr = DatabaseUtils::GetField(Field::STUDIO, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_TRAILER);
-  varstr = DatabaseUtils::GetField(FieldTrailer, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_TRAILER);
+  varstr = DatabaseUtils::GetField(Field::TRAILER, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("movie_view.c%02d", VIDEODB_ID_COUNTRY);
-  varstr = DatabaseUtils::GetField(FieldCountry, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("movie_view.c{:02}", VIDEODB_ID_COUNTRY);
+  varstr = DatabaseUtils::GetField(Field::COUNTRY, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.strFilename";
-  varstr = DatabaseUtils::GetField(FieldFilename, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::FILENAME, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.playCount";
-  varstr = DatabaseUtils::GetField(FieldPlaycount, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PLAYCOUNT, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.lastPlayed";
-  varstr = DatabaseUtils::GetField(FieldLastPlayed, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::LAST_PLAYED, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "movie_view.userrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeMovie,
-    DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::USER_RATING, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeMovie,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeMovie, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -568,100 +488,85 @@ TEST(TestDatabaseUtils, GetField_MediaTypeTvShow)
   std::string refstr, varstr;
 
   refstr = "tvshow_view.idShow";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("CASE WHEN length(tvshow_view.c%02d) > 0 THEN tvshow_view.c%02d "
-                "ELSE tvshow_view.c%02d END", VIDEODB_ID_TV_SORTTITLE,
-                VIDEODB_ID_TV_SORTTITLE, VIDEODB_ID_TV_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeTvShow,
-                                   DatabaseQueryPartOrderBy);
+  refstr =
+      StringUtils::Format("CASE WHEN length(tvshow_view.c{:02}) > 0 THEN tvshow_view.c{:02} "
+                          "ELSE tvshow_view.c{:02} END",
+                          VIDEODB_ID_TV_SORTTITLE, VIDEODB_ID_TV_SORTTITLE, VIDEODB_ID_TV_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeTvShow, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_PLOT);
-  varstr = DatabaseUtils::GetField(FieldPlot, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_PLOT);
+  varstr = DatabaseUtils::GetField(Field::PLOT, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_STATUS);
-  varstr = DatabaseUtils::GetField(FieldTvShowStatus, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_STATUS);
+  varstr =
+      DatabaseUtils::GetField(Field::TVSHOW_STATUS, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.votes";
-  varstr = DatabaseUtils::GetField(FieldVotes, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VOTES, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.rating";
-  varstr = DatabaseUtils::GetField(FieldRating, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RATING, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_PREMIERED);
-  varstr = DatabaseUtils::GetField(FieldYear, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_PREMIERED);
+  varstr = DatabaseUtils::GetField(Field::YEAR, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_GENRE);
-  varstr = DatabaseUtils::GetField(FieldGenre, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_GENRE);
+  varstr = DatabaseUtils::GetField(Field::GENRE, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_MPAA);
-  varstr = DatabaseUtils::GetField(FieldMPAA, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_MPAA);
+  varstr = DatabaseUtils::GetField(Field::MPAA, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_STUDIOS);
-  varstr = DatabaseUtils::GetField(FieldStudio, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_STUDIOS);
+  varstr = DatabaseUtils::GetField(Field::STUDIO, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("tvshow_view.c%02d", VIDEODB_ID_TV_SORTTITLE);
-  varstr = DatabaseUtils::GetField(FieldSortTitle, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("tvshow_view.c{:02}", VIDEODB_ID_TV_SORTTITLE);
+  varstr = DatabaseUtils::GetField(Field::SORT_TITLE, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.totalSeasons";
-  varstr = DatabaseUtils::GetField(FieldSeason, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::SEASON, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.totalCount";
-  varstr = DatabaseUtils::GetField(FieldNumberOfEpisodes, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::NUMBER_OF_EPISODES, MediaTypeTvShow,
+                                   DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.watchedcount";
-  varstr = DatabaseUtils::GetField(FieldNumberOfWatchedEpisodes,
-                                   MediaTypeTvShow, DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::NUMBER_OF_WATCHED_EPISODES, MediaTypeTvShow,
+                                   DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "tvshow_view.userrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeTvShow,
-    DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::USER_RATING, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeTvShow,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeTvShow, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -670,113 +575,93 @@ TEST(TestDatabaseUtils, GetField_MediaTypeEpisode)
   std::string refstr, varstr;
 
   refstr = "episode_view.idEpisode";
-  varstr = DatabaseUtils::GetField(FieldId, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::ID, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_TITLE);
-  varstr = DatabaseUtils::GetField(FieldTitle, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_TITLE);
+  varstr = DatabaseUtils::GetField(Field::TITLE, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_PLOT);
-  varstr = DatabaseUtils::GetField(FieldPlot, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_PLOT);
+  varstr = DatabaseUtils::GetField(Field::PLOT, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.votes";
-  varstr = DatabaseUtils::GetField(FieldVotes, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::VOTES, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.rating";
-  varstr = DatabaseUtils::GetField(FieldRating, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RATING, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_CREDITS);
-  varstr = DatabaseUtils::GetField(FieldWriter, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_CREDITS);
+  varstr = DatabaseUtils::GetField(Field::WRITER, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_AIRED);
-  varstr = DatabaseUtils::GetField(FieldAirDate, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_AIRED);
+  varstr = DatabaseUtils::GetField(Field::AIR_DATE, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_RUNTIME);
-  varstr = DatabaseUtils::GetField(FieldTime, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_RUNTIME);
+  varstr = DatabaseUtils::GetField(Field::TIME, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_DIRECTOR);
-  varstr = DatabaseUtils::GetField(FieldDirector, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_DIRECTOR);
+  varstr = DatabaseUtils::GetField(Field::DIRECTOR, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_SEASON);
-  varstr = DatabaseUtils::GetField(FieldSeason, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_SEASON);
+  varstr = DatabaseUtils::GetField(Field::SEASON, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
-  refstr = StringUtils::Format("episode_view.c%02d", VIDEODB_ID_EPISODE_EPISODE);
-  varstr = DatabaseUtils::GetField(FieldEpisodeNumber, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  refstr = StringUtils::Format("episode_view.c{:02}", VIDEODB_ID_EPISODE_EPISODE);
+  varstr =
+      DatabaseUtils::GetField(Field::EPISODE_NUMBER, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.strFilename";
-  varstr = DatabaseUtils::GetField(FieldFilename, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::FILENAME, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.strPath";
-  varstr = DatabaseUtils::GetField(FieldPath, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PATH, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.playCount";
-  varstr = DatabaseUtils::GetField(FieldPlaycount, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::PLAYCOUNT, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.lastPlayed";
-  varstr = DatabaseUtils::GetField(FieldLastPlayed, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::LAST_PLAYED, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.dateAdded";
-  varstr = DatabaseUtils::GetField(FieldDateAdded, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::DATE_ADDED, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.strTitle";
-  varstr = DatabaseUtils::GetField(FieldTvShowTitle, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr =
+      DatabaseUtils::GetField(Field::TVSHOW_TITLE, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.premiered";
-  varstr = DatabaseUtils::GetField(FieldYear, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::YEAR, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.mpaa";
-  varstr = DatabaseUtils::GetField(FieldMPAA, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::MPAA, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.strStudio";
-  varstr = DatabaseUtils::GetField(FieldStudio, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::STUDIO, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "episode_view.userrating";
-  varstr = DatabaseUtils::GetField(FieldUserRating, MediaTypeEpisode,
-    DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::USER_RATING, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -785,18 +670,15 @@ TEST(TestDatabaseUtils, GetField_FieldRandom)
   std::string refstr, varstr;
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeEpisode,
-                                   DatabaseQueryPartSelect);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeEpisode, DatabaseQueryPart::SELECT);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeEpisode,
-                                   DatabaseQueryPartWhere);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeEpisode, DatabaseQueryPart::WHERE);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 
   refstr = "RANDOM()";
-  varstr = DatabaseUtils::GetField(FieldRandom, MediaTypeEpisode,
-                                   DatabaseQueryPartOrderBy);
+  varstr = DatabaseUtils::GetField(Field::RANDOM, MediaTypeEpisode, DatabaseQueryPart::ORDER_BY);
   EXPECT_STREQ(refstr.c_str(), varstr.c_str());
 }
 
@@ -805,10 +687,10 @@ TEST(TestDatabaseUtils, GetFieldIndex_None)
   int refindex, varindex;
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeNone);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeNone);
   EXPECT_EQ(refindex, varindex);
 
-  varindex = DatabaseUtils::GetFieldIndex(FieldNone, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::NONE, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -819,63 +701,67 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeAlbum)
   TestDatabaseUtilsHelper a;
 
   refindex = a.album_idAlbum;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strAlbum;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAlbum, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ALBUM, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strArtists;
-  varindex = DatabaseUtils::GetFieldIndex(FieldArtist, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ARTIST, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strArtists;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAlbumArtist, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ALBUM_ARTIST, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strGenres;
-  varindex = DatabaseUtils::GetFieldIndex(FieldGenre, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::GENRE, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
-  refindex = a.album_iYear;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeAlbum);
+  refindex = a.album_strReleaseDate;
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeAlbum);
+  EXPECT_EQ(refindex, varindex);
+
+  refindex = a.album_strOrigReleaseDate;
+  varindex = DatabaseUtils::GetFieldIndex(Field::ORIG_YEAR, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strMoods;
-  varindex = DatabaseUtils::GetFieldIndex(FieldMoods, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::MOODS, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strStyles;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStyles, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::STYLES, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strThemes;
-  varindex = DatabaseUtils::GetFieldIndex(FieldThemes, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::THEMES, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strReview;
-  varindex = DatabaseUtils::GetFieldIndex(FieldReview, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::REVIEW, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strLabel;
-  varindex = DatabaseUtils::GetFieldIndex(FieldMusicLabel, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::MUSIC_LABEL, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_strType;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAlbumType, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ALBUM_TYPE, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_fRating;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRating, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RATING, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.album_dtDateAdded;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDateAdded, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DATE_ADDED, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeAlbum);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeAlbum);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -885,79 +771,79 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeSong)
   TestDatabaseUtilsHelper a;
 
   refindex = a.song_idSong;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strTitle;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTitle, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TITLE, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_iTrack;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTrackNumber, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TRACK_NUMBER, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_iDuration;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTime, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TIME, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
-  refindex = a.song_iYear;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeSong);
+  refindex = a.song_strReleaseDate;
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strFileName;
-  varindex = DatabaseUtils::GetFieldIndex(FieldFilename, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::FILENAME, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_iTimesPlayed;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlaycount, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLAYCOUNT, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_iStartOffset;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStartOffset, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::START_OFFSET, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_iEndOffset;
-  varindex = DatabaseUtils::GetFieldIndex(FieldEndOffset, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::END_OFFSET, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_lastplayed;
-  varindex = DatabaseUtils::GetFieldIndex(FieldLastPlayed, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::LAST_PLAYED, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_rating;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRating, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RATING, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_votes;
-  varindex = DatabaseUtils::GetFieldIndex(FieldVotes, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::VOTES, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_userrating;
-  varindex = DatabaseUtils::GetFieldIndex(FieldUserRating, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::USER_RATING, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_comment;
-  varindex = DatabaseUtils::GetFieldIndex(FieldComment, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::COMMENT, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strAlbum;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAlbum, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ALBUM, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strPath;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPath, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PATH, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strArtists;
-  varindex = DatabaseUtils::GetFieldIndex(FieldArtist, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ARTIST, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = a.song_strGenres;
-  varindex = DatabaseUtils::GetFieldIndex(FieldGenre, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::GENRE, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeSong);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeSong);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -966,75 +852,75 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeMusicVideo)
   int refindex, varindex;
 
   refindex = 0;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_TITLE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTitle, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TITLE, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_RUNTIME + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTime, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TIME, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_DIRECTOR + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDirector, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DIRECTOR, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_STUDIOS + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStudio, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::STUDIO, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_PLOT + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlot, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLOT, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_ALBUM + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAlbum, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ALBUM, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_ARTIST + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldArtist, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ARTIST, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_GENRE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldGenre, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::GENRE, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MUSICVIDEO_TRACK + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTrackNumber, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TRACK_NUMBER, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_FILE;
-  varindex = DatabaseUtils::GetFieldIndex(FieldFilename, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::FILENAME, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_PATH;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPath, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PATH, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_PLAYCOUNT;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlaycount, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLAYCOUNT, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_LASTPLAYED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldLastPlayed, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::LAST_PLAYED, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_DATEADDED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDateAdded, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DATE_ADDED, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_USER_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldUserRating, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::USER_RATING, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MUSICVIDEO_PREMIERED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeMusicVideo);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeMusicVideo);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -1043,103 +929,103 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeMovie)
   int refindex, varindex;
 
   refindex = 0;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TITLE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTitle, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TITLE, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_SORTTITLE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldSortTitle, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::SORT_TITLE, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_PLOT + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlot, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLOT, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_PLOTOUTLINE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlotOutline, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLOT_OUTLINE, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TAGLINE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTagline, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TAGLINE, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_CREDITS + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldWriter, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::WRITER, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_RUNTIME + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTime, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TIME, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_MPAA + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldMPAA, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::MPAA, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TOP250 + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTop250, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TOP250, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_GENRE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldGenre, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::GENRE, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_DIRECTOR + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDirector, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DIRECTOR, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_STUDIOS + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStudio, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::STUDIO, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TRAILER + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTrailer, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TRAILER, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_COUNTRY + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldCountry, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::COUNTRY, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_FILE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldFilename, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::FILENAME, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_PATH;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPath, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PATH, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_PLAYCOUNT;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlaycount, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLAYCOUNT, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_LASTPLAYED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldLastPlayed, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::LAST_PLAYED, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_DATEADDED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDateAdded, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DATE_ADDED, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_USER_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldUserRating, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::USER_RATING, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_VOTES;
-  varindex = DatabaseUtils::GetFieldIndex(FieldVotes, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::VOTES, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRating, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RATING, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_MOVIE_PREMIERED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeMovie);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeMovie);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -1148,75 +1034,75 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeTvShow)
   int refindex, varindex;
 
   refindex = 0;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_TITLE + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTitle, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TITLE, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_SORTTITLE + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldSortTitle, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::SORT_TITLE, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_PLOT + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlot, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLOT, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_STATUS + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTvShowStatus, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TVSHOW_STATUS, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_PREMIERED + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_GENRE + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldGenre, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::GENRE, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_MPAA + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldMPAA, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::MPAA, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_TV_STUDIOS + 1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStudio, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::STUDIO, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_PATH;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPath, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PATH, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_DATEADDED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDateAdded, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DATE_ADDED, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_NUM_EPISODES;
-  varindex = DatabaseUtils::GetFieldIndex(FieldNumberOfEpisodes, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::NUMBER_OF_EPISODES, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_NUM_WATCHED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldNumberOfWatchedEpisodes, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::NUMBER_OF_WATCHED_EPISODES, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_NUM_SEASONS;
-  varindex = DatabaseUtils::GetFieldIndex(FieldSeason, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::SEASON, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_USER_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldUserRating, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::USER_RATING, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_VOTES;
-  varindex = DatabaseUtils::GetFieldIndex(FieldVotes, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::VOTES, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_TVSHOW_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRating, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RATING, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeTvShow);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeTvShow);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -1225,91 +1111,91 @@ TEST(TestDatabaseUtils, GetFieldIndex_MediaTypeEpisode)
   int refindex, varindex;
 
   refindex = 0;
-  varindex = DatabaseUtils::GetFieldIndex(FieldId, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::ID, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_TITLE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTitle, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TITLE, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_PLOT + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlot, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLOT, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_CREDITS + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldWriter, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::WRITER, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_AIRED + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldAirDate, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::AIR_DATE, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_RUNTIME + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTime, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TIME, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_DIRECTOR + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDirector, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DIRECTOR, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_SEASON + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldSeason, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::SEASON, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_ID_EPISODE_EPISODE + 2;
-  varindex = DatabaseUtils::GetFieldIndex(FieldEpisodeNumber, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::EPISODE_NUMBER, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_FILE;
-  varindex = DatabaseUtils::GetFieldIndex(FieldFilename, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::FILENAME, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_PATH;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPath, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PATH, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_PLAYCOUNT;
-  varindex = DatabaseUtils::GetFieldIndex(FieldPlaycount, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::PLAYCOUNT, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_LASTPLAYED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldLastPlayed, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::LAST_PLAYED, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_DATEADDED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldDateAdded, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::DATE_ADDED, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_TVSHOW_NAME;
-  varindex = DatabaseUtils::GetFieldIndex(FieldTvShowTitle, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::TVSHOW_TITLE, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_TVSHOW_STUDIO;
-  varindex = DatabaseUtils::GetFieldIndex(FieldStudio, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::STUDIO, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_TVSHOW_AIRED;
-  varindex = DatabaseUtils::GetFieldIndex(FieldYear, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::YEAR, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_TVSHOW_MPAA;
-  varindex = DatabaseUtils::GetFieldIndex(FieldMPAA, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::MPAA, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_USER_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldUserRating, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::USER_RATING, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_VOTES;
-  varindex = DatabaseUtils::GetFieldIndex(FieldVotes, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::VOTES, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = VIDEODB_DETAILS_EPISODE_RATING;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRating, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RATING, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 
   refindex = -1;
-  varindex = DatabaseUtils::GetFieldIndex(FieldRandom, MediaTypeEpisode);
+  varindex = DatabaseUtils::GetFieldIndex(Field::RANDOM, MediaTypeEpisode);
   EXPECT_EQ(refindex, varindex);
 }
 
@@ -1321,11 +1207,9 @@ TEST(TestDatabaseUtils, GetSelectFields)
   EXPECT_FALSE(DatabaseUtils::GetSelectFields(fields, MediaTypeAlbum,
                                               fieldlist));
 
-  fields.insert(FieldId);
-  fields.insert(FieldGenre);
-  fields.insert(FieldAlbum);
-  fields.insert(FieldArtist);
-  fields.insert(FieldTitle);
+  fields = {
+      Field::ID, Field::GENRE, Field::ALBUM, Field::ARTIST, Field::TITLE,
+  };
   EXPECT_FALSE(DatabaseUtils::GetSelectFields(fields, MediaTypeNone,
                                               fieldlist));
   EXPECT_TRUE(DatabaseUtils::GetSelectFields(fields, MediaTypeAlbum,
@@ -1364,7 +1248,7 @@ TEST(TestDatabaseUtils, BuildLimitClause)
 // class DatabaseUtils
 // {
 // public:
-// 
-// 
+//
+//
 //   static std::string BuildLimitClause(int end, int start = 0);
 // };

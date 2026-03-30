@@ -1,45 +1,31 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "threads/Thread.h"
-#include "IVideoPlayer.h"
-#include "DVDMessageQueue.h"
-#include "DVDStreamInfo.h"
-#include "DVDCodecs/Video/DVDVideoCodec.h"
+#pragma once
+
 #include "DVDClock.h"
+#include "DVDCodecs/Video/DVDVideoCodec.h"
+#include "DVDMessageQueue.h"
 #include "DVDOverlayContainer.h"
+#include "DVDStreamInfo.h"
+#include "IVideoPlayer.h"
 #include "PTSTracker.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
+#include "threads/Thread.h"
 #include "utils/BitstreamStats.h"
+
 #include <atomic>
 
+#define DROP_DROPPED 1
+#define DROP_VERYLATE 2
+#define DROP_BUFFER_LEVEL 4
+
 class CDemuxStreamVideo;
-
-#define VIDEO_PICTURE_QUEUE_SIZE 1
-
-#define EOS_ABORT 1
-#define EOS_DROPPED 2
-#define EOS_VERYLATE 4
-#define EOS_BUFFER_LEVEL 8
 
 class CDroppingStats
 {
@@ -59,11 +45,12 @@ public:
 class CVideoPlayerVideo : public CThread, public IDVDStreamPlayerVideo
 {
 public:
-  CVideoPlayerVideo(CDVDClock* pClock
-                 ,CDVDOverlayContainer* pOverlayContainer
-                 ,CDVDMessageQueue& parent
-                 ,CRenderManager& renderManager,
-                 CProcessInfo &processInfo);
+  CVideoPlayerVideo(CDVDClock* pClock,
+                    CDVDOverlayContainer* pOverlayContainer,
+                    CDVDMessageQueue& parent,
+                    CRenderManager& renderManager,
+                    CProcessInfo& processInfo,
+                    double messageQueueTimeSize);
   ~CVideoPlayerVideo() override;
 
   bool OpenStream(CDVDStreamInfo hint) override;
@@ -72,12 +59,11 @@ public:
   bool AcceptsData() const override;
   bool HasData() const override;
   bool IsInited() const override;
-  void SendMessage(CDVDMsg* pMsg, int priority = 0) override;
+  void SendMessage(std::shared_ptr<CDVDMsg> pMsg, int priority = 0) override;
   void FlushMessages() override;
 
   void EnableSubtitle(bool bEnable) override { m_bRenderSubs = bEnable; }
   bool IsSubtitleEnabled() override { return m_bRenderSubs; }
-  void EnableFullscreen(bool bEnable) override { m_bAllowFullscreen = bEnable; }
   double GetSubtitleDelay() override { return m_iSubtitleDelay; }
   void SetSubtitleDelay(double delay) override { m_iSubtitleDelay = delay; }
   bool IsStalled() const override { return m_stalled; }
@@ -86,7 +72,6 @@ public:
   double GetOutputDelay() override; /* returns the expected delay, from that a packet is put in queue */
   std::string GetPlayerInfo() override;
   int GetVideoBitrate() override;
-  std::string GetStereoMode() override;
   void SetSpeed(int iSpeed) override;
 
   // classes
@@ -95,16 +80,26 @@ public:
 
 protected:
 
+  enum EOutputState
+  {
+    OUTPUT_NORMAL,
+    OUTPUT_ABORT,
+    OUTPUT_DROPPED,
+    OUTPUT_AGAIN
+  };
+
   void OnExit() override;
   void Process() override;
 
   bool ProcessDecoderOutput(double &frametime, double &pts);
-  void SendMessageBack(CDVDMsg* pMsg, int priority = 0);
-  MsgQueueReturnCode GetMessage(CDVDMsg** pMsg, unsigned int iTimeoutInMilliSeconds, int &priority);
+  void SendMessageBack(const std::shared_ptr<CDVDMsg>& pMsg, int priority = 0);
+  MsgQueueReturnCode GetMessage(std::shared_ptr<CDVDMsg>& pMsg,
+                                std::chrono::milliseconds timeout,
+                                int& priority);
 
-  int OutputPicture(const VideoPicture* src);
+  EOutputState OutputPicture(const VideoPicture* src);
   void ProcessOverlays(const VideoPicture* pSource, double pts);
-  void OpenStream(CDVDStreamInfo &hint, CDVDVideoCodec* codec);
+  void OpenStream(CDVDStreamInfo& hint, std::unique_ptr<CDVDVideoCodec> codec);
 
   void ResetFrameRateCalc();
   void CalcFrameRate();
@@ -125,11 +120,10 @@ protected:
                              //this is increased exponentially from CVideoPlayerVideo::CalcFrameRate()
 
   bool m_bFpsInvalid;        // needed to ignore fps (e.g. dvd stills)
-  bool m_bAllowFullscreen;
   bool m_bRenderSubs;
   float m_fForcedAspectRatio;
   int m_speed;
-  std::atomic_bool m_stalled;
+  std::atomic_bool m_stalled = false;
   std::atomic_bool m_rewindStalled;
   bool m_paused;
   IDVDStreamPlayer::ESyncState m_syncState;
@@ -140,10 +134,12 @@ protected:
   CDVDMessageQueue m_messageQueue;
   CDVDMessageQueue& m_messageParent;
   CDVDStreamInfo m_hints;
-  CDVDVideoCodec* m_pVideoCodec;
+  std::unique_ptr<CDVDVideoCodec> m_pVideoCodec;
   CPtsTracker m_ptsTracker;
   std::list<DVDMessageListItem> m_packets;
   CDroppingStats m_droppingStats;
   CRenderManager& m_renderManager;
   VideoPicture m_picture;
+
+  EOutputState m_outputSate{OUTPUT_NORMAL};
 };

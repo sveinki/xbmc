@@ -1,37 +1,41 @@
 /*
- * Copyright (C) 2000-2008 the xine project
+ *  Copyright (C) 2000-2008 the xine project
  *
- * Copyright (C) Christian Vogler
- *               cvogler@gradient.cis.upenn.edu - December 2001
+ *  Copyright (C) Christian Vogler
+ *                cvogler@gradient.cis.upenn.edu - December 2001
  *
- * This file is part of xine, a free video player.
+ *  This file is part of xine, a free video player.
  *
- * xine is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  *
- * xine is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *  stuff needed to provide closed captioning decoding and display
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
- * stuff needed to provide closed captioning decoding and display
- *
- * Some small bits and pieces of the EIA-608 captioning decoder were
- * adapted from CCDecoder 0.9.1 by Mike Baker. The latest version is
- * available at http://sourceforge.net/projects/ccdecoder/.
+ *  Some small bits and pieces of the EIA-608 captioning decoder were
+ *  adapted from CCDecoder 0.9.1 by Mike Baker. The latest version is
+ *  available at http://sourceforge.net/projects/ccdecoder/.
  */
+
+#pragma once
 
 #include <stdint.h>
 
 #define CC_ROWS 15
 #define CC_COLUMNS 32
 #define CC_CHANNELS 2
+
+/* colors specified by the EIA 608 standard */
+enum cc_colors
+{
+  WHITE,
+  GREEN,
+  BLUE,
+  CYAN,
+  RED,
+  YELLOW,
+  MAGENTA,
+  BLACK
+};
 
 typedef struct cc_attribute_s {
   uint8_t italic;
@@ -41,11 +45,12 @@ typedef struct cc_attribute_s {
 } cc_attribute_t;
 
 /* CC character cell */
-typedef struct cc_char_cell_s 
+typedef struct cc_char_cell_s
 {
   uint8_t c;                   /* character code, not the same as ASCII */
   cc_attribute_t attributes;   /* attributes of this character, if changed */
 			       /* here */
+  uint8_t charset; /* charset type */
   int midrow_attr;             /* true if this cell changes an attribute */
 } cc_char_cell_t;
 
@@ -61,7 +66,7 @@ typedef struct cc_row_s
 } cc_row_t;
 
 /* closed captioning memory for a single channel */
-typedef struct cc_buffer_s 
+typedef struct cc_buffer_s
 {
   cc_row_t rows[CC_ROWS];
   int rowpos;              /* row cursor position */
@@ -104,6 +109,7 @@ struct cc_decoder_s
   void(*callback)(int service, void *userdata);
   char text[CC_ROWS*CC_COLUMNS + 1];
   int textlen;
+  cc_attribute_t textattr;
 };
 
 typedef struct cc_decoder_s cc_decoder_t;
@@ -112,4 +118,4 @@ cc_decoder_t *cc_decoder_open();
 void cc_decoder_close(cc_decoder_t *this_obj);
 void cc_decoder_init(void);
 
-void decode_cc(cc_decoder_t *dec, uint8_t *buffer, uint32_t buf_len);
+void decode_cc(cc_decoder_t *dec, const uint8_t *buffer, uint32_t buf_len);

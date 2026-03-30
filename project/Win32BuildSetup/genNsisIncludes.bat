@@ -40,6 +40,16 @@ IF EXIST BUILD_WIN32\addons\game.libretro.* (
       SET /A Counter = !Counter! + 1
       )
     )
+  FOR /F "tokens=*" %%P IN ('dir /B /AD BUILD_WIN32\addons\game.shader.*') DO (
+    FOR /f "delims=<" %%N in ('powershell.exe -ExecutionPolicy Unrestricted -command "& {[xml]$a = get-content BUILD_WIN32\addons\%%P\addon.xml;$a.addon.name}"') do (
+      ECHO Section "%%N" SecGameAddons!Counter! >> game-addons.nsi
+      ECHO SectionIn 1 2 >> game-addons.nsi
+      ECHO SetOutPath "$INSTDIR\addons\%%P" >> game-addons.nsi
+      ECHO File /r "${app_root}\addons\%%P\*.*" >> game-addons.nsi
+      ECHO SectionEnd >> game-addons.nsi
+      SET /A Counter = !Counter! + 1
+      )
+    )
   ECHO SectionGroupEnd >> game-addons.nsi
 )
 
@@ -73,22 +83,6 @@ IF EXIST BUILD_WIN32\addons\audioencoder.* (
       )
     )
   ECHO SectionGroupEnd >> audioencoder-addons.nsi
-)
-
-SET Counter=1
-IF EXIST BUILD_WIN32\addons\adsp.* (
-  ECHO SectionGroup "Audio DSP Add-ons" SecAudioDSPAddons >> audiodsp-addons.nsi
-  FOR /F "tokens=*" %%P IN ('dir /B /AD BUILD_WIN32\addons\adsp.*') DO (
-    FOR /f "delims=<" %%N in ('powershell.exe -noprofile -ExecutionPolicy Unrestricted -command "& {[xml]$a = get-content BUILD_WIN32\addons\%%P\addon.xml;$a.addon.name}"') do (
-      ECHO Section "%%N" SecAudioDSPAddons!Counter! >> audiodsp-addons.nsi
-      ECHO SectionIn 1 2 >> audiodsp-addons.nsi
-      ECHO SetOutPath "$INSTDIR\addons\%%P" >> audiodsp-addons.nsi
-      ECHO File /r "${app_root}\addons\%%P\*.*" >> audiodsp-addons.nsi
-      ECHO SectionEnd >> audiodsp-addons.nsi
-      SET /A Counter = !Counter! + 1
-      )
-    )
-  ECHO SectionGroupEnd >> audiodsp-addons.nsi
 )
 
 SET Counter=1

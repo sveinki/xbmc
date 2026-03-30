@@ -1,40 +1,68 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
+include ../../Makefile.include LIBBLURAY-VERSION ../../download-files.include
+DEPS = ../../Makefile.include LIBBLURAY-VERSION Makefile ../../download-files.include \
+                                  001-darwinembed_DiskArbitration-revert.patch \
+                                  002-darwin-dlopen_searchpath.patch \
+                                  003-all-libxml_searchname.patch \
+                                  004-win-remove-lib-version.patch \
+                                  tvos.patch
 
-# lib name, version
-LIBNAME=libbluray
-VERSION=1.0.1
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.bz2
+MESON_BUILD_TYPE=release
+
+ifeq ($(DEBUG_BUILD), yes)
+  MESON_BUILD_TYPE=debug
+endif
 
 # configuration settings
-CONFIGURE=./configure --prefix=$(PREFIX) --exec-prefix=$(PREFIX) \
-  --disable-examples --disable-doxygen-doc \
-  --disable-bdjava-jar --without-libxml2 --without-freetype
+CONFIGURE = $(NATIVEPREFIX)/bin/python3 $(NATIVEPREFIX)/bin/meson setup \
+  --prefix=$(PREFIX) \
+  --libdir=lib \
+  --buildtype=$(MESON_BUILD_TYPE) \
+  -Denable_tools=false \
+  -Dembed_udfread=false \
+  . build
 
-LIBDYLIB=$(PLATFORM)/src/.libs/libbluray.la
+ifeq ($(CROSS_COMPILING), yes)
+  CONFIGURE += --cross-file=$(PREFIX)/share/cross-file.meson
+  export CC=$(CC_FOR_BUILD)
+  export CXX=$(CXX_FOR_BUILD)
+  export CFLAGS=$(CFLAGS_FOR_BUILD)
+  export CXXFLAGS=$(CXXFLAGS_FOR_BUILD)
+else
+  export CC CXX CFLAGS CXXFLAGS
+endif
+export PKG_CONFIG_LIBDIR=$(PREFIX)/share/pkgconfig
+
+ifeq ($(OS), osx)
+  # java and ant are dependencies for bdjs
+  export ANT_HOME=$(PREFIX)/share/ant
+  export PATH:=$(PREFIX)/share/ant/bin:$(PATH)
+endif
+
+LIBDYLIB=$(PLATFORM)/build/src/$(BYPRODUCT)
 
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	# libbluray has borked Makefile.am with respect to CFLAGS, remove the offending line
-	sed -i -e "s|CFLAGS=|#CFLAGS=|" $(PLATFORM)/Makefile.am
-	cd $(PLATFORM); ./bootstrap
-	cd $(PLATFORM); $(CONFIGURE)
-ifeq ($(TARGET_PLATFORM),appletvos)
-	cd $(PLATFORM); patch -p0 < ../tvos.patch
+ifeq ($(OS),darwin_embedded)
+	cd $(PLATFORM); patch -p1 -i ../001-darwinembed_DiskArbitration-revert.patch
 endif
+	cd $(PLATFORM); patch -p1 -i ../002-darwin-dlopen_searchpath.patch
+	cd $(PLATFORM); patch -p1 -i ../003-all-libxml_searchname.patch
+ifeq ($(TARGET_PLATFORM),appletvos)
+	cd $(PLATFORM); patch -p1 -i ../tvos.patch
+endif
+ifeq ($(TARGET_PLATFORM),windows)
+	cd $(PLATFORM); patch -p1 -i ../004-win-remove-lib-version.patch
+endif
+	cd $(PLATFORM); $(CONFIGURE)
 
 $(LIBDYLIB): $(PLATFORM)
-	$(MAKE) -C $(PLATFORM)
+	cd $(PLATFORM)/build; $(NATIVEPREFIX)/bin/ninja -v
 
 .installed-$(PLATFORM): $(LIBDYLIB)
-	$(MAKE) -C $(PLATFORM) install
+	cd $(PLATFORM)/build; $(NATIVEPREFIX)/bin/ninja -v install
 	touch $@
 
 clean:

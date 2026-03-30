@@ -1,84 +1,86 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ScreenSaver.h"
+
+#include "ServiceBroker.h"
 #include "filesystem/SpecialProtocol.h"
-#include "guilib/GraphicContext.h"
-#include "windowing/WindowingFactory.h"
 #include "utils/log.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
 
-namespace ADDON
+using namespace ADDON;
+using namespace KODI::ADDONS;
+
+namespace
 {
-
-CScreenSaver::CScreenSaver(BinaryAddonBasePtr addonBase)
- : IAddonInstanceHandler(ADDON_INSTANCE_SCREENSAVER, addonBase)
+void get_properties(const KODI_HANDLE hdl, struct KODI_ADDON_SCREENSAVER_PROPS* props)
 {
-  m_name = Name();
-  m_presets = CSpecialProtocol::TranslatePath(Path());
-  m_profile = CSpecialProtocol::TranslatePath(Profile());
+  if (hdl)
+    static_cast<CScreenSaver*>(hdl)->GetProperties(props);
+}
+} // namespace
 
-  m_struct = {{0}};
-#ifdef TARGET_WINDOWS
-  m_struct.props.device = g_Windowing.Get3D11Context();
-#else
-  m_struct.props.device = nullptr;
-#endif
-  m_struct.props.x = 0;
-  m_struct.props.y = 0;
-  m_struct.props.width = g_graphicsContext.GetWidth();
-  m_struct.props.height = g_graphicsContext.GetHeight();
-  m_struct.props.pixelRatio = g_graphicsContext.GetResInfo().fPixelRatio;
-  m_struct.props.name = m_name.c_str();
-  m_struct.props.presets = m_presets.c_str();
-  m_struct.props.profile = m_profile.c_str();
-
-  m_struct.toKodi.kodiInstance = this;
+CScreenSaver::CScreenSaver(const AddonInfoPtr& addonInfo)
+  : IAddonInstanceHandler(ADDON_INSTANCE_SCREENSAVER, addonInfo)
+{
+  m_ifc.screensaver = new AddonInstance_Screensaver;
+  m_ifc.screensaver->toAddon = new KodiToAddonFuncTable_Screensaver();
+  m_ifc.screensaver->toKodi = new AddonToKodiFuncTable_Screensaver();
+  m_ifc.screensaver->toKodi->get_properties = get_properties;
 
   /* Open the class "kodi::addon::CInstanceScreensaver" on add-on side */
-  if (CreateInstance(&m_struct) != ADDON_STATUS_OK)
-    CLog::Log(LOGFATAL, "Screensaver: failed to create instance for '%s' and not usable!", ID().c_str());
+  if (CreateInstance() != ADDON_STATUS_OK)
+    CLog::Log(LOGFATAL, "Screensaver: failed to create instance for '{}' and not usable!", ID());
 }
 
 CScreenSaver::~CScreenSaver()
 {
   /* Destroy the class "kodi::addon::CInstanceScreensaver" on add-on side */
   DestroyInstance();
+
+  delete m_ifc.screensaver->toAddon;
+  delete m_ifc.screensaver->toKodi;
+  delete m_ifc.screensaver;
 }
 
 bool CScreenSaver::Start()
 {
-  if (m_struct.toAddon.Start)
-    return m_struct.toAddon.Start(&m_struct);
+  if (m_ifc.screensaver->toAddon->start)
+    return m_ifc.screensaver->toAddon->start(m_ifc.hdl);
   return false;
 }
 
 void CScreenSaver::Stop()
 {
-  if (m_struct.toAddon.Stop)
-    m_struct.toAddon.Stop(&m_struct);
+  if (m_ifc.screensaver->toAddon->stop)
+    m_ifc.screensaver->toAddon->stop(m_ifc.hdl);
 }
 
 void CScreenSaver::Render()
 {
-  if (m_struct.toAddon.Render)
-    m_struct.toAddon.Render(&m_struct);
+  if (m_ifc.screensaver->toAddon->render)
+    m_ifc.screensaver->toAddon->render(m_ifc.hdl);
 }
 
-} /* namespace ADDON */
+void CScreenSaver::GetProperties(struct KODI_ADDON_SCREENSAVER_PROPS* props) const
+{
+  if (!props)
+    return;
+
+  const auto winSystem = CServiceBroker::GetWinSystem();
+  if (!winSystem)
+    return;
+
+  props->x = 0;
+  props->y = 0;
+  props->device = winSystem->GetHWContext();
+  props->width = winSystem->GetGfxContext().GetWidth();
+  props->height = winSystem->GetGfxContext().GetHeight();
+  props->pixelRatio = winSystem->GetGfxContext().GetResInfo().fPixelRatio;
+}

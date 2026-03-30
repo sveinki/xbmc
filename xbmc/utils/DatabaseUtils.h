@@ -1,33 +1,22 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "media/MediaType.h"
+
 #include <map>
-#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "media/MediaType.h"
-
 class CVariant;
+enum class VideoDbContentType;
 
 namespace dbiplus
 {
@@ -35,128 +24,155 @@ namespace dbiplus
   class field_value;
 }
 
-typedef enum {
+enum class Field
+{
   // special fields used during sorting
-  FieldUnknown = -1,
-  FieldNone = 0,
-  FieldSort,        // used to store the string to use for sorting
-  FieldSortSpecial, // whether the item needs special handling (0 = no, 1 = sort on top, 2 = sort on bottom)
-  FieldLabel,
-  FieldFolder,
-  FieldMediaType,
-  FieldRow,         // the row number in a dataset
+  UNKNOWN = -1,
+  NONE = 0,
+  SORT, // used to store the string to use for sorting
+  SORT_SPECIAL, // whether the item needs special handling (0 = no, 1 = sort on top, 2 = sort on bottom)
+  LABEL,
+  FOLDER,
+  MEDIA_TYPE,
+  ROW, // the row number in a dataset
 
   // special fields not retrieved from the database
-  FieldSize,
-  FieldDate,
-  FieldDriveType,
-  FieldStartOffset,
-  FieldEndOffset,
-  FieldProgramCount,
-  FieldBitrate,
-  FieldListeners,
-  FieldPlaylist,
-  FieldVirtualFolder,
-  FieldRandom,
-  FieldDateTaken,
-  FieldAudioCount,
-  FieldSubtitleCount,
+  SIZE,
+  DATE,
+  DRIVE_TYPE,
+  START_OFFSET,
+  END_OFFSET,
+  PROGRAM_COUNT,
+  BITRATE,
+  LISTENERS,
+  PLAYLIST,
+  VIRTUAL_FOLDER,
+  RANDOM,
+  DATE_TAKEN,
+  AUDIO_COUNT,
+  SUBTITLE_COUNT,
 
-  FieldInstallDate,
-  FieldLastUpdated,
-  FieldLastUsed,
+  INSTALL_DATE,
+  LAST_UPDATED,
+  LAST_USED,
 
   // fields retrievable from the database
-  FieldId,
-  FieldGenre,
-  FieldAlbum,
-  FieldArtist,
-  FieldArtistSort,
-  FieldAlbumArtist,
-  FieldTitle,
-  FieldSortTitle,
-  FieldOriginalTitle,
-  FieldYear,
-  FieldTime,
-  FieldTrackNumber,
-  FieldFilename,
-  FieldPath,
-  FieldPlaycount,
-  FieldLastPlayed,
-  FieldInProgress,
-  FieldRating,
-  FieldComment,
-  FieldRole,
-  FieldDateAdded,
-  FieldTvShowTitle,
-  FieldPlot,
-  FieldPlotOutline,
-  FieldTagline,
-  FieldTvShowStatus,
-  FieldVotes,
-  FieldDirector,
-  FieldActor,
-  FieldStudio,
-  FieldCountry,
-  FieldMPAA,
-  FieldTop250,
-  FieldSet,
-  FieldNumberOfEpisodes,
-  FieldNumberOfWatchedEpisodes,
-  FieldWriter,
-  FieldAirDate,
-  FieldEpisodeNumber,
-  FieldUniqueId,
-  FieldSeason,
-  FieldEpisodeNumberSpecialSort,
-  FieldSeasonSpecialSort,
-  FieldReview,
-  FieldThemes,
-  FieldMoods,
-  FieldStyles,
-  FieldAlbumType,
-  FieldMusicLabel,
-  FieldCompilation,
-  FieldTrailer,
-  FieldVideoResolution,
-  FieldVideoAspectRatio,
-  FieldVideoCodec,
-  FieldAudioChannels,
-  FieldAudioCodec,
-  FieldAudioLanguage,
-  FieldSubtitleLanguage,
-  FieldProductionCode,
-  FieldTag,
-  FieldChannelName,
-  FieldChannelNumber,
-  FieldInstruments,
-  FieldBiography,
-  FieldBorn,
-  FieldBandFormed,
-  FieldDisbanded,
-  FieldDied,
-  FieldStereoMode,
-  FieldUserRating,
-  FieldRelevance, // Used for actors' appearances
-  FieldMax
-} Field;
+  ID,
+  GENRE,
+  ALBUM,
+  DISC_TITLE,
+  IS_BOXSET,
+  TOTAL_DISCS,
+  ORIG_YEAR,
+  ORIG_DATE,
+  ARTIST,
+  ARTIST_SORT,
+  ALBUM_ARTIST,
+  TITLE,
+  SORT_TITLE,
+  ORIGINAL_TITLE,
+  YEAR,
+  TIME,
+  TRACK_NUMBER,
+  FILENAME,
+  PATH,
+  PLAYCOUNT,
+  LAST_PLAYED,
+  IN_PROGRESS,
+  RATING,
+  COMMENT,
+  ROLE,
+  DATE_ADDED,
+  DATE_MODIFIED,
+  DATE_NEW,
+  TVSHOW_TITLE,
+  PLOT,
+  PLOT_OUTLINE,
+  TAGLINE,
+  TVSHOW_STATUS,
+  VOTES,
+  DIRECTOR,
+  ACTOR,
+  STUDIO,
+  COUNTRY,
+  MPAA,
+  TOP250,
+  SET,
+  NUMBER_OF_EPISODES,
+  NUMBER_OF_WATCHED_EPISODES,
+  WRITER,
+  AIR_DATE,
+  EPISODE_NUMBER,
+  UNIQUE_ID,
+  SEASON,
+  EPISODE_NUMBER_SPECIAL_SORT,
+  SEASON_SPECIAL_SORT,
+  REVIEW,
+  THEMES,
+  MOODS,
+  STYLES,
+  ALBUM_TYPE,
+  MUSIC_LABEL,
+  COMPILATION,
+  SOURCE,
+  TRAILER,
+  VIDEO_RESOLUTION,
+  VIDEO_ASPECT_RATIO,
+  VIDEO_CODEC,
+  AUDIO_CHANNELS,
+  AUDIO_CODEC,
+  AUDIO_LANGUAGE,
+  SUBTITLE_LANGUAGE,
+  PRODUCTION_CODE,
+  TAG,
+  VIDEO_ASSET_TITLE,
+  CHANNEL_NAME,
+  CHANNEL_NUMBER,
+  INSTRUMENTS,
+  BIOGRAPHY,
+  ARTIST_TYPE,
+  GENDER,
+  DISAMBIGUATION,
+  BORN,
+  BAND_FORMED,
+  DISBANDED,
+  DIED,
+  STEREO_MODE,
+  USER_RATING,
+  RELEVANCE, // Used for actors' appearances
+  CLIENT_CHANNEL_ORDER,
+  BPM,
+  MUSIC_BITRATE,
+  SAMPLE_RATE,
+  NUMBER_OF_CHANNELS,
+  ALBUM_STATUS,
+  ALBUM_DURATION,
+  HDR_TYPE,
+  HDR_DETAIL,
+  PROVIDER,
+  USER_PREFERENCE,
+  HAS_VIDEO_VERSIONS,
+  HAS_VIDEO_EXTRAS,
+  MAX
+};
 
-typedef std::set<Field> Fields;
-typedef std::vector<Field> FieldList;
+using Fields = std::set<Field>;
+using FieldList = std::vector<Field>;
 
-typedef enum {
-  DatabaseQueryPartSelect,
-  DatabaseQueryPartWhere,
-  DatabaseQueryPartOrderBy,
-} DatabaseQueryPart;
+enum class DatabaseQueryPart
+{
+  SELECT,
+  WHERE,
+  ORDER_BY,
+};
 
-typedef std::map<Field, CVariant> DatabaseResult;
-typedef std::vector<DatabaseResult> DatabaseResults;
+using DatabaseResult = std::map<Field, CVariant>;
+using DatabaseResults = std::vector<DatabaseResult>;
 
 class DatabaseUtils
 {
 public:
-  static MediaType MediaTypeFromVideoContentType(int videoContentType);
+  static MediaType MediaTypeFromVideoContentType(VideoDbContentType videoContentType);
 
   static std::string GetField(Field field, const MediaType &mediaType, DatabaseQueryPart queryPart);
   static int GetField(Field field, const MediaType &mediaType);
@@ -164,9 +180,14 @@ public:
   static bool GetSelectFields(const Fields &fields, const MediaType &mediaType, FieldList &selectFields);
 
   static bool GetFieldValue(const dbiplus::field_value &fieldValue, CVariant &variantValue);
-  static bool GetDatabaseResults(const MediaType &mediaType, const FieldList &fields, const std::unique_ptr<dbiplus::Dataset> &dataset, DatabaseResults &results);
+  static bool GetDatabaseResults(const MediaType& mediaType,
+                                 const FieldList& fields,
+                                 dbiplus::Dataset& dataset,
+                                 DatabaseResults& results);
 
   static std::string BuildLimitClause(int end, int start = 0);
+  static std::string BuildLimitClauseOnly(int end, int start = 0);
+  static size_t GetLimitCount(int end, int start);
 
 private:
   static int GetField(Field field, const MediaType &mediaType, bool asIndex);

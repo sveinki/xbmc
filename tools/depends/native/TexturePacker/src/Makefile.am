@@ -2,15 +2,13 @@ AUTOMAKE_OPTIONS = subdir-objects
 
 AM_CFLAGS = -DTARGET_POSIX
 AM_CFLAGS += @EXTRA_DEFINES@
-AM_CXXFLAGS = $(AM_CFLAGS) -std=c++0x
+AM_CXXFLAGS = $(AM_CFLAGS) -std=c++17
 
 AM_CPPFLAGS = \
   -I. \
   -I./decoder \
-  -I@KODI_SRC_DIR@/lib \
   -I@KODI_SRC_DIR@/xbmc \
   -I@KODI_SRC_DIR@/xbmc/guilib \
-  -I@KODI_SRC_DIR@/xbmc/linux \
   @CPPFLAGS@
 
 AM_LDFLAGS = @LIBS@ @STATIC_FLAG@

@@ -1,90 +1,132 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-#if defined(HAS_GLES)
 #include "GUITextureGLES.h"
-#endif
+
+#include "ServiceBroker.h"
 #include "Texture.h"
-#include "utils/log.h"
+#include "guilib/TextureFormats.h"
+#include "rendering/gles/RenderSystemGLES.h"
 #include "utils/GLUtils.h"
 #include "utils/MathUtils.h"
-#include "windowing/WindowingFactory.h"
-#include "guilib/GraphicContext.h"
+#include "utils/log.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
 
 #include <cstddef>
 
-#if defined(HAS_GLES)
-
-
-CGUITextureGLES::CGUITextureGLES(float posX, float posY, float width, float height, const CTextureInfo &texture)
-: CGUITextureBase(posX, posY, width, height, texture)
+void CGUITextureGLES::Register()
 {
+  CGUITexture::Register(CGUITextureGLES::CreateTexture, CGUITextureGLES::DrawQuad);
 }
 
-void CGUITextureGLES::Begin(color_t color)
+CGUITexture* CGUITextureGLES::CreateTexture(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
 {
-  CBaseTexture* texture = m_texture.m_textures[m_currentFrame];
+  return new CGUITextureGLES(posX, posY, width, height, texture);
+}
+
+CGUITextureGLES::CGUITextureGLES(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
+  : CGUITexture(posX, posY, width, height, texture)
+{
+  m_renderSystem = dynamic_cast<CRenderSystemGLES*>(CServiceBroker::GetRenderSystem());
+  unsigned int major, minor;
+  m_renderSystem->GetRenderVersion(major, minor);
+  m_isGLES20 = major == 2;
+}
+
+CGUITextureGLES* CGUITextureGLES::Clone() const
+{
+  return new CGUITextureGLES(*this);
+}
+
+void CGUITextureGLES::Begin(KODI::UTILS::COLOR::Color color)
+{
+  CTexture* texture = m_texture.m_textures[m_currentFrame].get();
   texture->LoadToGPU();
   if (m_diffuse.size())
     m_diffuse.m_textures[0]->LoadToGPU();
 
-  texture->BindToUnit(0);
-
   // Setup Colors
-  m_col[0] = (GLubyte)GET_R(color);
-  m_col[1] = (GLubyte)GET_G(color);
-  m_col[2] = (GLubyte)GET_B(color);
-  m_col[3] = (GLubyte)GET_A(color);
+  m_col[0] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::R, color);
+  m_col[1] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::G, color);
+  m_col[2] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::B, color);
+  m_col[3] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::A, color);
+
+  if (CServiceBroker::GetWinSystem()->UseLimitedColor())
+  {
+    m_col[0] = (235 - 16) * m_col[0] / 255 + 16;
+    m_col[1] = (235 - 16) * m_col[1] / 255 + 16;
+    m_col[2] = (235 - 16) * m_col[2] / 255 + 16;
+  }
 
   bool hasAlpha = m_texture.m_textures[m_currentFrame]->HasAlpha() || m_col[3] < 255;
+  const bool hasBlendColor =
+      m_col[0] != 255 || m_col[1] != 255 || m_col[2] != 255 || m_col[3] != 255;
 
   if (m_diffuse.size())
   {
-    if (m_col[0] == 255 && m_col[1] == 255 && m_col[2] == 255 && m_col[3] == 255 )
+    if (m_isGLES20 && (texture->GetSwizzle() == KD_TEX_SWIZ_111R ||
+                       m_diffuse.m_textures[0]->GetSwizzle() == KD_TEX_SWIZ_111R))
     {
-      g_Windowing.EnableGUIShader(SM_MULTI);
+      if (texture->GetSwizzle() == KD_TEX_SWIZ_111R &&
+          m_diffuse.m_textures[0]->GetSwizzle() == KD_TEX_SWIZ_111R)
+        m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_MULTI_111R_111R_BLENDCOLOR);
+      else if (hasBlendColor)
+        m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_MULTI_RGBA_111R_BLENDCOLOR);
+      else
+        m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_MULTI_RGBA_111R);
+    }
+    else if (hasBlendColor)
+    {
+      m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_MULTI_BLENDCOLOR);
     }
     else
     {
-      g_Windowing.EnableGUIShader(SM_MULTI_BLENDCOLOR);
+      m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_MULTI);
     }
 
     hasAlpha |= m_diffuse.m_textures[0]->HasAlpha();
 
-    m_diffuse.m_textures[0]->BindToUnit(1);
-
-  }
-  else
-  {
-    if (m_col[0] == 255 && m_col[1] == 255 && m_col[2] == 255 && m_col[3] == 255)
+    // We don't need a 111R_RGBA version of the GLES 2.0 shaders, so in the
+    // unlikely event of having an alpha-only texture, switch with the
+    // diffuse.
+    if (texture->GetSwizzle() == KD_TEX_SWIZ_111R)
     {
-      g_Windowing.EnableGUIShader(SM_TEXTURE_NOBLEND);
+      texture->BindToUnit(1);
+      m_diffuse.m_textures[0]->BindToUnit(0);
     }
     else
     {
-      g_Windowing.EnableGUIShader(SM_TEXTURE);
+      texture->BindToUnit(0);
+      m_diffuse.m_textures[0]->BindToUnit(1);
     }
   }
+  else
+  {
+    if (m_isGLES20 && texture->GetSwizzle() == KD_TEX_SWIZ_111R)
+    {
+      m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_TEXTURE_111R);
+    }
+    else if (hasBlendColor)
+    {
+      m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_TEXTURE);
+    }
+    else
+    {
+      m_renderSystem->EnableGUIShader(ShaderMethodGLES::SM_TEXTURE_NOBLEND);
+    }
 
-  if ( hasAlpha )
+    texture->BindToUnit(0);
+  }
+
+  if (hasAlpha)
   {
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
     glEnable( GL_BLEND );
@@ -93,31 +135,40 @@ void CGUITextureGLES::Begin(color_t color)
   {
     glDisable(GL_BLEND);
   }
+
   m_packedVertices.clear();
 }
 
 void CGUITextureGLES::End()
 {
-  if (m_packedVertices.size())
+  if (!m_packedVertices.empty())
   {
-    GLint posLoc  = g_Windowing.GUIShaderGetPos();
-    GLint tex0Loc = g_Windowing.GUIShaderGetCoord0();
-    GLint tex1Loc = g_Windowing.GUIShaderGetCoord1();
-    GLint uniColLoc = g_Windowing.GUIShaderGetUniCol();
+    GLint posLoc  = m_renderSystem->GUIShaderGetPos();
+    GLint tex0Loc = m_renderSystem->GUIShaderGetCoord0();
+    GLint tex1Loc = m_renderSystem->GUIShaderGetCoord1();
+    GLint uniColLoc = m_renderSystem->GUIShaderGetUniCol();
+    GLint depthLoc = m_renderSystem->GUIShaderGetDepth();
 
     if(uniColLoc >= 0)
     {
       glUniform4f(uniColLoc,(m_col[0] / 255.0f), (m_col[1] / 255.0f), (m_col[2] / 255.0f), (m_col[3] / 255.0f));
     }
 
+    glUniform1f(depthLoc, m_depth);
+
     if(m_diffuse.size())
     {
-      glVertexAttribPointer(tex1Loc, 2, GL_FLOAT, 0, sizeof(PackedVertex), (char*)&m_packedVertices[0] + offsetof(PackedVertex, u2));
+      if (m_texture.m_textures[m_currentFrame]->GetSwizzle() == KD_TEX_SWIZ_111R)
+        std::swap(tex0Loc, tex1Loc);
+      glVertexAttribPointer(tex1Loc, 2, GL_FLOAT, 0, sizeof(PackedVertex),
+                            (char*)m_packedVertices.data() + offsetof(PackedVertex, u2));
       glEnableVertexAttribArray(tex1Loc);
     }
-    glVertexAttribPointer(posLoc, 3, GL_FLOAT, 0, sizeof(PackedVertex), (char*)&m_packedVertices[0] + offsetof(PackedVertex, x));
+    glVertexAttribPointer(posLoc, 3, GL_FLOAT, 0, sizeof(PackedVertex),
+                          (char*)m_packedVertices.data() + offsetof(PackedVertex, x));
     glEnableVertexAttribArray(posLoc);
-    glVertexAttribPointer(tex0Loc, 2, GL_FLOAT, 0, sizeof(PackedVertex), (char*)&m_packedVertices[0] + offsetof(PackedVertex, u1));
+    glVertexAttribPointer(tex0Loc, 2, GL_FLOAT, 0, sizeof(PackedVertex),
+                          (char*)m_packedVertices.data() + offsetof(PackedVertex, u1));
     glEnableVertexAttribArray(tex0Loc);
 
     glDrawElements(GL_TRIANGLES, m_packedVertices.size()*6 / 4, GL_UNSIGNED_SHORT, m_idx.data());
@@ -132,7 +183,8 @@ void CGUITextureGLES::End()
   if (m_diffuse.size())
     glActiveTexture(GL_TEXTURE0);
   glEnable(GL_BLEND);
-  g_Windowing.DisableGUIShader();
+
+  m_renderSystem->DisableGUIShader();
 }
 
 void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, const CRect &diffuse, int orientation)
@@ -140,10 +192,11 @@ void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, c
   PackedVertex vertices[4];
 
   // Setup texture coordinates
-  //TopLeft
+  // TopLeft
   vertices[0].u1 = texture.x1;
   vertices[0].v1 = texture.y1;
-  //TopRight
+
+  // TopRight
   if (orientation & 4)
   {
     vertices[1].u1 = texture.x1;
@@ -154,10 +207,12 @@ void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, c
     vertices[1].u1 = texture.x2;
     vertices[1].v1 = texture.y1;
   }
-  //BottomRight
+
+  // BottomRight
   vertices[2].u1 = texture.x2;
   vertices[2].v1 = texture.y2;
-  //BottomLeft
+
+  // BottomLeft
   if (orientation & 4)
   {
     vertices[3].u1 = texture.x2;
@@ -171,10 +226,11 @@ void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, c
 
   if (m_diffuse.size())
   {
-    //TopLeft
+    // TopLeft
     vertices[0].u2 = diffuse.x1;
     vertices[0].v2 = diffuse.y1;
-    //TopRight
+
+    // TopRight
     if (m_info.orientation & 4)
     {
       vertices[1].u2 = diffuse.x1;
@@ -185,10 +241,12 @@ void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, c
       vertices[1].u2 = diffuse.x2;
       vertices[1].v2 = diffuse.y1;
     }
-    //BottomRight
+
+    // BottomRight
     vertices[2].u2 = diffuse.x2;
     vertices[2].v2 = diffuse.y2;
-    //BottomLeft
+
+    // BottomLeft
     if (m_info.orientation & 4)
     {
       vertices[3].u2 = diffuse.x2;
@@ -221,32 +279,46 @@ void CGUITextureGLES::Draw(float *x, float *y, float *z, const CRect &texture, c
   }
 }
 
-void CGUITextureGLES::DrawQuad(const CRect &rect, color_t color, CBaseTexture *texture, const CRect *texCoords)
+void CGUITextureGLES::DrawQuad(const CRect& rect,
+                               KODI::UTILS::COLOR::Color color,
+                               CTexture* texture,
+                               const CRect* texCoords,
+                               const float depth,
+                               const bool blending)
 {
+  CRenderSystemGLES *renderSystem = dynamic_cast<CRenderSystemGLES*>(CServiceBroker::GetRenderSystem());
   if (texture)
   {
     texture->LoadToGPU();
     texture->BindToUnit(0);
   }
 
-  glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-  glEnable(GL_BLEND);          // Turn Blending On
+  if (blending)
+  {
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_BLEND);
+  }
+  else
+  {
+    glDisable(GL_BLEND);
+  }
 
   VerifyGLState();
 
   GLubyte col[4];
   GLfloat ver[4][3];
   GLfloat tex[4][2];
-  GLubyte idx[4] = {0, 1, 3, 2};        //determines order of triangle strip
+  GLubyte idx[4] = {0, 1, 3, 2}; // Determines order of triangle strip
 
   if (texture)
-    g_Windowing.EnableGUIShader(SM_TEXTURE);
+    renderSystem->EnableGUIShader(ShaderMethodGLES::SM_TEXTURE);
   else
-    g_Windowing.EnableGUIShader(SM_DEFAULT);
+    renderSystem->EnableGUIShader(ShaderMethodGLES::SM_DEFAULT);
 
-  GLint posLoc   = g_Windowing.GUIShaderGetPos();
-  GLint tex0Loc  = g_Windowing.GUIShaderGetCoord0();
-  GLint uniColLoc= g_Windowing.GUIShaderGetUniCol();
+  GLint posLoc   = renderSystem->GUIShaderGetPos();
+  GLint tex0Loc  = renderSystem->GUIShaderGetCoord0();
+  GLint uniColLoc= renderSystem->GUIShaderGetUniCol();
+  GLint depthLoc = renderSystem->GUIShaderGetDepth();
 
   glVertexAttribPointer(posLoc,  3, GL_FLOAT, 0, 0, ver);
   if (texture)
@@ -257,12 +329,13 @@ void CGUITextureGLES::DrawQuad(const CRect &rect, color_t color, CBaseTexture *t
     glEnableVertexAttribArray(tex0Loc);
 
   // Setup Colors
-  col[0] = (GLubyte)GET_R(color);
-  col[1] = (GLubyte)GET_G(color);
-  col[2] = (GLubyte)GET_B(color);
-  col[3] = (GLubyte)GET_A(color);
+  col[0] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::R, color);
+  col[1] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::G, color);
+  col[2] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::B, color);
+  col[3] = KODI::UTILS::GL::GetChannelFromARGB(KODI::UTILS::GL::ColorChannel::A, color);
 
   glUniform4f(uniColLoc, col[0] / 255.0f, col[1] / 255.0f, col[2] / 255.0f, col[3] / 255.0f);
+  glUniform1f(depthLoc, depth);
 
   ver[0][0] = ver[3][0] = rect.x1;
   ver[0][1] = ver[1][1] = rect.y1;
@@ -279,13 +352,12 @@ void CGUITextureGLES::DrawQuad(const CRect &rect, color_t color, CBaseTexture *t
     tex[1][0] = tex[2][0] = coords.x2;
     tex[2][1] = tex[3][1] = coords.y2;
   }
+
   glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_BYTE, idx);
 
   glDisableVertexAttribArray(posLoc);
   if (texture)
     glDisableVertexAttribArray(tex0Loc);
 
-  g_Windowing.DisableGUIShader();
+  renderSystem->DisableGUIShader();
 }
-
-#endif

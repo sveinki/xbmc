@@ -1,48 +1,73 @@
-#pragma once
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "Utils/AEAudioFormat.h"
+#include "Utils/AEDeviceInfo.h"
+
+#include <functional>
+#include <map>
+#include <memory>
 #include <stdint.h>
 #include <string>
 #include <vector>
 
-#include "cores/AudioEngine/Utils/AEDeviceInfo.h"
-
 class IAESink;
 
-typedef struct
+namespace AE
 {
-  std::string      m_sinkName;
-  AEDeviceInfoList m_deviceInfoList;
-} AESinkInfo;
 
-typedef std::vector<AESinkInfo> AESinkInfoList;
+struct AESinkInfo
+{
+  std::string m_sinkName;
+  AEDeviceInfoList m_deviceInfoList;
+};
+
+using CreateSink =
+    std::function<std::unique_ptr<IAESink>(std::string& device, AEAudioFormat& desiredFormat)>;
+using Enumerate = std::function<void(AEDeviceInfoList& list, bool force)>;
+using Cleanup = std::function<void()>;
+
+struct AESinkRegEntry
+{
+  std::string sinkName;
+  CreateSink createFunc;
+  Enumerate enumerateFunc;
+  Cleanup cleanupFunc;
+};
+
+struct AESinkDevice
+{
+  std::string driver;
+  std::string name;
+  std::string friendlyName;
+
+  bool IsSameDeviceAs(const AESinkDevice& d) const
+  {
+    return driver == d.driver && (name == d.name || friendlyName == d.friendlyName);
+  }
+};
 
 class CAESinkFactory
 {
 public:
-  static void     ParseDevice(std::string &device, std::string &driver);
-  static IAESink *Create(std::string &device, AEAudioFormat &desiredFormat, bool rawPassthrough);
-  static void     EnumerateEx(AESinkInfoList &list, bool force = false); /* The force flag can be used to indicate the rescan devices */
+  static void RegisterSink(const AESinkRegEntry& regEntry);
+  static void ClearSinks();
+  static bool HasSinks();
+
+  static AESinkDevice ParseDevice(const std::string& device);
+  static std::unique_ptr<IAESink> Create(const std::string& device, AEAudioFormat& desiredFormat);
+  static void EnumerateEx(std::vector<AESinkInfo>& list, bool force, const std::string& driver);
+  static void Cleanup();
 
 protected:
-  static IAESink *TrySink(const std::string &driver, std::string &device, AEAudioFormat &format);
+  static std::map<std::string, AESinkRegEntry> m_AESinkRegEntry;
 };
 
+}

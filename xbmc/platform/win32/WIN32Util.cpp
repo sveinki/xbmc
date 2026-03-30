@@ -1,55 +1,84 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "WIN32Util.h"
-#include "Util.h"
-#include "utils/URIUtils.h"
-#include "storage/cdioSupport.h"
-#include "PowrProf.h"
-#include "WindowHelper.h"
-#include "Application.h"
-#include <shlobj.h>
-#include "filesystem/SpecialProtocol.h"
-#include "my_ntddscsi.h"
-#include "Setupapi.h"
-#include "storage/MediaManager.h"
-#include "windowing/WindowingFactory.h"
-#include "guilib/LocalizeStrings.h"
-#include "utils/CharsetConverter.h"
-#include "utils/log.h"
-#include "powermanagement/PowerManager.h"
-#include "utils/SystemInfo.h"
-#include "utils/Environment.h"
-#include "utils/StringUtils.h"
-#include "platform/win32/crts_caller.h"
+
 #include "CompileInfo.h"
+#include "ServiceBroker.h"
+#include "Util.h"
+#include "WindowHelper.h"
+#include "application/AppParams.h"
+#include "my_ntddscsi.h"
+#include "rendering/dx/DirectXHelper.h"
+#include "storage/MediaManager.h"
+#include "utils/CharsetConverter.h"
+#include "utils/StringUtils.h"
+#include "utils/SystemInfo.h"
+#include "utils/URIUtils.h"
+#include "utils/log.h"
+
 #include "platform/win32/CharsetConverter.h"
 
+#ifdef TARGET_WINDOWS_DESKTOP
+#include "DisplayUtilsWin32.h"
+#endif
+
+#include <PowrProf.h>
+
+#ifdef TARGET_WINDOWS_DESKTOP
 #include <cassert>
-
-
+#endif
+#include <array>
+#include <format>
 #include <locale.h>
+#include <sstream>
 
+#include <shellapi.h>
+#include <shlobj.h>
+#include <winioctl.h>
+
+#ifdef TARGET_WINDOWS_DESKTOP
 extern HWND g_hWnd;
+#endif
 
 using namespace MEDIA_DETECT;
+
+#ifdef TARGET_WINDOWS_STORE
+#include "platform/win10/AsyncHelpers.h"
+
+#include <ppltasks.h>
+#include <winrt/Windows.Devices.Display.Core.h>
+#include <winrt/Windows.Devices.Power.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Graphics.Display.Core.h>
+#include <winrt/Windows.Storage.h>
+
+using namespace winrt::Windows::Devices::Power;
+using namespace winrt::Windows::Devices::Display::Core;
+using namespace winrt::Windows::Graphics::Display;
+using namespace winrt::Windows::Graphics::Display::Core;
+using namespace winrt::Windows::Storage;
+#endif
+
+void VideoDriverInfo::Log()
+{
+  if (!valid)
+  {
+    CLog::LogF(LOGERROR, "video driver version information is not valid");
+    return;
+  }
+
+  if (vendorId == PCIV_NVIDIA)
+    CLog::LogF(LOGINFO, "video driver version is {} {}.{} ({})", DX::GetGFXProviderName(vendorId),
+               majorVersion, minorVersion, version);
+  else
+    CLog::LogF(LOGINFO, "video driver version is {} {}", DX::GetGFXProviderName(vendorId), version);
+}
 
 CWIN32Util::CWIN32Util(void)
 {
@@ -61,6 +90,11 @@ CWIN32Util::~CWIN32Util(void)
 
 int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
 {
+#ifdef TARGET_WINDOWS_STORE
+  CLog::LogF(LOGDEBUG, "is not implemented");
+  CLog::LogF(LOGDEBUG, "Could not determine tray status {}", GetLastError());
+  return -1;
+#else
   using KODI::PLATFORM::WINDOWS::ToW;
 
   auto strPathW = ToW(strPath);
@@ -68,10 +102,10 @@ int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
   int iResult;                  // results flag
   ULONG ulChanges=0;
   DWORD dwBytesReturned;
-  T_SPDT_SBUF sptd_sb;  //SCSI Pass Through Direct variable.
-  byte DataBuf[8];  //Buffer for holding data to/from drive.
+  T_SPDT_SBUF sptd_sb = {}; // SCSI Pass Through Direct variable.
+  byte DataBuf[8] = {}; // Buffer for holding data to/from drive.
 
-  CLog::Log(LOGDEBUG, __FUNCTION__": Requesting status for drive %s.", strPath.c_str());
+  CLog::LogF(LOGDEBUG, "Requesting status for drive {}.", strPath);
 
   hDevice = CreateFile( strPathW.c_str(),                  // drive
                         0,                                // no access to the drive
@@ -83,11 +117,11 @@ int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
 
   if (hDevice == INVALID_HANDLE_VALUE)                    // cannot open the drive
   {
-    CLog::Log(LOGERROR, __FUNCTION__": Failed to CreateFile for %s.", strPath.c_str());
+    CLog::LogF(LOGERROR, "Failed to CreateFile for {}.", strPath);
     return -1;
   }
 
-  CLog::Log(LOGDEBUG, __FUNCTION__": Requesting media status for drive %s.", strPath.c_str());
+  CLog::LogF(LOGDEBUG, "Requesting media status for drive {}.", strPath);
   iResult = DeviceIoControl((HANDLE) hDevice,             // handle to device
                              IOCTL_STORAGE_CHECK_VERIFY2, // dwIoControlCode
                              NULL,                        // lpInBuffer
@@ -116,7 +150,7 @@ int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
 
   if (hDevice == INVALID_HANDLE_VALUE)
   {
-    CLog::Log(LOGERROR, __FUNCTION__": Failed to CreateFile2 for %s.", strPath.c_str());
+    CLog::LogF(LOGERROR, "Failed to CreateFile2 for {}.", strPath);
     return -1;
   }
 
@@ -149,11 +183,8 @@ int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
   sptd_sb.sptd.Cdb[14]=0;
   sptd_sb.sptd.Cdb[15]=0;
 
-  ZeroMemory(DataBuf, 8);
-  ZeroMemory(sptd_sb.SenseBuf, MAX_SENSE_LEN);
-
   //Send the command to drive
-  CLog::Log(LOGDEBUG, __FUNCTION__": Requesting tray status for drive %s.", strPath.c_str());
+  CLog::LogF(LOGDEBUG, "Requesting tray status for drive {}.", strPath);
   iResult = DeviceIoControl((HANDLE) hDevice,
                             IOCTL_SCSI_PASS_THROUGH_DIRECT,
                             (PVOID)&sptd_sb, (DWORD)sizeof(sptd_sb),
@@ -173,8 +204,9 @@ int CWIN32Util::GetDriveStatus(const std::string &strPath, bool bStatusEx)
     else
       return 2; // tray closed, media present
   }
-  CLog::Log(LOGERROR, __FUNCTION__": Could not determine tray status %d", GetLastError());
+  CLog::LogF(LOGERROR, "Could not determine tray status {}", GetLastError());
   return -1;
+#endif
 }
 
 char CWIN32Util::FirstDriveFromMask (ULONG unitmask)
@@ -188,77 +220,12 @@ char CWIN32Util::FirstDriveFromMask (ULONG unitmask)
     return (i + 'A');
 }
 
-bool CWIN32Util::PowerManagement(PowerState State)
-{
-  static bool gotShutdownPrivileges = false;
-  if (!gotShutdownPrivileges)
-  {
-    HANDLE hToken;
-    // Get a token for this process.
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
-    {
-      // Get the LUID for the shutdown privilege.
-      TOKEN_PRIVILEGES tkp = {};
-      if (LookupPrivilegeValue(NULL, SE_SHUTDOWN_NAME, &tkp.Privileges[0].Luid))
-      {
-        tkp.PrivilegeCount = 1;  // one privilege to set
-        tkp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        // Get the shutdown privilege for this process.
-        if (AdjustTokenPrivileges(hToken, FALSE, &tkp, 0, (PTOKEN_PRIVILEGES)NULL, 0))
-          gotShutdownPrivileges = true;
-      }
-      CloseHandle(hToken);
-    }
-
-    if (!gotShutdownPrivileges)
-      return false;
-  }
-
-  switch (State)
-  {
-  case POWERSTATE_HIBERNATE:
-    CLog::Log(LOGINFO, "Asking Windows to hibernate...");
-    return SetSuspendState(true, true, false) == TRUE;
-    break;
-  case POWERSTATE_SUSPEND:
-    CLog::Log(LOGINFO, "Asking Windows to suspend...");
-    return SetSuspendState(false, true, false) == TRUE;
-    break;
-  case POWERSTATE_SHUTDOWN:
-    CLog::Log(LOGINFO, "Shutdown Windows...");
-    if (g_sysinfo.IsWindowsVersionAtLeast(CSysInfo::WindowsVersionWin8))
-      return InitiateShutdownW(NULL, NULL, 0, SHUTDOWN_HYBRID | SHUTDOWN_INSTALL_UPDATES | SHUTDOWN_POWEROFF,
-                               SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_OTHER | SHTDN_REASON_FLAG_PLANNED) == ERROR_SUCCESS;
-    return InitiateShutdownW(NULL, NULL, 0, SHUTDOWN_INSTALL_UPDATES | SHUTDOWN_POWEROFF,
-                             SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_OTHER | SHTDN_REASON_FLAG_PLANNED) == ERROR_SUCCESS;
-    break;
-  case POWERSTATE_REBOOT:
-    CLog::Log(LOGINFO, "Rebooting Windows...");
-    if (g_sysinfo.IsWindowsVersionAtLeast(CSysInfo::WindowsVersionWin8))
-      return InitiateShutdownW(NULL, NULL, 0, SHUTDOWN_INSTALL_UPDATES | SHUTDOWN_RESTART,
-                               SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_OTHER | SHTDN_REASON_FLAG_PLANNED) == ERROR_SUCCESS;
-    return InitiateShutdownW(NULL, NULL, 0, SHUTDOWN_INSTALL_UPDATES | SHUTDOWN_RESTART,
-                             SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_OTHER | SHTDN_REASON_FLAG_PLANNED) == ERROR_SUCCESS;
-    break;
-  default:
-    CLog::Log(LOGERROR, "Unknown PowerState called.");
-    return false;
-    break;
-  }
-}
-
-int CWIN32Util::BatteryLevel()
-{
-  SYSTEM_POWER_STATUS SystemPowerStatus;
-
-  if (GetSystemPowerStatus(&SystemPowerStatus) && SystemPowerStatus.BatteryLifePercent != 255)
-      return SystemPowerStatus.BatteryLifePercent;
-
-  return 0;
-}
-
 bool CWIN32Util::XBMCShellExecute(const std::string &strPath, bool bWaitForScriptExit)
 {
+#ifdef TARGET_WINDOWS_STORE
+  CLog::LogF(LOGDEBUG, "s not implemented");
+  return false;
+#else
   std::string strCommand = strPath;
   std::string strExe = strPath;
   std::string strParams;
@@ -297,7 +264,7 @@ bool CWIN32Util::XBMCShellExecute(const std::string &strPath, bool bWaitForScrip
   g_charsetConverter.utf8ToW(strWorkingDir, WstrWorkingDir);
 
   bool ret;
-  SHELLEXECUTEINFOW ShExecInfo = {0};
+  SHELLEXECUTEINFOW ShExecInfo = {};
   ShExecInfo.cbSize = sizeof(SHELLEXECUTEINFOW);
   ShExecInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
   ShExecInfo.hwnd = NULL;
@@ -328,98 +295,112 @@ bool CWIN32Util::XBMCShellExecute(const std::string &strPath, bool bWaitForScrip
   }
 
   return ret;
-}
-
-std::vector<std::string> CWIN32Util::GetDiskUsage()
-{
-  std::vector<std::string> result;
-  ULARGE_INTEGER ULTotal= { { 0 } };
-  ULARGE_INTEGER ULTotalFree= { { 0 } };
-
-  std::unique_ptr<wchar_t> pcBuffer;
-  DWORD dwStrLength= GetLogicalDriveStrings( 0, pcBuffer.get() );
-  if( dwStrLength != 0 )
-  {
-    std::string strRet;
-
-    dwStrLength+= 1;
-    pcBuffer.reset(new wchar_t[dwStrLength]);
-    GetLogicalDriveStrings( dwStrLength, pcBuffer.get() );
-    int iPos= 0;
-    do
-    {
-      std::wstring strDrive = pcBuffer.get() + iPos;
-      if( DRIVE_FIXED == GetDriveType( strDrive.c_str()  ) &&
-        GetDiskFreeSpaceEx( ( strDrive.c_str() ), nullptr, &ULTotal, &ULTotalFree ) )
-      {
-        strRet = KODI::PLATFORM::WINDOWS::FromW(StringUtils::Format(L"%s %d MB %s",strDrive.c_str(), int(ULTotalFree.QuadPart/(1024*1024)),g_localizeStrings.Get(160).c_str()));
-        result.push_back(strRet);
-      }
-      iPos += (wcslen( pcBuffer.get() + iPos) + 1 );
-    }while( wcslen( pcBuffer.get() + iPos ) > 0 );
-  }
-  return result;
+#endif
 }
 
 std::string CWIN32Util::GetResInfoString()
 {
-  DEVMODE devmode;
-  ZeroMemory(&devmode, sizeof(devmode));
-  devmode.dmSize = sizeof(devmode);
-  EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
-  return StringUtils::Format("Desktop Resolution: %dx%d %dBit at %dHz",devmode.dmPelsWidth,devmode.dmPelsHeight,devmode.dmBitsPerPel,devmode.dmDisplayFrequency);
-}
-
-int CWIN32Util::GetDesktopColorDepth()
-{
-  DEVMODE devmode;
-  ZeroMemory(&devmode, sizeof(devmode));
-  devmode.dmSize = sizeof(devmode);
-  EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
-  return (int)devmode.dmBitsPerPel;
-}
-
-std::string CWIN32Util::GetSpecialFolder(int csidl)
-{
-  std::string strProfilePath;
-  static const int bufSize = MAX_PATH;
-  WCHAR* buf = new WCHAR[bufSize];
-
-  if(SUCCEEDED(SHGetFolderPathW(NULL, csidl, NULL, SHGFP_TYPE_CURRENT, buf)))
+#ifdef TARGET_WINDOWS_STORE
+  auto hdmiInfo = HdmiDisplayInformation::GetForCurrentView();
+  if (hdmiInfo) // Xbox
   {
-    buf[bufSize-1] = 0;
-    g_charsetConverter.wToUTF8(buf, strProfilePath);
-    strProfilePath = UncToSmb(strProfilePath);
+    auto mode = hdmiInfo.GetCurrentDisplayMode();
+    return StringUtils::Format(
+        "Desktop Resolution: {}x{} {}Bit at {:.2f}Hz", mode.ResolutionWidthInRawPixels(),
+        mode.ResolutionHeightInRawPixels(), mode.BitsPerPixel(), mode.RefreshRate());
   }
-  else
-    strProfilePath = "";
-  
-  delete[] buf;
-  return strProfilePath;
+  else // Windows 10 UWP
+  {
+    auto info = DisplayInformation::GetForCurrentView();
+    return StringUtils::Format("Desktop Resolution: {}x{}", info.ScreenWidthInRawPixels(),
+                               info.ScreenHeightInRawPixels());
+  }
+#else
+  DEVMODE devmode = {};
+  devmode.dmSize = sizeof(devmode);
+  EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &devmode);
+  return StringUtils::Format("Desktop Resolution: {}x{} {}Bit at {}Hz", devmode.dmPelsWidth,
+                             devmode.dmPelsHeight, devmode.dmBitsPerPel,
+                             devmode.dmDisplayFrequency);
+#endif
 }
 
-std::string CWIN32Util::GetSystemPath()
+size_t CWIN32Util::GetSystemMemorySize()
 {
-  return GetSpecialFolder(CSIDL_SYSTEM);
+#ifdef TARGET_WINDOWS_STORE
+  MEMORYSTATUSEX statex = {};
+  statex.dwLength = sizeof(statex);
+  GlobalMemoryStatusEx(&statex);
+  return static_cast<size_t>(statex.ullTotalPhys / KB);
+#else
+  ULONGLONG ramSize = 0;
+  GetPhysicallyInstalledSystemMemory(&ramSize);
+  return static_cast<size_t>(ramSize);
+#endif
 }
 
-std::string CWIN32Util::GetProfilePath()
+std::string CWIN32Util::GetProfilePath(UserDirectoriesLocation loc)
 {
   std::string strProfilePath;
+#ifdef TARGET_WINDOWS_STORE
+  auto localFolder = ApplicationData::Current().LocalFolder();
+  strProfilePath = KODI::PLATFORM::WINDOWS::FromW(localFolder.Path().c_str());
+#else
   std::string strHomePath = CUtil::GetHomePath();
 
-  if(g_application.PlatformDirectoriesEnabled())
-    strProfilePath = URIUtils::AddFileToFolder(GetSpecialFolder(CSIDL_APPDATA|CSIDL_FLAG_CREATE), CCompileInfo::GetAppName());
-  else
-    strProfilePath = URIUtils::AddFileToFolder(strHomePath , "portable_data");
+  switch (loc)
+  {
+    case UserDirectoriesLocation::PLATFORM:
+      strProfilePath = URIUtils::AddFileToFolder(GetAppDataFolder(), CCompileInfo::GetAppName());
+      break;
+    case UserDirectoriesLocation::PORTABLE:
+      strProfilePath = URIUtils::AddFileToFolder(strHomePath, "portable_data");
+      break;
+    case UserDirectoriesLocation::TEST:
+      strProfilePath = URIUtils::AddFileToFolder(strHomePath, "test_data");
+      break;
+  }
 
   if (strProfilePath.length() == 0)
     strProfilePath = strHomePath;
 
   URIUtils::AddSlashAtEnd(strProfilePath);
-
+#endif
   return strProfilePath;
 }
+
+#ifdef TARGET_WINDOWS_DESKTOP
+std::string CWIN32Util::GetAppDataFolder()
+{
+  std::string profilePath;
+  WCHAR* path = nullptr;
+
+  // First get the roaming appdata location.
+  // All current users use this folder, must not break their setup.
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, NULL, &path)))
+  {
+    g_charsetConverter.wToUTF8(path, profilePath);
+    // We do not support appdata on a UNC path.
+    if (profilePath.starts_with("\\\\"))
+      profilePath.clear();
+  }
+
+  // Must always free, even if failed. This handles NULL, no need to check.
+  CoTaskMemFree(path);
+  path = nullptr;
+
+  // If we still do not have the data folder, get the local appdata path.
+  // This will only happen for new users with redirected roaming appdata.
+  if (profilePath.empty())
+  {
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, NULL, &path)))
+      g_charsetConverter.wToUTF8(path, profilePath);
+    CoTaskMemFree(path);
+  }
+
+  return profilePath;
+}
+#endif
 
 std::string CWIN32Util::UncToSmb(const std::string &strPath)
 {
@@ -483,7 +464,7 @@ std::wstring CWIN32Util::ConvertPathToWin32Form(const std::string& pathUtf8)
   {
     std::string formedPath("\\\\?\\UNC"); // start from "\\?\UNC" prefix
     formedPath += URIUtils::CanonicalizePath(URIUtils::FixSlashesAndDups(pathUtf8.substr(7), '\\'), '\\'); // fix duplicated and forward slashes, resolve relative path, don't touch "\\?\UNC" prefix,
-    convertResult = g_charsetConverter.utf8ToW(formedPath, result, false, false, true); 
+    convertResult = g_charsetConverter.utf8ToW(formedPath, result, false, false, true);
   }
   else if (pathUtf8.compare(0, 4, "\\\\?\\", 4) == 0) // pathUtf8 starts from "\\?\", but it's not UNC path
   {
@@ -500,7 +481,7 @@ std::wstring CWIN32Util::ConvertPathToWin32Form(const std::string& pathUtf8)
 
   if (!convertResult)
   {
-    CLog::Log(LOGERROR, "Error converting path \"%s\" to Win32 wide string!", pathUtf8.c_str());
+    CLog::Log(LOGERROR, "Error converting path \"{}\" to Win32 wide string!", pathUtf8);
     return L"";
   }
 
@@ -525,7 +506,7 @@ std::wstring CWIN32Util::ConvertPathToWin32Form(const CURL& url)
   {
     if (url.GetHostName().empty())
       return std::wstring(); // empty string
-    
+
     std::wstring result;
     if (g_charsetConverter.utf8ToW("\\\\?\\UNC\\" +
           URIUtils::CanonicalizePath(URIUtils::FixSlashesAndDups(url.GetHostName() + '\\' + url.GetFileName(), '\\'), '\\'),
@@ -535,7 +516,7 @@ std::wstring CWIN32Util::ConvertPathToWin32Form(const CURL& url)
   else
     return std::wstring(); // unsupported protocol, return empty string
 
-  CLog::Log(LOGERROR, "%s: Error converting path \"%s\" to Win32 form", __FUNCTION__, url.Get().c_str());
+  CLog::LogF(LOGERROR, "Error converting path \"{}\" to Win32 form", url.Get());
   return std::wstring(); // empty string
 }
 
@@ -555,25 +536,28 @@ __time64_t CWIN32Util::fileTimeToTimeT(const LARGE_INTEGER& ftimeli)
   return fileTimeToTimeT(__int64(ftimeli.QuadPart));
 }
 
-
 HRESULT CWIN32Util::ToggleTray(const char cDriveLetter)
 {
+#ifdef TARGET_WINDOWS_STORE
+  CLog::LogF(LOGDEBUG, "s not implemented");
+  return false;
+#else
   using namespace KODI::PLATFORM::WINDOWS;
   BOOL bRet= FALSE;
   DWORD dwReq = 0;
   char cDL = cDriveLetter;
   if( !cDL )
   {
-    std::string dvdDevice = g_mediaManager.TranslateDevicePath("");
+    std::string dvdDevice = CServiceBroker::GetMediaManager().TranslateDevicePath("");
     if(dvdDevice == "")
       return S_FALSE;
     cDL = dvdDevice[0];
   }
 
-  auto strVolFormat = ToW(StringUtils::Format("\\\\.\\%c:", cDL));
+  auto strVolFormat = ToW(StringUtils::Format("\\\\.\\{}:", cDL));
   HANDLE hDrive= CreateFile( strVolFormat.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                              NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  auto strRootFormat = ToW(StringUtils::Format("%c:\\", cDL));
+  auto strRootFormat = ToW(StringUtils::Format("{}:\\", cDL));
   if( ( hDrive != INVALID_HANDLE_VALUE || GetLastError() == NO_ERROR) &&
     ( GetDriveType( strRootFormat.c_str() ) == DRIVE_CDROM ) )
   {
@@ -586,12 +570,13 @@ HRESULT CWIN32Util::ToggleTray(const char cDriveLetter)
   if(dwReq == IOCTL_STORAGE_EJECT_MEDIA && bRet == 1)
   {
     CMediaSource share;
-    share.strPath = StringUtils::Format("%c:", cDL);
+    share.strPath = StringUtils::Format("{}:", cDL);
     share.strName = share.strPath;
-    g_mediaManager.RemoveAutoSource(share);
+    CServiceBroker::GetMediaManager().RemoveAutoSource(share);
   }
   CloseHandle(hDrive);
   return bRet? S_OK : S_FALSE;
+#endif
 }
 
 HRESULT CWIN32Util::EjectTray(const char cDriveLetter)
@@ -599,13 +584,13 @@ HRESULT CWIN32Util::EjectTray(const char cDriveLetter)
   char cDL = cDriveLetter;
   if( !cDL )
   {
-    std::string dvdDevice = g_mediaManager.TranslateDevicePath("");
+    std::string dvdDevice = CServiceBroker::GetMediaManager().TranslateDevicePath("");
     if(dvdDevice.empty())
       return S_FALSE;
     cDL = dvdDevice[0];
   }
 
-  std::string strVolFormat = StringUtils::Format("\\\\.\\%c:", cDL);
+  std::string strVolFormat = StringUtils::Format("\\\\.\\{}:", cDL);
 
   if(GetDriveStatus(strVolFormat, true) != 1)
     return ToggleTray(cDL);
@@ -618,13 +603,13 @@ HRESULT CWIN32Util::CloseTray(const char cDriveLetter)
   char cDL = cDriveLetter;
   if( !cDL )
   {
-    std::string dvdDevice = g_mediaManager.TranslateDevicePath("");
+    std::string dvdDevice = CServiceBroker::GetMediaManager().TranslateDevicePath("");
     if(dvdDevice.empty())
       return S_FALSE;
     cDL = dvdDevice[0];
   }
 
-  std::string strVolFormat = StringUtils::Format( "\\\\.\\%c:", cDL);
+  std::string strVolFormat = StringUtils::Format("\\\\.\\{}:", cDL);
 
   if(GetDriveStatus(strVolFormat, true) == 1)
     return ToggleTray(cDL);
@@ -632,137 +617,12 @@ HRESULT CWIN32Util::CloseTray(const char cDriveLetter)
     return S_OK;
 }
 
-// safe removal of USB drives:
-// http://www.codeproject.com/KB/system/RemoveDriveByLetter.aspx
-// http://www.techtalkz.com/microsoft-device-drivers/250734-remove-usb-device-c-3.html
-
-DEVINST CWIN32Util::GetDrivesDevInstByDiskNumber(long DiskNumber)
-{
-
-  GUID* guid = (GUID*)(void*)&GUID_DEVINTERFACE_DISK;
-
-  // Get device interface info set handle for all devices attached to system
-  HDEVINFO hDevInfo = SetupDiGetClassDevs(guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-
-  if (hDevInfo == INVALID_HANDLE_VALUE)
-    return 0;
-
-  // Retrieve a context structure for a device interface of a device
-  // information set.
-  DWORD dwIndex = 0;
-  SP_DEVICE_INTERFACE_DATA devInterfaceData = {0};
-  devInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
-  BOOL bRet = FALSE;
-
-  PSP_DEVICE_INTERFACE_DETAIL_DATA pspdidd;
-  SP_DEVICE_INTERFACE_DATA spdid;
-  SP_DEVINFO_DATA spdd;
-  DWORD dwSize;
-
-  spdid.cbSize = sizeof(spdid);
-
-  while ( true )
-  {
-    bRet = SetupDiEnumDeviceInterfaces(hDevInfo, NULL, guid, dwIndex, &devInterfaceData);
-    if (!bRet)
-      break;
-
-    SetupDiEnumInterfaceDevice(hDevInfo, NULL, guid, dwIndex, &spdid);
-
-    dwSize = 0;
-    SetupDiGetDeviceInterfaceDetail(hDevInfo, &spdid, NULL, 0, &dwSize, NULL);
-
-    if ( dwSize )
-    {
-      pspdidd = (PSP_DEVICE_INTERFACE_DETAIL_DATA)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dwSize);
-      if ( pspdidd == NULL )
-        continue;
-
-      pspdidd->cbSize = sizeof(*pspdidd);
-      ZeroMemory((PVOID)&spdd, sizeof(spdd));
-      spdd.cbSize = sizeof(spdd);
-
-      long res = SetupDiGetDeviceInterfaceDetail(hDevInfo, &spdid,
-      pspdidd, dwSize, &dwSize, &spdd);
-      if ( res )
-      {
-        HANDLE hDrive = CreateFile(pspdidd->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, NULL, NULL);
-        if ( hDrive != INVALID_HANDLE_VALUE )
-        {
-          STORAGE_DEVICE_NUMBER sdn;
-          DWORD dwBytesReturned = 0;
-          res = DeviceIoControl(hDrive, IOCTL_STORAGE_GET_DEVICE_NUMBER, NULL, 0, &sdn, sizeof(sdn), &dwBytesReturned, NULL);
-          if ( res )
-          {
-            if ( DiskNumber == (long)sdn.DeviceNumber )
-            {
-              CloseHandle(hDrive);
-              SetupDiDestroyDeviceInfoList(hDevInfo);
-              return spdd.DevInst;
-            }
-          }
-          CloseHandle(hDrive);
-        }
-      }
-      HeapFree(GetProcessHeap(), 0, pspdidd);
-    }
-    dwIndex++;
-  }
-  SetupDiDestroyDeviceInfoList(hDevInfo);
-  return 0;
-}
-
-bool CWIN32Util::EjectDrive(const char cDriveLetter)
-{
-  using KODI::PLATFORM::WINDOWS::ToW;
-
-  if( !cDriveLetter )
-    return false;
-
-  auto strVolFormat = ToW(StringUtils::Format("\\\\.\\%c:", cDriveLetter));
-
-  long DiskNumber = -1;
-
-  HANDLE hVolume = CreateFile(strVolFormat.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, NULL, NULL);
-  if (hVolume == INVALID_HANDLE_VALUE)
-    return false;
-
-  STORAGE_DEVICE_NUMBER sdn;
-  DWORD dwBytesReturned = 0;
-  long res = DeviceIoControl(hVolume, IOCTL_STORAGE_GET_DEVICE_NUMBER,NULL, 0, &sdn, sizeof(sdn), &dwBytesReturned, NULL);
-  CloseHandle(hVolume);
-  if ( res )
-    DiskNumber = sdn.DeviceNumber;
-  else
-    return false;
-
-  DEVINST DevInst = GetDrivesDevInstByDiskNumber(DiskNumber);
-
-  if ( DevInst == 0 )
-    return false;
-
-  ULONG Status = 0;
-  ULONG ProblemNumber = 0;
-  PNP_VETO_TYPE VetoType = PNP_VetoTypeUnknown;
-  wchar_t VetoName[MAX_PATH];
-  bool bSuccess = false;
-
-  CM_Get_Parent(&DevInst, DevInst, 0); // disk's parent, e.g. the USB bridge, the SATA controller....
-  CM_Get_DevNode_Status(&Status, &ProblemNumber, DevInst, 0);
-
-  for(int i=0;i<3;i++)
-  {
-    res = CM_Request_Device_Eject(DevInst, &VetoType, VetoName, MAX_PATH, 0);
-    bSuccess = (res==CR_SUCCESS && VetoType==PNP_VetoTypeUnknown);
-   if ( bSuccess )
-    break;
-  }
-
-  return bSuccess;
-}
-
 BOOL CWIN32Util::IsCurrentUserLocalAdministrator()
 {
+#ifdef TARGET_WINDOWS_STORE
+  // UWP apps never run as admin
+  return false;
+#else
   BOOL b;
   SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
   PSID AdministratorsGroup;
@@ -783,119 +643,7 @@ BOOL CWIN32Util::IsCurrentUserLocalAdministrator()
   }
 
   return(b);
-}
-
-void CWIN32Util::GetDrivesByType(VECSOURCES &localDrives, Drive_Types eDriveType, bool bonlywithmedia)
-{
-  WCHAR* pcBuffer= NULL;
-  DWORD dwStrLength= GetLogicalDriveStringsW( 0, pcBuffer );
-  if( dwStrLength != 0 )
-  {
-    CMediaSource share;
-
-    dwStrLength+= 1;
-    pcBuffer= new WCHAR [dwStrLength];
-    GetLogicalDriveStringsW( dwStrLength, pcBuffer );
-
-    int iPos= 0;
-    WCHAR cVolumeName[100];
-    do{
-      int nResult = 0;
-      cVolumeName[0]= L'\0';
-
-      std::wstring strWdrive = pcBuffer + iPos;
-
-      UINT uDriveType= GetDriveTypeW( strWdrive.c_str()  );
-      // don't use GetVolumeInformation on fdd's as the floppy controller may be enabled in Bios but
-      // no floppy HW is attached which causes huge delays.
-      if(strWdrive.size() >= 2 && strWdrive.substr(0,2) != L"A:" && strWdrive.substr(0,2) != L"B:")
-        nResult= GetVolumeInformationW( strWdrive.c_str() , cVolumeName, 100, 0, 0, 0, NULL, 25);
-      if(nResult == 0 && bonlywithmedia)
-      {
-        iPos += (wcslen( pcBuffer + iPos) + 1 );
-        continue;
-      }
-
-      // usb hard drives are reported as DRIVE_FIXED and won't be returned by queries with REMOVABLE_DRIVES set
-      // so test for usb hard drives
-      /*if(uDriveType == DRIVE_FIXED)
-      {
-        if(IsUsbDevice(strWdrive))
-          uDriveType = DRIVE_REMOVABLE;
-      }*/
-
-      share.strPath= share.strName= "";
-
-      bool bUseDCD= false;
-      if( uDriveType > DRIVE_UNKNOWN &&
-        (( eDriveType == ALL_DRIVES && (uDriveType == DRIVE_FIXED || uDriveType == DRIVE_REMOTE || uDriveType == DRIVE_CDROM || uDriveType == DRIVE_REMOVABLE )) ||
-         ( eDriveType == LOCAL_DRIVES && (uDriveType == DRIVE_FIXED || uDriveType == DRIVE_REMOTE)) ||
-         ( eDriveType == REMOVABLE_DRIVES && ( uDriveType == DRIVE_REMOVABLE )) ||
-         ( eDriveType == DVD_DRIVES && ( uDriveType == DRIVE_CDROM ))))
-      {
-        //share.strPath = strWdrive;
-        g_charsetConverter.wToUTF8(strWdrive, share.strPath);
-        if( cVolumeName[0] != L'\0' )
-          g_charsetConverter.wToUTF8(cVolumeName, share.strName);
-        if( uDriveType == DRIVE_CDROM && nResult)
-        {
-          // Has to be the same as auto mounted devices
-          share.strStatus = share.strName;
-          share.strName = share.strPath;
-          share.m_iDriveType= CMediaSource::SOURCE_TYPE_LOCAL;
-          bUseDCD= true;
-        }
-        else
-        {
-          // Lets show it, like Windows explorer do...
-          //! @todo Sorting should depend on driver letter
-          switch(uDriveType)
-          {
-          case DRIVE_CDROM:
-            share.strName = StringUtils::Format( "%s (%s)", share.strPath.c_str(), g_localizeStrings.Get(218).c_str());
-            break;
-          case DRIVE_REMOVABLE:
-            if(share.strName.empty())
-              share.strName = StringUtils::Format( "%s (%s)", g_localizeStrings.Get(437).c_str(), share.strPath.c_str());
-            break;
-          default:
-            if(share.strName.empty())
-              share.strName = share.strPath;
-            else
-              share.strName = StringUtils::Format( "%s (%s)", share.strPath.c_str(), share.strName.c_str());
-            break;
-          }
-        }
-        StringUtils::Replace(share.strName, ":\\", ":");
-        StringUtils::Replace(share.strPath, ":\\", ":");
-        share.m_ignore= true;
-        if( !bUseDCD )
-        {
-          share.m_iDriveType= (
-           ( uDriveType == DRIVE_FIXED  )    ? CMediaSource::SOURCE_TYPE_LOCAL :
-           ( uDriveType == DRIVE_REMOTE )    ? CMediaSource::SOURCE_TYPE_REMOTE :
-           ( uDriveType == DRIVE_CDROM  )    ? CMediaSource::SOURCE_TYPE_DVD :
-           ( uDriveType == DRIVE_REMOVABLE ) ? CMediaSource::SOURCE_TYPE_REMOVABLE :
-             CMediaSource::SOURCE_TYPE_UNKNOWN );
-        }
-
-        AddOrReplace(localDrives, share);
-      }
-      iPos += (wcslen( pcBuffer + iPos) + 1 );
-    } while( wcslen( pcBuffer + iPos ) > 0 );
-    delete[] pcBuffer;
-  }
-}
-
-std::string CWIN32Util::GetFirstOpticalDrive()
-{
-  VECSOURCES vShare;
-  std::string strdevice = "\\\\.\\";
-  CWIN32Util::GetDrivesByType(vShare, DVD_DRIVES);
-  if(!vShare.empty())
-    return strdevice.append(vShare.front().strPath);
-  else
-    return "";
+#endif
 }
 
 extern "C"
@@ -910,78 +658,35 @@ extern "C"
 }
 
 extern "C" {
-  /*
-   * Ported from NetBSD to Windows by Ron Koenderink, 2007
-   */
-
-  /*  $NetBSD: strptime.c,v 1.25 2005/11/29 03:12:00 christos Exp $  */
-
-  /*-
-   * Copyright (c) 1997, 1998, 2005 The NetBSD Foundation, Inc.
-   * All rights reserved.
-   *
-   * This code was contributed to The NetBSD Foundation by Klaus Klein.
-   * Heavily optimised by David Laight
-   *
-   * Redistribution and use in source and binary forms, with or without
-   * modification, are permitted provided that the following conditions
-   * are met:
-   * 1. Redistributions of source code must retain the above copyright
-   *    notice, this list of conditions and the following disclaimer.
-   * 2. Redistributions in binary form must reproduce the above copyright
-   *    notice, this list of conditions and the following disclaimer in the
-   *    documentation and/or other materials provided with the distribution.
-   * 3. All advertising materials mentioning features or use of this software
-   *    must display the following acknowledgement:
-   *        This product includes software developed by the NetBSD
-   *        Foundation, Inc. and its contributors.
-   * 4. Neither the name of The NetBSD Foundation nor the names of its
-   *    contributors may be used to endorse or promote products derived
-   *    from this software without specific prior written permission.
-   *
-   * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
-   * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-   * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-   * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
-   * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-   * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-   * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-   * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-   * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-   * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-   * POSSIBILITY OF SUCH DAMAGE.
-   */
-
-  #if !defined(TARGET_WINDOWS)
-  #include <sys/cdefs.h>
-  #endif
+/*
+ *  Copyright (c) 1997, 1998, 2005 The NetBSD Foundation, Inc.
+ *  All rights reserved.
+ *
+ *  SPDX-License-Identifier: BSD-4-Clause
+ *  See LICENSES/README.md for more information.
+ *
+ *  Ported from NetBSD to Windows by Ron Koenderink, 2007
+ *  $NetBSD: strptime.c,v 1.25 2005/11/29 03:12:00 christos Exp $
+ *
+ *  This code was contributed to The NetBSD Foundation by Klaus Klein.
+ *  Heavily optimised by David Laight
+ */
 
   #if defined(LIBC_SCCS) && !defined(lint)
   __RCSID("$NetBSD: strptime.c,v 1.25 2005/11/29 03:12:00 christos Exp $");
   #endif
 
-  #if !defined(TARGET_WINDOWS)
-  #include "namespace.h"
-  #include <sys/localedef.h>
-  #else
   typedef unsigned char u_char;
   typedef unsigned int uint;
-  #endif
   #include <ctype.h>
   #include <locale.h>
   #include <string.h>
   #include <time.h>
-  #if !defined(TARGET_WINDOWS)
-  #include <tzfile.h>
-  #endif
 
   #ifdef __weak_alias
   __weak_alias(strptime,_strptime)
   #endif
 
-  #if !defined(TARGET_WINDOWS)
-  #define  _ctloc(x)    (_CurrentTimeLocale->x)
-  #else
   #define _ctloc(x)   (x)
   const char *abday[] = {
     "Sun", "Mon", "Tue", "Wed",
@@ -1002,21 +707,24 @@ extern "C" {
   const char *am_pm[] = {
     "AM", "PM"
   };
-  char *d_t_fmt = "%a %Ef %T %Y";
-  char *t_fmt_ampm = "%I:%M:%S %p";
-  char *t_fmt = "%H:%M:%S";
-  char *d_fmt = "%m/%d/%y";
-  #define TM_YEAR_BASE 1900
-  #define __UNCONST(x) ((char *)(((const char *)(x) - (const char *)0) + (char *)0))
+  const char* d_t_fmt = "%a %Ef %T %Y";
+  const char* t_fmt_ampm = "%I:%M:%S %p";
+  const char* t_fmt = "%H:%M:%S";
+  const char* d_fmt = "%m/%d/%y";
+#define TM_YEAR_BASE 1900
+#define __UNCONST(x) ((char*)(((const char*)(x) - (const char*)0) + (char*)0))
 
-  #endif
-  /*
+/*
    * We do not implement alternate representations. However, we always
    * check whether a given modifier is allowed for a certain conversion.
    */
-  #define ALT_E      0x01
-  #define ALT_O      0x02
-  #define  LEGAL_ALT(x)    { if (alt_format & ~(x)) return NULL; }
+#define ALT_E 0x01
+#define ALT_O 0x02
+#define LEGAL_ALT(x) \
+  { \
+    if (alt_format & ~(x)) \
+      return NULL; \
+  }
 
 
   static const u_char *conv_num(const unsigned char *, int *, uint, uint);
@@ -1149,7 +857,7 @@ extern "C" {
 
       case 'k':  /* The hour (24-hour clock representation). */
         LEGAL_ALT(0);
-        /* FALLTHROUGH */
+        [[fallthrough]];
       case 'H':
         bp = conv_num(bp, &tm->tm_hour, 0, 23);
         LEGAL_ALT(ALT_O);
@@ -1157,7 +865,7 @@ extern "C" {
 
       case 'l':  /* The hour (12-hour clock representation). */
         LEGAL_ALT(0);
-        /* FALLTHROUGH */
+        [[fallthrough]];
       case 'I':
         bp = conv_num(bp, &tm->tm_hour, 1, 12);
         if (tm->tm_hour == 12)
@@ -1290,13 +998,14 @@ extern "C" {
       const char * const *n2, int c)
   {
     int i;
-    unsigned int len;
+    size_t len;
 
     /* check full name - then abbreviated ones */
     for (; n1 != NULL; n1 = n2, n2 = NULL) {
       for (i = 0; i < c; i++, n1++) {
         len = strlen(*n1);
-        if (strnicmp(*n1, (const char *)bp, len) == 0) {
+        if (StringUtils::CompareNoCase(*n1, (const char*)bp, len) == 0)
+        {
           *tgt = i;
           return bp + len;
         }
@@ -1308,7 +1017,7 @@ extern "C" {
   }
 }
 
-
+#ifdef TARGET_WINDOWS_DESKTOP
 LONG CWIN32Util::UtilRegGetValue( const HKEY hKey, const char *const pcKey, DWORD *const pdwType, char **const ppcBuffer, DWORD *const pdwSizeBuff, const DWORD dwSizeAdd )
 {
   using KODI::PLATFORM::WINDOWS::ToW;
@@ -1387,6 +1096,7 @@ bool CWIN32Util::GetFocussedProcess(std::string &strProcessFile)
 
   return true;
 }
+#endif
 
 // Adjust the src rectangle so that the dst is always contained in the target rectangle.
 void CWIN32Util::CropSource(CRect& src, CRect& dst, CRect target, UINT rotation /* = 0 */)
@@ -1481,87 +1191,6 @@ void CWIN32Util::CropSource(CRect& src, CRect& dst, CRect target, UINT rotation 
   dst.y2 = ceil(dst.y2);
 }
 
-void CWinIdleTimer::StartZero()
-{
-  if (!g_application.IsDPMSActive())
-    SetThreadExecutionState(ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED);
-  CStopWatch::StartZero();
-}
-
-extern "C"
-{
-  /* case-independent string matching, similar to strstr but
-  * matching */
-  char * strcasestr(const char* haystack, const char* needle)
-  {
-    int i;
-    int nlength = (int) strlen (needle);
-    int hlength = (int) strlen (haystack);
-
-    if (nlength > hlength) return NULL;
-    if (hlength <= 0) return NULL;
-    if (nlength <= 0) return (char *)haystack;
-    /* hlength and nlength > 0, nlength <= hlength */
-    for (i = 0; i <= (hlength - nlength); i++)
-    {
-      if (strncasecmp (haystack + i, needle, nlength) == 0)
-      {
-        return (char *)haystack + i;
-      }
-    }
-    /* substring not found */
-    return NULL;
-  }
-}
-
-// detect if a drive is a usb device
-// code taken from http://banderlogi.blogspot.com/2011/06/enum-drive-letters-attached-for-usb.html
-
-bool CWIN32Util::IsUsbDevice(const std::wstring &strWdrive)
-{
-  if (strWdrive.size() < 2)
-    return false;
-
-  std::wstring strWDevicePath = StringUtils::Format(L"\\\\.\\%s",strWdrive.substr(0, 2).c_str());
-
-  HANDLE deviceHandle = CreateFileW(
-    strWDevicePath.c_str(),
-   0,                // no access to the drive
-   FILE_SHARE_READ | // share mode
-   FILE_SHARE_WRITE,
-   NULL,             // default security attributes
-   OPEN_EXISTING,    // disposition
-   0,                // file attributes
-   NULL);            // do not copy file attributes
-
-  if(deviceHandle == INVALID_HANDLE_VALUE)
-    return false;
-
-  // setup query
-  STORAGE_PROPERTY_QUERY query;
-  memset(&query, 0, sizeof(query));
-  query.PropertyId = StorageDeviceProperty;
-  query.QueryType = PropertyStandardQuery;
-
-  // issue query
-  DWORD bytes;
-  STORAGE_DEVICE_DESCRIPTOR devd;
-  STORAGE_BUS_TYPE busType = BusTypeUnknown;
-
-  if (DeviceIoControl(deviceHandle,
-   IOCTL_STORAGE_QUERY_PROPERTY,
-   &query, sizeof(query),
-   &devd, sizeof(devd),
-   &bytes, NULL))
-  {
-   busType = devd.BusType;
-  }
-
-  CloseHandle(deviceHandle);
-
-  return BusTypeUsb == busType;
- }
-
 std::string CWIN32Util::WUSysMsg(DWORD dwError)
 {
   #define SS_DEFLANGID MAKELANGID(LANG_NEUTRAL,SUBLANG_DEFAULT)
@@ -1569,14 +1198,537 @@ std::string CWIN32Util::WUSysMsg(DWORD dwError)
 
   if ( 0 != ::FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, dwError,
                              SS_DEFLANGID, szBuf, 511, NULL) )
-    return StringUtils::Format("%s (0x%X)", szBuf, dwError);
+    return StringUtils::Format("{} (0x{:X})", szBuf, dwError);
   else
-    return StringUtils::Format("Unknown error (0x%X)", dwError);
+    return StringUtils::Format("Unknown error (0x{:X})", dwError);
 }
 
 bool CWIN32Util::SetThreadLocalLocale(bool enable /* = true */)
 {
   const int param = enable ? _ENABLE_PER_THREAD_LOCALE : _DISABLE_PER_THREAD_LOCALE;
-  return CALL_IN_CRTS(_configthreadlocale, param) != -1;
+  return _configthreadlocale(param) != -1;
 }
 
+HDR_STATUS CWIN32Util::ToggleWindowsHDR()
+{
+  HDR_STATUS status = HDR_STATUS::HDR_TOGGLE_FAILED;
+
+#ifdef TARGET_WINDOWS_STORE
+  auto hdmi = HdmiDisplayInformation::GetForCurrentView();
+
+  if (!hdmi)
+    return status;
+
+  const auto current = hdmi.GetCurrentDisplayMode();
+
+  for (const auto& mode : hdmi.GetSupportedDisplayModes())
+  {
+    if (mode.IsSmpte2084Supported() != current.IsSmpte2084Supported() &&
+        mode.ResolutionHeightInRawPixels() == current.ResolutionHeightInRawPixels() &&
+        mode.ResolutionWidthInRawPixels() == current.ResolutionWidthInRawPixels() &&
+        mode.StereoEnabled() == false &&
+        fabs(mode.RefreshRate() - current.RefreshRate()) <= 0.00001)
+    {
+      if (current.IsSmpte2084Supported()) // HDR is ON
+      {
+        CLog::LogF(LOGINFO, "Toggle Windows HDR Off (ON => OFF).");
+        if (Wait(hdmi.RequestSetCurrentDisplayModeAsync(mode, HdmiDisplayHdrOption::None)))
+          status = HDR_STATUS::HDR_OFF;
+      }
+      else // HDR is OFF
+      {
+        CLog::LogF(LOGINFO, "Toggle Windows HDR On (OFF => ON).");
+        if (Wait(hdmi.RequestSetCurrentDisplayModeAsync(mode, HdmiDisplayHdrOption::Eotf2084)))
+          status = HDR_STATUS::HDR_ON;
+      }
+      break;
+    }
+  }
+#else
+  std::wstring gdiDeviceName{CDisplayUtilsWin32::GetCurrentDisplayName()};
+  if (gdiDeviceName.empty())
+    return HDR_STATUS::HDR_TOGGLE_FAILED;
+
+  // The graphics mode is altered by the Windows HDR status change, save it before
+  DEVMODEW devMode = {};
+  devMode.dmSize = sizeof(devMode);
+
+  if (FALSE == EnumDisplaySettingsW(gdiDeviceName.c_str(), ENUM_CURRENT_SETTINGS, &devMode))
+    return HDR_STATUS::HDR_TOGGLE_FAILED;
+
+  const auto identifier{CDisplayUtilsWin32::GetDisplayTargetId(gdiDeviceName)};
+  if (!identifier)
+    return HDR_STATUS::HDR_TOGGLE_FAILED;
+
+  status = CDisplayUtilsWin32::GetDisplayHDRStatus(identifier.value());
+  if (status == HDR_STATUS::HDR_UNSUPPORTED)
+    return HDR_STATUS::HDR_TOGGLE_FAILED;
+
+  const bool enableHdr{status == HDR_STATUS::HDR_OFF ? true : false};
+  CLog::LogF(LOGINFO, "Set Windows HDR {}.", enableHdr ? "On" : "Off");
+
+  status = CDisplayUtilsWin32::SetDisplayHDRStatus(identifier.value(), enableHdr);
+
+  if (status == HDR_STATUS::HDR_TOGGLE_FAILED)
+  {
+    CLog::LogF(LOGERROR, "Set Windows HDR has failed.");
+  }
+  else if (devMode.dmDisplayFrequency != 0)
+  {
+    // Restores previous graphics mode before toggle HDR
+    devMode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_DISPLAYFLAGS;
+
+    const LONG est =
+        ChangeDisplaySettingsExW(gdiDeviceName.c_str(), &devMode, nullptr, CDS_FULLSCREEN, nullptr);
+
+    if (est == DISP_CHANGE_SUCCESSFUL)
+      CLog::LogF(LOGDEBUG, "Previous graphics mode restored OK");
+    else
+      CLog::LogF(LOGERROR, "Previous graphics mode cannot be restored (error# {})", est);
+  }
+#endif
+
+  return status;
+}
+
+HDR_STATUS CWIN32Util::GetWindowsHDRStatus()
+{
+  HDR_STATUS status = HDR_STATUS::HDR_UNSUPPORTED;
+#ifdef TARGET_WINDOWS_STORE
+
+  bool hdrSupported = false;
+  bool hdrEnabled = false;
+
+  auto displayInformation = DisplayInformation::GetForCurrentView();
+
+  if (displayInformation)
+  {
+    auto advancedColorInfo = displayInformation.GetAdvancedColorInfo();
+
+    if (advancedColorInfo)
+    {
+      if (advancedColorInfo.CurrentAdvancedColorKind() == AdvancedColorKind::HighDynamicRange)
+      {
+        hdrSupported = true;
+        hdrEnabled = true;
+      }
+    }
+  }
+  // Try to find out if the display supports HDR even if Windows HDR switch is OFF
+  if (!hdrEnabled)
+  {
+    auto displayManager = DisplayManager::Create(DisplayManagerOptions::None);
+
+    if (displayManager)
+    {
+      auto targets = displayManager.GetCurrentTargets();
+
+      for (const auto& target : targets)
+      {
+        if (target.IsConnected())
+        {
+          auto displayMonitor = target.TryGetMonitor();
+          if (displayMonitor.MaxLuminanceInNits() >= 400.0f)
+          {
+            hdrSupported = true;
+            break;
+          }
+        }
+      }
+      displayManager.Close();
+    }
+  }
+
+  if (hdrSupported)
+    status = hdrEnabled ? HDR_STATUS::HDR_ON : HDR_STATUS::HDR_OFF;
+
+#else
+
+  if (g_hWnd != NULL)
+  {
+    std::wstring gdiDeviceName{CDisplayUtilsWin32::GetCurrentDisplayName()};
+    if (gdiDeviceName.empty())
+      return status;
+
+    const auto identifier{CDisplayUtilsWin32::GetDisplayTargetId(gdiDeviceName)};
+    if (identifier)
+      status = CDisplayUtilsWin32::GetDisplayHDRStatus(identifier.value());
+  }
+  else
+  {
+    for (const auto& path : CDisplayUtilsWin32::GetDisplayConfigPaths())
+    {
+      const CDisplayUtilsWin32::DisplayConfigId identifier{path.targetInfo.adapterId,
+                                                           path.targetInfo.id};
+      const HDR_STATUS temp{CDisplayUtilsWin32::GetDisplayHDRStatus(identifier)};
+
+      if (temp != HDR_STATUS::HDR_UNSUPPORTED)
+      {
+        status = temp;
+
+        if (temp == HDR_STATUS::HDR_ON)
+          break;
+      }
+    }
+  }
+
+#endif
+
+  if (CServiceBroker::IsServiceManagerUp())
+  {
+    if (status == HDR_STATUS::HDR_UNSUPPORTED)
+      CLog::LogF(LOGDEBUG, "Display is not HDR capable or cannot be detected");
+    else
+      CLog::LogF(LOGDEBUG, "Display is HDR capable and current HDR status is {}",
+                 status == HDR_STATUS::HDR_ON ? "ON" : "OFF");
+  }
+
+  return status;
+}
+
+/*!
+ * \brief Retrieve from the system the max luminance of SDR content in HDR.
+ *
+ * Retrieve from the system the max luminance of SDR content in HDR.
+ * Note: always returns 80 nits when the screen is in SDR mode.
+ *
+ * \param gdiDeviceName The screen to retrieve the information for
+ * \param sdrWhiteLevel Max luminance in nits, clamped to 10000
+ * \return true if a value could be read from the system and copied to sdrWhiteLevel, false otherwise
+*/
+bool CWIN32Util::GetSystemSdrWhiteLevel(const std::wstring& gdiDeviceName, float* sdrWhiteLevel)
+{
+#ifdef TARGET_WINDOWS_STORE
+  auto displayInformation = DisplayInformation::GetForCurrentView();
+
+  if (displayInformation)
+  {
+    auto advancedColorInfo = displayInformation.GetAdvancedColorInfo();
+
+    if (advancedColorInfo)
+    {
+      const float sdrNits = advancedColorInfo.SdrWhiteLevelInNits();
+      if (sdrWhiteLevel)
+      {
+        if (sdrNits > 10000.0f)
+          *sdrWhiteLevel = 10000.0f;
+        else
+          *sdrWhiteLevel = sdrNits;
+      }
+      return true;
+    }
+  }
+  return false;
+#else
+  // DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL was added in Windows 10 1709
+
+  const auto identifier{CDisplayUtilsWin32::GetDisplayTargetId(gdiDeviceName)};
+  if (!identifier)
+    return false;
+
+  DISPLAYCONFIG_SDR_WHITE_LEVEL config{};
+  config.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+  config.header.size = sizeof(config);
+  config.header.adapterId = identifier->adapterId;
+  config.header.id = identifier->id;
+
+  if (DisplayConfigGetDeviceInfo(&config.header) != ERROR_SUCCESS)
+    return false;
+
+  if (sdrWhiteLevel)
+  {
+    const float sdrNits = static_cast<const float>(config.SDRWhiteLevel * 80 / 1000);
+    if (sdrNits > 10000.0f)
+      *sdrWhiteLevel = 10000.0f;
+    else
+      *sdrWhiteLevel = sdrNits;
+  }
+  return true;
+#endif
+}
+
+void CWIN32Util::PlatformSyslog()
+{
+  CLog::Log(LOGINFO, "System has {:.1f} GB of RAM installed",
+            GetSystemMemorySize() / static_cast<double>(MB));
+  CLog::Log(LOGINFO, "{}", GetResInfoString());
+  CLog::Log(LOGINFO, "Running with {} rights",
+            (IsCurrentUserLocalAdministrator() == TRUE) ? "administrator" : "restricted");
+  CLog::Log(LOGINFO, "Aero is {}", (g_sysinfo.IsAeroDisabled() == true) ? "disabled" : "enabled");
+  HDR_STATUS hdrStatus = GetWindowsHDRStatus();
+  if (hdrStatus == HDR_STATUS::HDR_UNSUPPORTED)
+    CLog::Log(LOGINFO, "Display is not HDR capable or cannot be detected");
+  else
+    CLog::Log(LOGINFO, "Display HDR capable is detected and Windows HDR switch is {}",
+              (hdrStatus == HDR_STATUS::HDR_ON) ? "ON" : "OFF");
+}
+
+VideoDriverInfo CWIN32Util::GetVideoDriverInfo(const UINT vendorId, const std::wstring& driverDesc)
+{
+  VideoDriverInfo info = {};
+
+#ifdef TARGET_WINDOWS_DESKTOP
+  HKEY hKey = nullptr;
+  const wchar_t* SUBKEY = L"SYSTEM\\CurrentControlSet\\Control\\Video";
+
+  if (ERROR_SUCCESS != RegOpenKeyExW(HKEY_LOCAL_MACHINE, SUBKEY, 0, KEY_ENUMERATE_SUB_KEYS, &hKey))
+    return {};
+
+  LSTATUS sta = ERROR_SUCCESS;
+  wchar_t keyName[128] = {};
+  DWORD index = 0;
+  DWORD len;
+
+  using KODI::PLATFORM::WINDOWS::FromW;
+
+  do
+  {
+    len = sizeof(keyName) / sizeof(wchar_t);
+    sta = RegEnumKeyExW(hKey, index, keyName, &len, nullptr, nullptr, nullptr, nullptr);
+    index++;
+
+    if (sta != ERROR_SUCCESS)
+      continue;
+
+    std::wstring subkey(SUBKEY);
+    subkey.append(L"\\");
+    subkey.append(keyName);
+    subkey.append(L"\\");
+    subkey.append(L"0000");
+    DWORD lg;
+    wchar_t desc[128] = {};
+    lg = sizeof(desc);
+    if (ERROR_SUCCESS != RegGetValueW(HKEY_LOCAL_MACHINE, subkey.c_str(), L"DriverDesc",
+                                      RRF_RT_REG_SZ, nullptr, desc, &lg))
+      continue;
+
+    std::wstring s_desc(desc);
+    if (s_desc != driverDesc)
+      continue;
+
+    // driver of interest found, we read version
+    wchar_t wversion[64] = {};
+    lg = sizeof(wversion);
+    if (ERROR_SUCCESS != RegGetValueW(HKEY_LOCAL_MACHINE, subkey.c_str(), L"DriverVersion",
+                                      RRF_RT_REG_SZ, nullptr, wversion, &lg))
+      continue;
+
+    const std::string version = FromW(std::wstring(wversion));
+
+    info = FormatVideoDriverInfo(vendorId, version);
+
+  } while (sta == ERROR_SUCCESS && !info.valid);
+
+  RegCloseKey(hKey);
+#endif
+
+  return info;
+}
+
+VideoDriverInfo CWIN32Util::GetVideoDriverInfoDX(const UINT vendorId, LUID adapterLuid)
+{
+  VideoDriverInfo info = {};
+
+#ifdef TARGET_WINDOWS_DESKTOP
+  HKEY hKey = nullptr;
+  const wchar_t* SUBKEY = L"SOFTWARE\\Microsoft\\DirectX";
+
+  if (ERROR_SUCCESS != RegOpenKeyExW(HKEY_LOCAL_MACHINE, SUBKEY, 0, KEY_ENUMERATE_SUB_KEYS, &hKey))
+    return {};
+
+  LSTATUS sta = ERROR_SUCCESS;
+  wchar_t keyName[128] = {};
+  DWORD index = 0;
+  DWORD len;
+
+  using KODI::PLATFORM::WINDOWS::FromW;
+
+  do
+  {
+    len = sizeof(keyName) / sizeof(wchar_t);
+    sta = RegEnumKeyExW(hKey, index, keyName, &len, nullptr, nullptr, nullptr, nullptr);
+    index++;
+
+    if (sta != ERROR_SUCCESS)
+      continue;
+
+    LUID luid = {};
+    DWORD qwordSize = sizeof(luid);
+
+    if (ERROR_SUCCESS !=
+        RegGetValueW(hKey, keyName, L"AdapterLuid", RRF_RT_QWORD, nullptr, &luid, &qwordSize))
+      continue;
+
+    if (luid.HighPart != adapterLuid.HighPart || luid.LowPart != adapterLuid.LowPart)
+      continue;
+
+    // driver of interest found, read the version
+    uint64_t rawDriverVersion{};
+    if (ERROR_SUCCESS != RegGetValueW(hKey, keyName, L"DriverVersion", RRF_RT_QWORD, nullptr,
+                                      &rawDriverVersion, &qwordSize))
+      continue;
+
+    info = FormatVideoDriverInfo(vendorId, rawDriverVersion);
+
+  } while (sta == ERROR_SUCCESS && !info.valid);
+
+  RegCloseKey(hKey);
+#endif
+
+  return info;
+}
+
+VideoDriverInfo CWIN32Util::FormatVideoDriverInfo(const UINT vendorId, uint64_t rawVersion)
+{
+  const unsigned int part1 = static_cast<unsigned int>(rawVersion >> 48);
+  const unsigned int part2 = static_cast<unsigned int>((rawVersion >> 32) & 0xFFFF);
+  const unsigned int part3 = static_cast<unsigned int>((rawVersion >> 16) & 0xFFFF);
+  const unsigned int part4 = static_cast<unsigned int>(rawVersion & 0xFFFF);
+
+  std::ostringstream ss;
+  ss << part1 << '.' << part2 << '.' << part3 << '.' << part4;
+
+  return FormatVideoDriverInfo(vendorId, ss.str());
+}
+
+VideoDriverInfo CWIN32Util::FormatVideoDriverInfo(const UINT vendorId, const std::string& version)
+{
+  VideoDriverInfo info = {};
+
+  info.valid = true;
+  info.vendorId = vendorId;
+  info.version = version;
+
+  // convert driver store version to Nvidia version
+  if (vendorId == PCIV_NVIDIA)
+  {
+    std::string ver(version);
+    StringUtils::Replace(ver, ".", "");
+    info.majorVersion = std::stoi(ver.substr(ver.length() - 5, 3));
+    info.minorVersion = std::stoi(ver.substr(ver.length() - 2, 2));
+  }
+  else // for Intel/AMD fill major version only
+  {
+    info.majorVersion = std::stoi(version.substr(0, version.find('.')));
+  }
+  return info;
+}
+
+std::wstring CWIN32Util::GetDisplayFriendlyName(const std::wstring& gdiDeviceName)
+{
+#ifdef TARGET_WINDOWS_STORE
+  // Not supported
+  return std::wstring();
+#else
+  const auto identifier{CDisplayUtilsWin32::GetDisplayTargetId(gdiDeviceName)};
+  if (!identifier)
+    return {};
+
+  DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+  target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+  target.header.size = sizeof(target);
+  target.header.adapterId = identifier->adapterId;
+  target.header.id = identifier->id;
+
+  if (DisplayConfigGetDeviceInfo(&target.header) != ERROR_SUCCESS)
+    return {};
+
+  return target.monitorFriendlyDeviceName;
+#endif
+}
+
+using SETTHREADDESCRIPTION = HRESULT(WINAPI*)(HANDLE hThread, PCWSTR lpThreadDescription);
+
+bool CWIN32Util::SetThreadName(const HANDLE handle, const std::string& name)
+{
+#if defined(TARGET_WINDOWS_STORE)
+  //not supported
+  return false;
+#else
+  static bool initialized = false;
+  static HINSTANCE hinstLib = NULL;
+  static SETTHREADDESCRIPTION pSetThreadDescription = nullptr;
+
+  if (!initialized)
+  {
+    initialized = true;
+
+    // MS documentation: SetThreadDescription available since Windows 10 1607
+    // function located in Kernel32.dll
+    // except for Windows 10 1607, where it is located in KernelBase.dll
+    CSysInfo::WindowsVersion winver = CSysInfo::GetWindowsVersion();
+
+    if (winver < CSysInfo::WindowsVersion::WindowsVersionWin10_1607)
+      return false;
+    else if (winver == CSysInfo::WindowsVersion::WindowsVersionWin10_1607)
+      hinstLib = LoadLibrary(L"KernelBase.dll");
+    else if (winver > CSysInfo::WindowsVersion::WindowsVersionWin10_1607)
+      hinstLib = LoadLibrary(L"Kernel32.dll");
+
+    if (hinstLib != NULL)
+    {
+      pSetThreadDescription = reinterpret_cast<SETTHREADDESCRIPTION>(
+          ::GetProcAddress(hinstLib, "SetThreadDescription"));
+    }
+
+    if (pSetThreadDescription == nullptr && hinstLib)
+      FreeLibrary(hinstLib);
+  }
+
+  if (pSetThreadDescription != nullptr &&
+      SUCCEEDED(pSetThreadDescription(handle, KODI::PLATFORM::WINDOWS::ToW(name).c_str())))
+    return true;
+  else
+    return false;
+
+#endif
+}
+
+static std::array<int, 4> ParseVideoDriverInfo(const std::string& version)
+{
+  std::array<int, 4> result{};
+
+  // the string is destroyed in the process, make a copy first.
+  std::string v{version};
+
+  char* p = std::strtok(v.data(), ".");
+  for (int idx = 0; p && idx < 4; ++idx)
+  {
+    result[idx] = std::stoi(p);
+    p = std::strtok(NULL, ".");
+  }
+
+  return result;
+}
+
+bool CWIN32Util::IsDriverVersionAtLeast(const std::string& version1, const std::string& version2)
+{
+  const std::array<int, 4> v1 = ParseVideoDriverInfo(version1);
+  const std::array<int, 4> v2 = ParseVideoDriverInfo(version2);
+
+  for (int idx = 0; idx < 4; ++idx)
+  {
+    if (v1[idx] > v2[idx])
+      return true;
+    else if (v1[idx] < v2[idx])
+      return false;
+    // equality: compare the next segment.
+  }
+  return true;
+}
+
+std::string CWIN32Util::FormatHRESULT(HRESULT hr)
+{
+  using namespace KODI::PLATFORM::WINDOWS;
+
+  const std::string code = FromW(DXGetErrorStringW(hr));
+  WCHAR buff[2048];
+  DXGetErrorDescriptionW(hr, buff, 2048);
+
+  // Remove trailing \r\n of system messages
+  size_t buffLength{wcslen(buff)};
+  if ((buffLength) > 2 && buff[buffLength - 2] == L'\r' && buff[buffLength - 1] == L'\n')
+    buff[buffLength - 2] = 0;
+
+  return std::format("0x{:X} {} ({})", static_cast<uint32_t>(hr), code, FromW(buff));
+}

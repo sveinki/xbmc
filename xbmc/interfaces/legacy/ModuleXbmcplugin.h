@@ -1,29 +1,20 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <vector>
+#pragma once
 
-#include "Tuple.h"
 #include "AddonString.h"
 #include "ListItem.h"
+#include "SortFileItem.h"
+#include "Tuple.h"
 #include "swighelper.h"
+
+#include <vector>
 
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
 namespace XBMCAddon
@@ -47,7 +38,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.addDirectoryItem(handle, url, listitem [,isFolder, totalItems]) }
-    ///-------------------------------------------------------------------------
     /// Callback function to pass directory contents back to Kodi.
     ///
     /// @param handle               integer - handle the plugin was started
@@ -85,7 +75,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.addDirectoryItems(handle, items[, totalItems]) }
-    ///-------------------------------------------------------------------------
     /// Callback function to pass directory contents back to Kodi as a list.
     ///
     /// @param handle               integer - handle the plugin was started
@@ -120,7 +109,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.endOfDirectory(handle[, succeeded, updateListing, cacheToDisc]) }
-    ///-------------------------------------------------------------------------
     /// Callback function to tell Kodi that the end of the directory listing in
     /// a virtualPythonFolder module is reached.
     ///
@@ -155,7 +143,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setResolvedUrl(handle, succeeded, listitem) }
-    ///-------------------------------------------------------------------------
     /// Callback function to tell Kodi that the file plugin has been resolved to
     /// a url
     ///
@@ -184,14 +171,14 @@ namespace XBMCAddon
 #ifdef DOXYGEN_SHOULD_USE_THIS
     ///
     /// \ingroup python_xbmcplugin
-    /// @brief \python_func{ xbmcplugin.addSortMethod(handle, sortMethod [,label2Mask]) }
+    /// @brief \python_func{ xbmcplugin.addSortMethod(handle, sortMethod [,labelMask, label2Mask]) }
     ///-------------------------------------------------------------------------
     /// Adds a sorting method for the media list.
     ///
     /// @param handle               integer - handle the plugin was started
     ///                             with.
     /// @param sortMethod           integer - see available sort methods at
-    ///                             the bottom (or see SortFileItem.h).
+    ///                             the bottom (or see \ref List_of_sort_methods "SortUtils").
     /// | Value                                        | Description           |
     /// |----------------------------------------------|-----------------------|
     /// | xbmcplugin.SORT_METHOD_NONE                  | Do not sort
@@ -237,6 +224,17 @@ namespace XBMCAddon
     /// | xbmcplugin.SORT_METHOD_DATE_TAKEN            | Sort by the taken date
     /// | xbmcplugin.SORT_METHOD_VIDEO_USER_RATING     | Sort by the rating of the user of video
     /// | xbmcplugin.SORT_METHOD_SONG_USER_RATING      | Sort by the rating of the user of song
+    /// @param labelMask            [opt] string - the label mask to use for
+    ///                             the first label.
+    /// - applies to:
+    /// | sortMethod                            | labelMask                   |
+    /// |---------------------------------------|-----------------------------|
+    /// | SORT_METHOD_TRACKNUM                  | Defaults to `[%%N. ]%%T`    |
+    /// | SORT_METHOD_EPISODE                   | Defaults to `%%H. %%T`      |
+    /// | SORT_METHOD_PRODUCTIONCODE            | Defaults to `%%H. %%T`      |
+    /// | All other sort methods                | Defaults to `%%T`           |
+    ///
+    ///
     /// @param label2Mask           [opt] string - the label mask to use for
     ///                             the second label.  Defaults to `%%D`
     /// - applies to:
@@ -248,6 +246,7 @@ namespace XBMCAddon
     /// | SORT_METHOD_VIDEO_SORT_TITLE            | SORT_METHOD_FULLPATH        | SORT_METHOD_VIDEO_SORT_TITLE_IGNORE_THE |
     /// | SORT_METHOD_LABEL_IGNORE_FOLDERS        | SORT_METHOD_CHANNEL         |                                         |
     /// @note to add multiple sort methods just call the method multiple times.
+    /// @note see LabelFormatter.cpp for list of available metadata masks
     ///
     ///
     /// ------------------------------------------------------------------------
@@ -255,6 +254,7 @@ namespace XBMCAddon
     /// **SORT_METHOD_DATEADDED**, **SORT_METHOD_FULLPATH**, **SORT_METHOD_LABEL_IGNORE_FOLDERS**,
     /// **SORT_METHOD_LASTPLAYED**, **SORT_METHOD_PLAYCOUNT**, **SORT_METHOD_CHANNEL**.
     /// @python_v17 Added new sort **SORT_METHOD_VIDEO_USER_RATING**.
+    /// @python_v19 Added new option **labelMask**.
     ///
     /// **Example:**
     /// ~~~~~~~~~~~~~{.py}
@@ -265,14 +265,13 @@ namespace XBMCAddon
     ///
     addSortMethod(...);
 #else
-    void addSortMethod(int handle, int sortMethod, const String& label2Mask = emptyString);
+    void addSortMethod(int handle, int sortMethod, const String& labelMask = emptyString, const String& label2Mask = emptyString);
 #endif
 
 #ifdef DOXYGEN_SHOULD_USE_THIS
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.getSetting(handle, id) }
-    ///-------------------------------------------------------------------------
     /// Returns the value of a setting as a string.
     ///
     /// @param handle               integer - handle the plugin was started
@@ -302,7 +301,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setSetting(handle, id, value) }
-    ///-------------------------------------------------------------------------
     /// Sets a plugin setting for the current running plugin.
     ///
     /// @param handle    integer - handle the plugin was started with.
@@ -328,22 +326,22 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setContent(handle, content) }
-    ///-------------------------------------------------------------------------
     /// Sets the plugins content.
     ///
     /// @param handle      integer - handle the plugin was started with.
     /// @param content     string - content type (eg. movies)
     ///
     /// @par Available content strings
-    /// |          |          |          |          |
-    /// |:--------:|:--------:|:--------:|:--------:|
-    /// |  files   |  songs   | artists  | albums
-    /// | movies   | tvshows  | episodes | musicvideos
-    /// | videos   | images   |  games   |
+    /// |          |          |          |             |
+    /// |:--------:|:--------:|:--------:|:-----------:|
+    /// |  files   |  songs   | artists  | albums      |
+    /// | movies   | tvshows  | episodes | musicvideos |
+    /// | videos   | images   |  games   |     --      |
     ///
-    /// @remark Use **videos** for all videos which do not apply to the 
+    /// @remark Use **videos** for all videos which do not apply to the
     /// more specific mentioned ones like "movies", "episodes" etc.
     /// A good example is youtube.
+    ///
     ///
     /// ------------------------------------------------------------------------
     /// @python_v18 Added new **games** content
@@ -364,7 +362,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setPluginCategory(handle, category) }
-    ///-------------------------------------------------------------------------
     /// Sets the plugins name for skins to display.
     ///
     /// @param handle      integer - handle the plugin was started with.
@@ -389,7 +386,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setPluginFanart(handle, image, color1, color2, color3) }
-    ///-------------------------------------------------------------------------
     /// Sets the plugins fanart and color for skins to display.
     ///
     /// @param handle      integer - handle the plugin was started with.
@@ -420,7 +416,6 @@ namespace XBMCAddon
     ///
     /// \ingroup python_xbmcplugin
     /// @brief \python_func{ xbmcplugin.setProperty(handle, key, value) }
-    ///-------------------------------------------------------------------------
     /// Sets a container property for this plugin.
     ///
     /// @param handle      integer - handle the plugin was started with.
@@ -446,49 +441,75 @@ namespace XBMCAddon
 #endif
 
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
-    SWIG_CONSTANT(int,SORT_METHOD_NONE);
-    SWIG_CONSTANT(int,SORT_METHOD_LABEL);
-    SWIG_CONSTANT(int,SORT_METHOD_LABEL_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_DATE);
-    SWIG_CONSTANT(int,SORT_METHOD_SIZE);
-    SWIG_CONSTANT(int,SORT_METHOD_FILE);
-    SWIG_CONSTANT(int,SORT_METHOD_DRIVE_TYPE);
-    SWIG_CONSTANT(int,SORT_METHOD_TRACKNUM);
-    SWIG_CONSTANT(int,SORT_METHOD_DURATION);
-    SWIG_CONSTANT(int,SORT_METHOD_TITLE);
-    SWIG_CONSTANT(int,SORT_METHOD_TITLE_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_ARTIST);
-    SWIG_CONSTANT(int,SORT_METHOD_ARTIST_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_ALBUM);
-    SWIG_CONSTANT(int,SORT_METHOD_ALBUM_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_GENRE);
-    SWIG_CONSTANT2(int,SORT_METHOD_VIDEO_YEAR,SORT_METHOD_YEAR);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_RATING);
-    SWIG_CONSTANT(int,SORT_METHOD_PROGRAM_COUNT);
-    SWIG_CONSTANT(int,SORT_METHOD_PLAYLIST_ORDER);
-    SWIG_CONSTANT(int,SORT_METHOD_EPISODE);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_TITLE);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_SORT_TITLE);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_SORT_TITLE_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_PRODUCTIONCODE);
-    SWIG_CONSTANT(int,SORT_METHOD_SONG_RATING);
-    SWIG_CONSTANT(int,SORT_METHOD_MPAA_RATING);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_RUNTIME);
-    SWIG_CONSTANT(int,SORT_METHOD_STUDIO);
-    SWIG_CONSTANT(int,SORT_METHOD_STUDIO_IGNORE_THE);
-    SWIG_CONSTANT(int,SORT_METHOD_UNSORTED);
-    SWIG_CONSTANT(int,SORT_METHOD_BITRATE);
-    SWIG_CONSTANT(int,SORT_METHOD_LISTENERS);
-    SWIG_CONSTANT(int,SORT_METHOD_COUNTRY);
-    SWIG_CONSTANT(int,SORT_METHOD_DATEADDED);
-    SWIG_CONSTANT(int,SORT_METHOD_FULLPATH);
-    SWIG_CONSTANT(int,SORT_METHOD_LABEL_IGNORE_FOLDERS);
-    SWIG_CONSTANT(int,SORT_METHOD_LASTPLAYED);
-    SWIG_CONSTANT(int,SORT_METHOD_PLAYCOUNT);
-    SWIG_CONSTANT(int,SORT_METHOD_CHANNEL);
-    SWIG_CONSTANT(int,SORT_METHOD_DATE_TAKEN);
-    SWIG_CONSTANT(int,SORT_METHOD_VIDEO_USER_RATING);
-    SWIG_CONSTANT(int,SORT_METHOD_SONG_USER_RATING);
+    SWIG_CONSTANT2(int, SORT_METHOD_NONE, static_cast<int>(SortMethod::NONE));
+    SWIG_CONSTANT2(int, SORT_METHOD_LABEL, static_cast<int>(SortMethod::LABEL));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_LABEL_IGNORE_THE,
+                   static_cast<int>(SortMethod::LABEL_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_DATE, static_cast<int>(SortMethod::DATE));
+    SWIG_CONSTANT2(int, SORT_METHOD_SIZE, static_cast<int>(SortMethod::SIZE));
+    SWIG_CONSTANT2(int, SORT_METHOD_FILE, static_cast<int>(SortMethod::FILE));
+    SWIG_CONSTANT2(int, SORT_METHOD_DRIVE_TYPE, static_cast<int>(SortMethod::DRIVE_TYPE));
+    SWIG_CONSTANT2(int, SORT_METHOD_TRACKNUM, static_cast<int>(SortMethod::TRACKNUM));
+    SWIG_CONSTANT2(int, SORT_METHOD_DURATION, static_cast<int>(SortMethod::DURATION));
+    SWIG_CONSTANT2(int, SORT_METHOD_TITLE, static_cast<int>(SortMethod::TITLE));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_TITLE_IGNORE_THE,
+                   static_cast<int>(SortMethod::TITLE_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_ARTIST, static_cast<int>(SortMethod::ARTIST));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_ARTIST_IGNORE_THE,
+                   static_cast<int>(SortMethod::ARTIST_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_ALBUM, static_cast<int>(SortMethod::ALBUM));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_ALBUM_IGNORE_THE,
+                   static_cast<int>(SortMethod::ALBUM_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_GENRE, static_cast<int>(SortMethod::GENRE));
+    SWIG_CONSTANT2(int, SORT_METHOD_VIDEO_YEAR, static_cast<int>(SortMethod::YEAR));
+    SWIG_CONSTANT2(int, SORT_METHOD_VIDEO_RATING, static_cast<int>(SortMethod::VIDEO_RATING));
+    SWIG_CONSTANT2(int, SORT_METHOD_PROGRAM_COUNT, static_cast<int>(SortMethod::PROGRAM_COUNT));
+    SWIG_CONSTANT2(int, SORT_METHOD_PLAYLIST_ORDER, static_cast<int>(SortMethod::PLAYLIST_ORDER));
+    SWIG_CONSTANT2(int, SORT_METHOD_EPISODE, static_cast<int>(SortMethod::EPISODE));
+    SWIG_CONSTANT2(int, SORT_METHOD_VIDEO_TITLE, static_cast<int>(SortMethod::VIDEO_TITLE));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_VIDEO_SORT_TITLE,
+                   static_cast<int>(SortMethod::VIDEO_SORT_TITLE));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_VIDEO_SORT_TITLE_IGNORE_THE,
+                   static_cast<int>(SortMethod::VIDEO_SORT_TITLE_IGNORE_THE));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_VIDEO_ORIGINAL_TITLE,
+                   static_cast<int>(SortMethod::VIDEO_ORIGINAL_TITLE));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_VIDEO_ORIGINAL_TITLE_IGNORE_THE,
+                   static_cast<int>(SortMethod::VIDEO_ORIGINAL_TITLE_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_PRODUCTIONCODE, static_cast<int>(SortMethod::PRODUCTIONCODE));
+    SWIG_CONSTANT2(int, SORT_METHOD_SONG_RATING, static_cast<int>(SortMethod::SONG_RATING));
+    SWIG_CONSTANT2(int, SORT_METHOD_MPAA_RATING, static_cast<int>(SortMethod::MPAA_RATING));
+    SWIG_CONSTANT2(int, SORT_METHOD_VIDEO_RUNTIME, static_cast<int>(SortMethod::VIDEO_RUNTIME));
+    SWIG_CONSTANT2(int, SORT_METHOD_STUDIO, static_cast<int>(SortMethod::STUDIO));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_STUDIO_IGNORE_THE,
+                   static_cast<int>(SortMethod::STUDIO_IGNORE_THE));
+    SWIG_CONSTANT2(int, SORT_METHOD_UNSORTED, static_cast<int>(SortMethod::UNSORTED));
+    SWIG_CONSTANT2(int, SORT_METHOD_BITRATE, static_cast<int>(SortMethod::BITRATE));
+    SWIG_CONSTANT2(int, SORT_METHOD_LISTENERS, static_cast<int>(SortMethod::LISTENERS));
+    SWIG_CONSTANT2(int, SORT_METHOD_COUNTRY, static_cast<int>(SortMethod::COUNTRY));
+    SWIG_CONSTANT2(int, SORT_METHOD_DATEADDED, static_cast<int>(SortMethod::DATEADDED));
+    SWIG_CONSTANT2(int, SORT_METHOD_FULLPATH, static_cast<int>(SortMethod::FULLPATH));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_LABEL_IGNORE_FOLDERS,
+                   static_cast<int>(SortMethod::LABEL_IGNORE_FOLDERS));
+    SWIG_CONSTANT2(int, SORT_METHOD_LASTPLAYED, static_cast<int>(SortMethod::LASTPLAYED));
+    SWIG_CONSTANT2(int, SORT_METHOD_PLAYCOUNT, static_cast<int>(SortMethod::PLAYCOUNT));
+    SWIG_CONSTANT2(int, SORT_METHOD_CHANNEL, static_cast<int>(SortMethod::CHANNEL));
+    SWIG_CONSTANT2(int, SORT_METHOD_DATE_TAKEN, static_cast<int>(SortMethod::DATE_TAKEN));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_VIDEO_USER_RATING,
+                   static_cast<int>(SortMethod::VIDEO_USER_RATING));
+    SWIG_CONSTANT2(int,
+                   SORT_METHOD_SONG_USER_RATING,
+                   static_cast<int>(SortMethod::SONG_USER_RATING));
   }
 }
 #endif /* DOXYGEN_SHOULD_SKIP_THIS */

@@ -1,28 +1,17 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "AEChannelInfo.h"
+
 #include <algorithm>
+#include <assert.h>
 #include <limits>
 #include <string.h>
-#include <assert.h>
 
 CAEChannelInfo::CAEChannelInfo()
 {
@@ -38,8 +27,6 @@ CAEChannelInfo::CAEChannelInfo(const AEStdChLayout rhs)
 {
   *this = rhs;
 }
-
-CAEChannelInfo::~CAEChannelInfo() = default;
 
 void CAEChannelInfo::ResolveChannels(const CAEChannelInfo& rhs)
 {
@@ -133,8 +120,8 @@ void CAEChannelInfo::ResolveChannels(const CAEChannelInfo& rhs)
 void CAEChannelInfo::Reset()
 {
   m_channelCount = 0;
-  for (unsigned int i = 0; i < AE_CH_MAX; ++i)
-    m_channels[i] = AE_CH_NULL;
+  for (AEChannel& channel : m_channels)
+    channel = AE_CH_NULL;
 }
 
 CAEChannelInfo& CAEChannelInfo::operator=(const CAEChannelInfo& rhs)
@@ -171,19 +158,19 @@ CAEChannelInfo& CAEChannelInfo::operator=(const enum AEStdChLayout rhs)
 {
   assert(rhs > AE_CH_LAYOUT_INVALID && rhs < AE_CH_LAYOUT_MAX);
 
-  static enum AEChannel layouts[AE_CH_LAYOUT_MAX][9] = {
-    {AE_CH_FC, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_LFE, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_LFE, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_BL , AE_CH_BR , AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_BL , AE_CH_BR , AE_CH_LFE, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_BL , AE_CH_BR , AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_LFE,  AE_CH_BL , AE_CH_BR , AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_BL , AE_CH_BR , AE_CH_SL , AE_CH_SR, AE_CH_NULL},
-    {AE_CH_FL, AE_CH_FR, AE_CH_FC , AE_CH_LFE, AE_CH_BL , AE_CH_BR , AE_CH_SL , AE_CH_SR, AE_CH_NULL}
-  };
+  static constexpr enum AEChannel layouts[AE_CH_LAYOUT_MAX][9] = {
+      {AE_CH_FC, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_LFE, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_LFE, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_BL, AE_CH_BR, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_BL, AE_CH_BR, AE_CH_LFE, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_BL, AE_CH_BR, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_LFE, AE_CH_BL, AE_CH_BR, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_BL, AE_CH_BR, AE_CH_SL, AE_CH_SR, AE_CH_NULL},
+      {AE_CH_FL, AE_CH_FR, AE_CH_FC, AE_CH_LFE, AE_CH_BL, AE_CH_BR, AE_CH_SL, AE_CH_SR,
+       AE_CH_NULL}};
 
   *this = layouts[rhs];
   return *this;
@@ -191,7 +178,7 @@ CAEChannelInfo& CAEChannelInfo::operator=(const enum AEStdChLayout rhs)
 
 bool CAEChannelInfo::operator==(const CAEChannelInfo& rhs) const
 {
-  /* if the channel count doesnt match, no need to check further */
+  /* if the channel count doesn't match, no need to check further */
   if (m_channelCount != rhs.m_channelCount)
     return false;
 
@@ -293,7 +280,7 @@ const char* CAEChannelInfo::GetChName(const enum AEChannel ch)
     "TC"  , "TBL", "TBR", "TBC", "BLOC", "BROC",
 
     /* p16v devices */
-    "UNKNOWN1" , "UNKNOWN2" , "UNKNOWN3" , "UNKNOWN4" , 
+    "UNKNOWN1" , "UNKNOWN2" , "UNKNOWN3" , "UNKNOWN4" ,
     "UNKNOWN5" , "UNKNOWN6" , "UNKNOWN7" , "UNKNOWN8" ,
     "UNKNOWN9" , "UNKNOWN10", "UNKNOWN11", "UNKNOWN12",
     "UNKNOWN13", "UNKNOWN14", "UNKNOWN15", "UNKNOWN16",
@@ -301,7 +288,7 @@ const char* CAEChannelInfo::GetChName(const enum AEChannel ch)
     "UNKNOWN21", "UNKNOWN22", "UNKNOWN23", "UNKNOWN24",
     "UNKNOWN25", "UNKNOWN26", "UNKNOWN27", "UNKNOWN28",
     "UNKNOWN29", "UNKNOWN30", "UNKNOWN31", "UNKNOWN32",
-    "UNKNOWN33", "UNKNOWN34", "UNKNOWN35", "UNKNOWN36", 
+    "UNKNOWN33", "UNKNOWN34", "UNKNOWN35", "UNKNOWN36",
     "UNKNOWN37", "UNKNOWN38", "UNKNOWN39", "UNKNOWN40",
     "UNKNOWN41", "UNKNOWN42", "UNKNOWN43", "UNKNOWN44",
     "UNKNOWN45", "UNKNOWN46", "UNKNOWN47", "UNKNOWN48",

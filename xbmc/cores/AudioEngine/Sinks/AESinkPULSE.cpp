@@ -1,31 +1,48 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-#include "system.h"
-#ifdef HAS_PULSEAUDIO
 #include "AESinkPULSE.h"
-#include "utils/log.h"
-#include "Util.h"
-#include "guilib/LocalizeStrings.h"
-#include "Application.h"
-#include "cores/AudioEngine/Engines/ActiveAE/ActiveAE.h"
+
 #include "ServiceBroker.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationVolumeHandling.h"
+#include "cores/AudioEngine/AESinkFactory.h"
+#include "threads/SingleLock.h"
+#include "utils/StringUtils.h"
+#include "utils/log.h"
+
+#include <array>
+#include <memory>
+#include <mutex>
+
+#include <pulse/context.h>
+#include <pulse/introspect.h>
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+
+class CDriverMonitor
+{
+public:
+  CDriverMonitor() = default;
+  virtual ~CDriverMonitor();
+  bool Start(bool allowPipeWireCompatServer);
+  bool IsInitialized();
+
+  CCriticalSection m_sec;
+
+protected:
+  pa_context* m_pContext = nullptr;
+  pa_threaded_mainloop* m_pMainLoop = nullptr;
+  bool m_isInit = false;
+};
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 
 static const char *ContextStateToString(pa_context_state s)
 {
@@ -135,7 +152,11 @@ static pa_encoding AEFormatToPulseEncoding(AEDataFormat format)
   }
 }
 
-static AEDataFormat defaultDataFormats[] = {
+namespace
+{
+
+// clang-format off
+constexpr std::array<AEDataFormat, 6> defaultDataFormats = {
   AE_FMT_U8,
   AE_FMT_S16NE,
   AE_FMT_S24NE3,
@@ -144,7 +165,7 @@ static AEDataFormat defaultDataFormats[] = {
   AE_FMT_FLOAT
 };
 
-static unsigned int defaultSampleRates[] = {
+constexpr std::array<unsigned int, 14> defaultSampleRates = {
   5512,
   8000,
   11025,
@@ -160,12 +181,15 @@ static unsigned int defaultSampleRates[] = {
   192000,
   384000
 };
+// clang-format on
+
+} // namespace
 
 /* Static callback functions */
 
 static void ContextStateCallback(pa_context *c, void *userdata)
 {
-  pa_threaded_mainloop *m = (pa_threaded_mainloop *)userdata;
+  pa_threaded_mainloop* m = static_cast<pa_threaded_mainloop*>(userdata);
   switch (pa_context_get_state(c))
   {
     case PA_CONTEXT_READY:
@@ -182,7 +206,7 @@ static void ContextStateCallback(pa_context *c, void *userdata)
 
 static void StreamStateCallback(pa_stream *s, void *userdata)
 {
-  pa_threaded_mainloop *m = (pa_threaded_mainloop *)userdata;
+  pa_threaded_mainloop* m = static_cast<pa_threaded_mainloop*>(userdata);
   switch (pa_stream_get_state(s))
   {
     case PA_STREAM_UNCONNECTED:
@@ -197,20 +221,27 @@ static void StreamStateCallback(pa_stream *s, void *userdata)
 
 static void StreamRequestCallback(pa_stream *s, size_t length, void *userdata)
 {
-  pa_threaded_mainloop *m = (pa_threaded_mainloop *)userdata;
+  CAESinkPULSE* p = static_cast<CAESinkPULSE*>(userdata);
+  if (!p)
+    return;
+
+  pa_threaded_mainloop* m = p->GetInternalMainLoop();
+  // pulse always tells us the total number of bytes
+  // we can add.
+  p->m_requestedBytes = static_cast<int>(length);
   pa_threaded_mainloop_signal(m, 0);
 }
 
 static void StreamLatencyUpdateCallback(pa_stream *s, void *userdata)
 {
-  pa_threaded_mainloop *m = (pa_threaded_mainloop *)userdata;
+  pa_threaded_mainloop* m = static_cast<pa_threaded_mainloop*>(userdata);
   pa_threaded_mainloop_signal(m, 0);
 }
 
 
 static void SinkInputInfoCallback(pa_context *c, const pa_sink_input_info *i, int eol, void *userdata)
 {
-  CAESinkPULSE *p = (CAESinkPULSE*) userdata;
+  CAESinkPULSE *p = static_cast<CAESinkPULSE*>(userdata);
   if (!p || !p->IsInitialized())
     return;
 
@@ -218,81 +249,149 @@ static void SinkInputInfoCallback(pa_context *c, const pa_sink_input_info *i, in
     p->UpdateInternalVolume(&(i->volume));
 }
 
-static void SinkInputInfoChangedCallback(pa_context *c, pa_subscription_event_type_t t, uint32_t idx, void *userdata)
+static void SinkCallback(pa_context* c,
+                         pa_subscription_event_type_t t,
+                         uint32_t idx,
+                         void* userdata)
 {
-  CAESinkPULSE* p = (CAESinkPULSE*) userdata;
-  if (!p || !p->IsInitialized())
+  CDriverMonitor* p = static_cast<CDriverMonitor*>(userdata);
+  if (!p)
     return;
 
-   if (idx != pa_stream_get_index(p->GetInternalStream()))
-     return;
-
-   pa_operation* op = pa_context_get_sink_input_info(c, idx, SinkInputInfoCallback, p);
-   if (op == NULL)
-     CLog::Log(LOGERROR, "PulseAudio: Failed to sync volume");
-   else
-    pa_operation_unref(op);
+  std::unique_lock lock(p->m_sec);
+  if (p->IsInitialized())
+  {
+    if ((t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) == PA_SUBSCRIPTION_EVENT_SINK)
+    {
+      if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_NEW)
+      {
+        CLog::Log(LOGDEBUG, "Sink appeared");
+        CServiceBroker::GetActiveAE()->DeviceCountChange("PULSE");
+      }
+      else if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+      {
+        CLog::Log(LOGDEBUG, "Sink removed");
+        CServiceBroker::GetActiveAE()->DeviceCountChange("PULSE");
+      }
+      else if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_CHANGE)
+      {
+        CLog::Log(LOGDEBUG, "Sink changed");
+      }
+    }
+    else
+    {
+      CLog::Log(LOGDEBUG, "Not subscribed to Event: {}", static_cast<int>(t));
+    }
+  }
 }
 
 static void SinkChangedCallback(pa_context *c, pa_subscription_event_type_t t, uint32_t idx, void *userdata)
 {
-  CAESinkPULSE* p = (CAESinkPULSE*) userdata;
+  CAESinkPULSE* p = static_cast<CAESinkPULSE*>(userdata);
   if(!p)
     return;
 
-  CSingleLock lock(p->m_sec);
+  std::unique_lock lock(p->m_sec);
   if (p->IsInitialized())
   {
-    if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_NEW)
+    if ((t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) == PA_SUBSCRIPTION_EVENT_SINK_INPUT)
     {
-       CLog::Log(LOGDEBUG, "Sink appeared");
-       CServiceBroker::GetActiveAE().DeviceChange();
+      // when we get a sink input event volume might have changed
+      if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_CHANGE)
+      {
+        if (idx != pa_stream_get_index(p->GetInternalStream()))
+          return;
+
+        // we need to leave the lock as we trigger a second callback
+        CSingleExit exitlock(p->m_sec);
+        pa_operation* op = pa_context_get_sink_input_info(c, idx, SinkInputInfoCallback, p);
+        if (op == NULL)
+          CLog::Log(LOGERROR, "PulseAudio: Failed to sync volume");
+        else
+          pa_operation_unref(op);
+      }
     }
-    else if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE)
+    else
     {
-      CLog::Log(LOGDEBUG, "Sink removed");
-      CServiceBroker::GetActiveAE().DeviceChange();
-    }
-    else if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_CHANGE)
-    {
-      CLog::Log(LOGDEBUG, "Sink changed");
+      CLog::Log(LOGDEBUG, "Not subscribed to Event: {}", static_cast<int>(t));
     }
   }
+}
+
+struct ServerInfoStruct
+{
+  pa_threaded_mainloop* m_mainloop;
+  bool m_isInfoSet{false};
+  std::string m_serverName;
+};
+
+static void ServerInfoCallback(pa_context* c, const pa_server_info* i, void* userdata)
+{
+  auto serverInfo = reinterpret_cast<ServerInfoStruct*>(userdata);
+  serverInfo->m_serverName = i->server_name;
+  serverInfo->m_isInfoSet = true;
+  pa_threaded_mainloop_signal(serverInfo->m_mainloop, 0);
 }
 
 struct SinkInfoStruct
 {
   AEDeviceInfoList *list;
   bool isHWDevice;
+  bool isNWDevice;
+  bool isBTDevice;
   bool device_found;
   pa_threaded_mainloop *mainloop;
   int samplerate;
   pa_channel_map map;
   SinkInfoStruct()
   {
-    list = NULL;
+    list = nullptr;
     isHWDevice = false;
+    isNWDevice = false;
+    isBTDevice = false;
     device_found = true;
-    mainloop = NULL;
+    mainloop = NULL; //called into C
     samplerate = 0;
     pa_channel_map_init(&map);
   }
 };
 
+struct ModuleInfoStruct
+{
+  pa_threaded_mainloop *mainloop;
+  bool hasAllowPT;
+  ModuleInfoStruct()
+  {
+    mainloop = NULL; //called into C
+    hasAllowPT = false;
+  }
+};
+
 static void SinkInfoCallback(pa_context *c, const pa_sink_info *i, int eol, void *userdata)
 {
-  SinkInfoStruct *sinkStruct = (SinkInfoStruct *)userdata;
+  SinkInfoStruct *sinkStruct = static_cast<SinkInfoStruct*>(userdata);
   if (!sinkStruct)
     return;
 
   if(i)
   {
-    if (i->flags && (i->flags & PA_SINK_HARDWARE))
-      sinkStruct->isHWDevice = true;
+    if (i->flags)
+    {
+      if (i->flags & PA_SINK_HARDWARE)
+        sinkStruct->isHWDevice = true;
 
-    sinkStruct->samplerate = i->sample_spec.rate;
-    sinkStruct->device_found = true;
-    sinkStruct->map = i->channel_map;
+      if (i->flags & PA_SINK_NETWORK)
+        sinkStruct->isNWDevice = true;
+
+      sinkStruct->isBTDevice =
+          StringUtils::EndsWithNoCase(std::string(i->name), std::string("a2dp_sink"));
+      if (sinkStruct->isBTDevice)
+        CLog::Log(LOGINFO, "Found BT Device - will adjust buffers to larger values");
+
+      sinkStruct->samplerate = i->sample_spec.rate;
+      sinkStruct->device_found = true;
+      sinkStruct->map = i->channel_map;
+    }
   }
   pa_threaded_mainloop_signal(sinkStruct->mainloop, 0);
 }
@@ -384,10 +483,24 @@ static CAEChannelInfo PAChannelToAEChannelMap(const pa_channel_map& channels)
   return info;
 }
 
+static void ModuleInfoCallback(pa_context* c, const pa_module_info *i, int eol, void *userdata)
+{
+  ModuleInfoStruct *mis = static_cast<ModuleInfoStruct*>(userdata);
+  if (!mis)
+    return;
+
+  if (i)
+  {
+    if (strcmp(i->name, "module-allow-passthrough") == 0)
+      mis->hasAllowPT = true;
+  }
+  pa_threaded_mainloop_signal(mis->mainloop, 0);
+}
+
 static void SinkInfoRequestCallback(pa_context *c, const pa_sink_info *i, int eol, void *userdata)
 {
 
-  SinkInfoStruct *sinkStruct = (SinkInfoStruct *)userdata;
+  SinkInfoStruct *sinkStruct = static_cast<SinkInfoStruct*>(userdata);
   if (!sinkStruct)
     return;
 
@@ -398,9 +511,10 @@ static void SinkInfoRequestCallback(pa_context *c, const pa_sink_info *i, int eo
     defaultDevice.m_deviceName = std::string("Default");
     defaultDevice.m_displayName = std::string("Default");
     defaultDevice.m_displayNameExtra = std::string("Default Output Device (PULSEAUDIO)");
-    defaultDevice.m_dataFormats.insert(defaultDevice.m_dataFormats.end(), defaultDataFormats, defaultDataFormats + ARRAY_SIZE(defaultDataFormats));
+    defaultDevice.m_dataFormats.insert(defaultDevice.m_dataFormats.end(),
+                                       defaultDataFormats.begin(), defaultDataFormats.end());
     defaultDevice.m_channels = CAEChannelInfo(AE_CH_LAYOUT_2_0);
-    defaultDevice.m_sampleRates.assign(defaultSampleRates, defaultSampleRates + ARRAY_SIZE(defaultSampleRates));
+    defaultDevice.m_sampleRates.assign(defaultSampleRates.begin(), defaultSampleRates.end());
     defaultDevice.m_deviceType = AE_DEVTYPE_PCM;
     defaultDevice.m_wantsIECPassthrough = true;
     sinkStruct->list->push_back(defaultDevice);
@@ -423,7 +537,7 @@ static void SinkInfoRequestCallback(pa_context *c, const pa_sink_info *i, int eo
     if(device.m_channels.Count() == 0)
       valid = false;
 
-    device.m_sampleRates.assign(defaultSampleRates, defaultSampleRates + ARRAY_SIZE(defaultSampleRates));
+    device.m_sampleRates.assign(defaultSampleRates.begin(), defaultSampleRates.end());
 
     for (unsigned int j = 0; j < i->n_formats; j++)
     {
@@ -445,7 +559,8 @@ static void SinkInfoRequestCallback(pa_context *c, const pa_sink_info *i, int eo
           device_type = AE_DEVTYPE_IEC958;
           break;
         case PA_ENCODING_PCM:
-          device.m_dataFormats.insert(device.m_dataFormats.end(), defaultDataFormats, defaultDataFormats + ARRAY_SIZE(defaultDataFormats));
+          device.m_dataFormats.insert(device.m_dataFormats.end(), defaultDataFormats.begin(),
+                                      defaultDataFormats.end());
           break;
         default:
           break;
@@ -464,20 +579,200 @@ static void SinkInfoRequestCallback(pa_context *c, const pa_sink_info *i, int eo
 
     if(valid)
     {
-      CLog::Log(LOGDEBUG, "PulseAudio: Found %s with devicestring %s", device.m_displayName.c_str(), device.m_deviceName.c_str());
+      CLog::Log(LOGDEBUG, "PulseAudio: Found {} with devicestring {}", device.m_displayName,
+                device.m_deviceName);
       sinkStruct->list->push_back(device);
     }
     else
     {
-      CLog::Log(LOGDEBUG, "PulseAudio: Skipped %s with devicestring %s", device.m_displayName.c_str(), device.m_deviceName.c_str());
+      CLog::Log(LOGDEBUG, "PulseAudio: Skipped {} with devicestring {}", device.m_displayName,
+                device.m_deviceName);
     }
   }
   pa_threaded_mainloop_signal(sinkStruct->mainloop, 0);
 }
 
+static bool SetupContext(const char* host,
+                         const char* appname,
+                         pa_context** context,
+                         pa_threaded_mainloop** mainloop)
+{
+  if ((*mainloop = pa_threaded_mainloop_new()) == nullptr)
+  {
+    CLog::Log(LOGERROR, "PulseAudio: Failed to allocate main loop");
+    return false;
+  }
+
+  if (((*context) = pa_context_new(pa_threaded_mainloop_get_api(*mainloop), appname)) == nullptr)
+  {
+    CLog::Log(LOGERROR, "PulseAudio: Failed to allocate context");
+    return false;
+  }
+
+  pa_context_set_state_callback(*context, ContextStateCallback, *mainloop);
+
+  if (pa_context_connect(*context, host, (pa_context_flags_t)0, nullptr) < 0)
+  {
+    CLog::Log(LOGERROR, "PulseAudio: Failed to connect context");
+    return false;
+  }
+  pa_threaded_mainloop_lock(*mainloop);
+
+  if (pa_threaded_mainloop_start(*mainloop) < 0)
+  {
+    CLog::Log(LOGERROR, "PulseAudio: Failed to start MainLoop");
+    pa_threaded_mainloop_unlock(*mainloop);
+    return false;
+  }
+
+  /* Wait until the context is ready */
+  do
+  {
+    pa_threaded_mainloop_wait(*mainloop);
+    CLog::Log(LOGDEBUG, "PulseAudio: Context {}",
+              ContextStateToString(pa_context_get_state(*context)));
+  } while (pa_context_get_state(*context) != PA_CONTEXT_READY &&
+           pa_context_get_state(*context) != PA_CONTEXT_FAILED);
+
+  if (pa_context_get_state(*context) == PA_CONTEXT_FAILED)
+  {
+    CLog::Log(LOGERROR, "PulseAudio: Waited for the Context but it failed");
+    pa_threaded_mainloop_unlock(*mainloop);
+    return false;
+  }
+
+  pa_threaded_mainloop_unlock(*mainloop);
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+
+CDriverMonitor::~CDriverMonitor()
+{
+  m_isInit = false;
+
+  if (m_pMainLoop)
+    pa_threaded_mainloop_stop(m_pMainLoop);
+
+  if (m_pContext)
+  {
+    pa_context_disconnect(m_pContext);
+    pa_context_unref(m_pContext);
+    m_pContext = nullptr;
+  }
+
+  if (m_pMainLoop)
+  {
+    pa_threaded_mainloop_free(m_pMainLoop);
+    m_pMainLoop = nullptr;
+  }
+}
+
+bool CDriverMonitor::IsInitialized()
+{
+  return m_isInit;
+}
+
+bool CDriverMonitor::Start(bool allowPipeWireCompatServer)
+{
+  if (!SetupContext(nullptr, "KodiDriver", &m_pContext, &m_pMainLoop))
+  {
+    CLog::Log(LOGINFO, "PulseAudio might not be running. Context was not created.");
+    return false;
+  }
+
+  pa_threaded_mainloop_lock(m_pMainLoop);
+
+  ServerInfoStruct serverInfo;
+  serverInfo.m_mainloop = m_pMainLoop;
+  pa_context_get_server_info(m_pContext, ServerInfoCallback, &serverInfo);
+  while (!serverInfo.m_isInfoSet)
+    pa_threaded_mainloop_wait(m_pMainLoop);
+
+  CLog::Log(LOGINFO, "PulseAudio: Server name: {}", serverInfo.m_serverName);
+
+#ifdef HAS_PIPEWIRE
+  // If Kodi is build with PipeWire support we prefer native PipeWire over the
+  // PulseAudio compatibility layer IF NOT PulseAudio is explicitly selected
+  if (!allowPipeWireCompatServer)
+  {
+    // Check the PulseAudio server name. If it contains PipeWire in any form
+    // it is the compatibility layer provided by PipeWire
+    if (StringUtils::Contains(serverInfo.m_serverName, "pipewire", true))
+    {
+      CLog::Log(LOGINFO, "PulseAudio: Server is PipeWire, bail and use native PipeWire interface");
+      pa_threaded_mainloop_unlock(m_pMainLoop);
+      return false;
+    }
+  }
+#endif
+
+  m_isInit = true;
+
+  std::unique_lock lock(m_sec);
+  // Register Callback for Sink changes
+  pa_context_set_subscribe_callback(m_pContext, SinkCallback, this);
+  const pa_subscription_mask_t mask = pa_subscription_mask_t(PA_SUBSCRIPTION_MASK_SINK);
+  pa_operation* op = pa_context_subscribe(m_pContext, mask, nullptr, this);
+  if (op != nullptr)
+    pa_operation_unref(op);
+
+  pa_threaded_mainloop_unlock(m_pMainLoop);
+
+  return true;
+}
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+
 /* PulseAudio class memberfunctions*/
 
+std::unique_ptr<CDriverMonitor> CAESinkPULSE::m_pMonitor;
 
+bool CAESinkPULSE::Register(bool allowPipeWireCompatServer)
+{
+  // check if pulseaudio is actually available
+  pa_simple *s;
+  pa_sample_spec ss;
+  ss.format = PA_SAMPLE_S16NE;
+  ss.channels = 2;
+  ss.rate = 48000;
+  s = pa_simple_new(NULL, "Kodi-Tester", PA_STREAM_PLAYBACK, NULL, "Test", &ss, NULL, NULL, NULL);
+  if (!s)
+  {
+    CLog::Log(LOGINFO, "PulseAudio: Server not running");
+    return false;
+  }
+  else
+  {
+    CLog::Log(LOGINFO, "PulseAudio: Server found running - will try to use Pulse");
+    pa_simple_free(s);
+  }
+
+  m_pMonitor = std::make_unique<CDriverMonitor>();
+  if (!m_pMonitor->Start(allowPipeWireCompatServer))
+  {
+    m_pMonitor.reset();
+    return false;
+  }
+
+  AE::AESinkRegEntry entry;
+  entry.sinkName = "PULSE";
+  entry.createFunc = CAESinkPULSE::Create;
+  entry.enumerateFunc = CAESinkPULSE::EnumerateDevicesEx;
+  entry.cleanupFunc = CAESinkPULSE::Cleanup;
+  AE::CAESinkFactory::RegisterSink(entry);
+  return true;
+}
+
+std::unique_ptr<IAESink> CAESinkPULSE::Create(std::string& device, AEAudioFormat& desiredFormat)
+{
+  auto sink = std::make_unique<CAESinkPULSE>();
+  if (sink->Initialize(desiredFormat, device))
+    return sink;
+
+  return {};
+}
 CAESinkPULSE::CAESinkPULSE()
 {
   m_IsAllocated = false;
@@ -486,6 +781,7 @@ CAESinkPULSE::CAESinkPULSE()
   m_BytesPerSecond = 0;
   m_BufferSize = 0;
   m_Channels = 0;
+  m_maxLatency = 0.0;
   m_Stream = NULL;
   m_Context = NULL;
   m_IsStreamPaused = false;
@@ -502,20 +798,21 @@ CAESinkPULSE::~CAESinkPULSE()
 bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
 {
   {
-    CSingleLock lock(m_sec);
+    std::unique_lock lock(m_sec);
     m_IsAllocated = false;
   }
   m_passthrough = false;
   m_BytesPerSecond = 0;
   m_BufferSize = 0;
   m_Channels = 0;
+  m_maxLatency = 0.0;
   m_Stream = NULL;
   m_Context = NULL;
   m_periodSize = 0;
 
-  if (!SetupContext(NULL, &m_Context, &m_MainLoop))
+  if (!SetupContext(NULL, "KodiSink", &m_Context, &m_MainLoop))
   {
-    CLog::Log(LOGNOTICE, "PulseAudio might not be running. Context was not created.");
+    CLog::Log(LOGINFO, "PulseAudio might not be running. Context was not created.");
     Deinitialize();
     return false;
   }
@@ -539,7 +836,8 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
 
    if (pa_fmt == PA_SAMPLE_INVALID)
    {
-     CLog::Log(LOGDEBUG, "PULSE does not support format: %s - will fallback to AE_FMT_FLOAT", CAEUtil::DataFormatToStr(format.m_dataFormat));
+     CLog::Log(LOGDEBUG, "PULSE does not support format: {} - will fallback to AE_FMT_FLOAT",
+               CAEUtil::DataFormatToStr(format.m_dataFormat));
      format.m_dataFormat = AE_FMT_FLOAT;
      pa_fmt = PA_SAMPLE_FLOAT32;
      m_passthrough = false;
@@ -550,18 +848,19 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   sinkStruct.device_found = false;
 
   // get real sample rate of the device we want to open - to avoid resampling
-  bool isDefaultDevice = (device == "Default");
+  bool isDefaultDevice = false;
+  if(StringUtils::EndsWithNoCase(device, std::string("default")))
+    isDefaultDevice = true;
+
   WaitForOperation(pa_context_get_sink_info_by_name(m_Context, isDefaultDevice ? NULL : device.c_str(), SinkInfoCallback, &sinkStruct), m_MainLoop, "Get Sink Info");
   // only check if the device is existing - don't alter the sample rate
   if (!sinkStruct.device_found)
   {
-    CLog::Log(LOGERROR, "PulseAudio: Sink %s not found", device.c_str());
+    CLog::Log(LOGERROR, "PulseAudio: Sink {} not found", device);
     pa_threaded_mainloop_unlock(m_MainLoop);
     Deinitialize();
     return false;
   }
-
-  bool use_pa_mixing = false;
 
   if(m_passthrough)
   {
@@ -570,33 +869,13 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   }
   else
   {
-    // as we mix for PA now to avoid default upmixing, we need to care for
-    // channel resolving
-    CAEChannelInfo target_layout = format.m_channelLayout;
-    CAEChannelInfo available_layout = PAChannelToAEChannelMap(sinkStruct.map);
-    target_layout.ResolveChannels(available_layout);
-
-    // if we cannot map all requested channels - tell PA to mix for us
-    if (target_layout.Count() != format.m_channelLayout.Count())
-    {
-      use_pa_mixing = true;
-      map = AEChannelMapToPAChannel(format.m_channelLayout);
-    }
-    else
-    {
-      // use our layout to update AE
-      map = AEChannelMapToPAChannel(target_layout);
-    }
+    map = AEChannelMapToPAChannel(format.m_channelLayout);
     format.m_channelLayout = PAChannelToAEChannelMap(map);
   }
   m_Channels = format.m_channelLayout.Count();
 
-  // Pulse can resample everything between 1 hz and 192000 hz / 384000 hz (starting with 9.0)
-  // Make sure we are in the range that we originally added
-  unsigned int max_pulse_sample_rate = 192000U;
-#if PA_CHECK_VERSION(9,0,0)
-  max_pulse_sample_rate = 384000U;
-#endif
+  // Pulse can resample everything between 5 khz and 384 khz (since 9.0)
+  unsigned int max_pulse_sample_rate = 384000U;
   format.m_sampleRate = std::max(5512U, std::min(format.m_sampleRate, max_pulse_sample_rate));
 
   pa_format_info *info[1];
@@ -667,14 +946,14 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   }
 
   pa_stream_set_state_callback(m_Stream, StreamStateCallback, m_MainLoop);
-  pa_stream_set_write_callback(m_Stream, StreamRequestCallback, m_MainLoop);
+  pa_stream_set_write_callback(m_Stream, StreamRequestCallback, this);
   pa_stream_set_latency_update_callback(m_Stream, StreamLatencyUpdateCallback, m_MainLoop);
 
   // default buffer construction
   // align with AE's max buffer
   unsigned int latency = m_BytesPerSecond / 2.5; // 400 ms
   unsigned int process_time = latency / 4; // 100 ms
-  if(sinkStruct.isHWDevice)
+  if (sinkStruct.isHWDevice && !sinkStruct.isNWDevice && !sinkStruct.isBTDevice)
   {
     // on hw devices buffers can be further reduced
     // 200ms max latency
@@ -691,12 +970,6 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   buffer_attr.tlength = latency;
   int flags = (PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_ADJUST_LATENCY);
 
-  // by default PA will upmix / remix everything when multi channel layout is configured
-  // if we have enough channels in the target layout ask PA not to remix to related channels
-  // 1:1 remapping is allowed though
-  if (!m_passthrough && !use_pa_mixing)
-    flags |= PA_STREAM_NO_REMIX_CHANNELS;
-
   if (m_passthrough)
     flags |= PA_STREAM_PASSTHROUGH;
 
@@ -712,7 +985,8 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   do
   {
     pa_threaded_mainloop_wait(m_MainLoop);
-    CLog::Log(LOGDEBUG, "PulseAudio: Stream %s", StreamStateToString(pa_stream_get_state(m_Stream)));
+    CLog::Log(LOGDEBUG, "PulseAudio: Stream {}",
+              StreamStateToString(pa_stream_get_state(m_Stream)));
   }
   while (pa_stream_get_state(m_Stream) != PA_STREAM_READY && pa_stream_get_state(m_Stream) != PA_STREAM_FAILED);
 
@@ -728,7 +1002,7 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
 
   if (!(a = pa_stream_get_buffer_attr(m_Stream)))
   {
-    CLog::Log(LOGERROR, "PulseAudio: %s", pa_strerror(pa_context_errno(m_Context)));
+    CLog::Log(LOGERROR, "PulseAudio: {}", pa_strerror(pa_context_errno(m_Context)));
     pa_threaded_mainloop_unlock(m_MainLoop);
     Deinitialize();
     return false;
@@ -740,23 +1014,17 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
     m_periodSize = a->minreq;
 
     format.m_frames = packetSize / frameSize;
+    m_maxLatency = static_cast<double>(m_BufferSize) / m_BytesPerSecond;
   }
 
   {
-    CSingleLock lock(m_sec);
+    std::unique_lock lock(m_sec);
     // Register Callback for Sink changes
     pa_context_set_subscribe_callback(m_Context, SinkChangedCallback, this);
-    const pa_subscription_mask_t mask = PA_SUBSCRIPTION_MASK_SINK;
+    const pa_subscription_mask_t mask = pa_subscription_mask_t(PA_SUBSCRIPTION_MASK_SINK_INPUT);
     pa_operation *op = pa_context_subscribe(m_Context, mask, NULL, this);
     if (op != NULL)
       pa_operation_unref(op);
-
-    // Register Callback for Sink Info changes - this handles volume
-    pa_context_set_subscribe_callback(m_Context, SinkInputInfoChangedCallback, this);
-    const pa_subscription_mask_t mask_input = PA_SUBSCRIPTION_MASK_SINK_INPUT;
-    pa_operation* op_sinfo = pa_context_subscribe(m_Context, mask_input, NULL, this);
-    if (op_sinfo != NULL)
-      pa_operation_unref(op_sinfo);
   }
 
   pa_threaded_mainloop_unlock(m_MainLoop);
@@ -765,29 +1033,37 @@ bool CAESinkPULSE::Initialize(AEAudioFormat &format, std::string &device)
   m_format = format;
   format.m_dataFormat = m_passthrough ? AE_FMT_S16NE : format.m_dataFormat;
 
-  CLog::Log(LOGNOTICE, "PulseAudio: Opened device %s in %s mode with Buffersize %u ms",
-                      device.c_str(), m_passthrough ? "passthrough" : "pcm",
-                      (unsigned int) ((m_BufferSize / (float) m_BytesPerSecond) * 1000));
+  CLog::Log(LOGINFO,
+            "PulseAudio: Opened device {} in {} mode with Buffersize {} ms Periodsize {} ms",
+            device, m_passthrough ? "passthrough" : "pcm",
+            static_cast<unsigned int>(1000.0 * m_BufferSize / m_BytesPerSecond),
+            static_cast<unsigned int>(1000.0 * m_periodSize / m_BytesPerSecond));
 
   // Cork stream will resume when adding first package
   Pause(true);
   {
-    CSingleLock lock(m_sec);
+    std::unique_lock lock(m_sec);
     m_IsAllocated = true;
   }
-
   return true;
 }
 
 void CAESinkPULSE::Deinitialize()
 {
-  CSingleLock lock(m_sec);
+  std::unique_lock lock(m_sec);
   m_IsAllocated = false;
   m_passthrough = false;
   m_periodSize = 0;
+  m_requestedBytes = 0;
+  m_maxLatency = 0.0;
 
   if (m_Stream)
-    Drain();
+  {
+    CSingleExit exit(m_sec);
+    pa_threaded_mainloop_lock(m_MainLoop);
+    WaitForOperation(pa_stream_flush(m_Stream, NULL, NULL), m_MainLoop, "Flush");
+    pa_threaded_mainloop_unlock(m_MainLoop);
+  }
 
   {
     CSingleExit exit(m_sec);
@@ -832,13 +1108,17 @@ void CAESinkPULSE::GetDelay(AEDelayStatus& status)
   if (pa_stream_get_latency(m_Stream, &r_usec, &negative) < 0)
     r_usec = 0;
 
+  double delay = r_usec / 1000000.0;
+  if (delay > m_maxLatency)
+    m_maxLatency = delay;
+
   pa_threaded_mainloop_unlock(m_MainLoop);
-  status.SetDelay(r_usec / 1000000.0);
+  status.SetDelay(delay);
 }
 
 double CAESinkPULSE::GetCacheTotal()
 {
-  return (float)m_BufferSize / (float)m_BytesPerSecond;
+  return m_maxLatency;
 }
 
 unsigned int CAESinkPULSE::AddPackets(uint8_t **data, unsigned int frames, unsigned int offset)
@@ -854,23 +1134,41 @@ unsigned int CAESinkPULSE::AddPackets(uint8_t **data, unsigned int frames, unsig
   pa_threaded_mainloop_lock(m_MainLoop);
 
   unsigned int available = frames * m_format.m_frameSize;
-  unsigned int length = 0;
+  unsigned int length = m_periodSize;
   void *buffer = data[0]+offset*m_format.m_frameSize;
-  // care a bit for fragmentation
-  while ((length = pa_stream_writable_size(m_Stream)) < m_periodSize)
-    pa_threaded_mainloop_wait(m_MainLoop);
-
-  length =  std::min((unsigned int)length, available);
-
-  int error = pa_stream_write(m_Stream, buffer, length, NULL, 0, PA_SEEK_RELATIVE);
-  pa_threaded_mainloop_unlock(m_MainLoop);
-
-  if (error)
+  auto wait_time =
+      std::chrono::duration<double>(static_cast<double>(m_BufferSize) / m_BytesPerSecond);
+  XbmcThreads::EndTime<std::chrono::duration<double>> timer(wait_time);
+  // we don't want to block forever - if timer expires pa_stream_write will
+  // fail - therefore we don't care and just return 0;
+  while (!timer.IsTimePast())
   {
-    CLog::Log(LOGERROR, "CPulseAudioDirectSound::AddPackets - pa_stream_write failed\n");
+    if (m_requestedBytes > 0)
+      break;
+    pa_threaded_mainloop_wait(m_MainLoop);
+  }
+
+  if (timer.IsTimePast())
+  {
+    CLog::Log(LOGERROR, "Sink Timer expired for more than buffer time: {}s", wait_time.count());
+    pa_threaded_mainloop_unlock(m_MainLoop);
     return 0;
   }
-  unsigned int res = (unsigned int)(length / m_format.m_frameSize);
+
+  length = std::min(length, available);
+  int error = pa_stream_write(m_Stream, buffer, length, NULL, 0, PA_SEEK_RELATIVE);
+  pa_threaded_mainloop_unlock(m_MainLoop);
+  if (error)
+  {
+    CLog::Log(LOGERROR, "CAESinkPULSE::AddPackets - pa_stream_write failed: {}", error);
+    return 0;
+  }
+
+  // subtract here, as we might come back earlier than our callback and there is
+  // still space in the buffer to write another time
+  m_requestedBytes -= length;
+
+  unsigned int res = length / m_format.m_frameSize;
 
   return res;
 }
@@ -882,6 +1180,8 @@ void CAESinkPULSE::Drain()
 
   pa_threaded_mainloop_lock(m_MainLoop);
   WaitForOperation(pa_stream_drain(m_Stream, NULL, NULL), m_MainLoop, "Drain");
+  WaitForOperation(pa_stream_cork(m_Stream, 1, NULL, NULL), m_MainLoop, "Pause");
+  m_IsStreamPaused = true;
   pa_threaded_mainloop_unlock(m_MainLoop);
 }
 
@@ -890,6 +1190,13 @@ void CAESinkPULSE::Drain()
 pa_stream* CAESinkPULSE::GetInternalStream()
 {
   return m_Stream;
+}
+
+// This is a helper to use the internal mainloop from another thread, e.g. a RequestCallback
+// it is shipped via the userdata. Don't use it for other purposes than signalling
+pa_threaded_mainloop* CAESinkPULSE::GetInternalMainLoop()
+{
+  return m_MainLoop;
 }
 
 void CAESinkPULSE::UpdateInternalVolume(const pa_cvolume* nVol)
@@ -920,10 +1227,12 @@ void CAESinkPULSE::SetVolume(float volume)
        m_volume_needs_update = false;
        pa_volume_t n_vol = pa_cvolume_avg(&m_Volume);
        n_vol = std::min(n_vol, PA_VOLUME_NORM);
-       per_cent_volume = (float) n_vol / PA_VOLUME_NORM;
+       per_cent_volume = static_cast<float>(n_vol) / PA_VOLUME_NORM;
        // only update internal volume
        pa_threaded_mainloop_unlock(m_MainLoop);
-       g_application.SetVolume(per_cent_volume, false);
+       auto& components = CServiceBroker::GetAppComponents();
+       const auto appVolume = components.GetComponent<CApplicationVolumeHandling>();
+       appVolume->SetVolume(per_cent_volume, false);
        return;
     }
 
@@ -950,9 +1259,9 @@ void CAESinkPULSE::EnumerateDevicesEx(AEDeviceInfoList &list, bool force)
   pa_context *context;
   pa_threaded_mainloop *mainloop;
 
-  if (!SetupContext(NULL, &context, &mainloop))
+  if (!SetupContext(NULL, "KodiSink", &context, &mainloop))
   {
-    CLog::Log(LOGNOTICE, "PulseAudio might not be running. Context was not created.");
+    CLog::Log(LOGINFO, "PulseAudio might not be running. Context was not created.");
     return;
   }
 
@@ -961,6 +1270,15 @@ void CAESinkPULSE::EnumerateDevicesEx(AEDeviceInfoList &list, bool force)
   SinkInfoStruct sinkStruct;
   sinkStruct.mainloop = mainloop;
   sinkStruct.list = &list;
+
+  ModuleInfoStruct mis;
+  mis.mainloop = mainloop;
+
+  WaitForOperation(pa_context_get_module_info_list(context, ModuleInfoCallback, &mis), mainloop, "Check PA Modules");
+  if (!mis.hasAllowPT)
+  {
+    CLog::Log(LOGWARNING, "Pulseaudio module module-allow-passthrough not loaded - opening PT devices might fail");
+  }
   WaitForOperation(pa_context_get_sink_info_list(context, SinkInfoRequestCallback, &sinkStruct), mainloop, "EnumerateAudioSinks");
 
   pa_threaded_mainloop_unlock(mainloop);
@@ -984,8 +1302,8 @@ void CAESinkPULSE::EnumerateDevicesEx(AEDeviceInfoList &list, bool force)
 
 bool CAESinkPULSE::IsInitialized()
 {
- CSingleLock lock(m_sec);
- return m_IsAllocated;
+  std::unique_lock lock(m_sec);
+  return m_IsAllocated;
 }
 
 void CAESinkPULSE::Pause(bool pause)
@@ -1011,7 +1329,7 @@ inline bool CAESinkPULSE::WaitForOperation(pa_operation *op, pa_threaded_mainloo
 
   if (pa_operation_get_state(op) != PA_OPERATION_DONE)
   {
-    CLog::Log(LOGERROR, "PulseAudio: %s Operation failed", LogEntry);
+    CLog::Log(LOGERROR, "PulseAudio: {} Operation failed", LogEntry);
     success = false;
   }
 
@@ -1019,52 +1337,7 @@ inline bool CAESinkPULSE::WaitForOperation(pa_operation *op, pa_threaded_mainloo
   return success;
 }
 
-bool CAESinkPULSE::SetupContext(const char *host, pa_context **context, pa_threaded_mainloop **mainloop)
+void CAESinkPULSE::Cleanup()
 {
-  if ((*mainloop = pa_threaded_mainloop_new()) == NULL)
-  {
-    CLog::Log(LOGERROR, "PulseAudio: Failed to allocate main loop");
-    return false;
-  }
-
-  if (((*context) = pa_context_new(pa_threaded_mainloop_get_api(*mainloop), "Kodi")) == NULL)
-  {
-    CLog::Log(LOGERROR, "PulseAudio: Failed to allocate context");
-    return false;
-  }
-
-  pa_context_set_state_callback(*context, ContextStateCallback, *mainloop);
-
-  if (pa_context_connect(*context, host, (pa_context_flags_t)0, NULL) < 0)
-  {
-    CLog::Log(LOGERROR, "PulseAudio: Failed to connect context");
-    return false;
-  }
-  pa_threaded_mainloop_lock(*mainloop);
-
-  if (pa_threaded_mainloop_start(*mainloop) < 0)
-  {
-    CLog::Log(LOGERROR, "PulseAudio: Failed to start MainLoop");
-    pa_threaded_mainloop_unlock(*mainloop);
-    return false;
-  }
-
-  /* Wait until the context is ready */
-  do
-  {
-    pa_threaded_mainloop_wait(*mainloop);
-    CLog::Log(LOGDEBUG, "PulseAudio: Context %s", ContextStateToString(pa_context_get_state(*context)));
-  }
-  while (pa_context_get_state(*context) != PA_CONTEXT_READY && pa_context_get_state(*context) != PA_CONTEXT_FAILED);
-
-  if (pa_context_get_state(*context) == PA_CONTEXT_FAILED)
-  {
-    CLog::Log(LOGERROR, "PulseAudio: Waited for the Context but it failed");
-    pa_threaded_mainloop_unlock(*mainloop);
-    return false;
-  }
-
-  pa_threaded_mainloop_unlock(*mainloop);
-  return true;
+  m_pMonitor.reset();
 }
-#endif

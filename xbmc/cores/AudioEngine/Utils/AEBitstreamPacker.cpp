@@ -1,57 +1,35 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "AEBitstreamPacker.h"
+
 #include "AEPackIEC61937.h"
 #include "AEStreamInfo.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
 #include "utils/log.h"
 
-#define BURST_HEADER_SIZE       8
-#define TRUEHD_FRAME_OFFSET     2560
-#define MAT_MIDDLE_CODE_OFFSET -4
-#define MAT_FRAME_SIZE          61424
-#define EAC3_MAX_BURST_PAYLOAD_SIZE (24576 - BURST_HEADER_SIZE)
+#include <array>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
-CAEBitstreamPacker::CAEBitstreamPacker() :
-  m_trueHD   (NULL),
-  m_trueHDPos(0),
-  m_dtsHD    (NULL),
-  m_dtsHDSize(0),
-  m_eac3     (NULL),
-  m_eac3Size (0),
-  m_eac3FramesCount(0),
-  m_eac3FramesPerBurst(0),
-  m_dataSize (0),
-  m_pauseDuration(0)
+namespace
+{
+constexpr auto BURST_HEADER_SIZE = 8;
+constexpr auto EAC3_MAX_BURST_PAYLOAD_SIZE = 24576 - BURST_HEADER_SIZE;
+} // namespace
+
+CAEBitstreamPacker::CAEBitstreamPacker()
 {
   Reset();
 }
 
 CAEBitstreamPacker::~CAEBitstreamPacker()
 {
-  delete[] m_trueHD;
-  delete[] m_dtsHD;
-  delete[] m_eac3;
 }
 
 void CAEBitstreamPacker::Pack(CAEStreamInfo &info, uint8_t* data, int size)
@@ -60,10 +38,12 @@ void CAEBitstreamPacker::Pack(CAEStreamInfo &info, uint8_t* data, int size)
   switch (info.m_type)
   {
     case CAEStreamInfo::STREAM_TYPE_TRUEHD:
-      PackTrueHD(info, data, size);
+      m_dataSize = CAEPackIEC61937::PackTrueHD(data + IEC61937_DATA_OFFSET,
+                                               size - IEC61937_DATA_OFFSET, m_packedBuffer);
       break;
 
     case CAEStreamInfo::STREAM_TYPE_DTSHD:
+    case CAEStreamInfo::STREAM_TYPE_DTSHD_MA:
       PackDTSHD (info, data, size);
       break;
 
@@ -93,11 +73,11 @@ void CAEBitstreamPacker::Pack(CAEStreamInfo &info, uint8_t* data, int size)
   }
 }
 
-void CAEBitstreamPacker::PackPause(CAEStreamInfo &info, unsigned int millis, bool iecBursts)
+bool CAEBitstreamPacker::PackPause(CAEStreamInfo &info, unsigned int millis, bool iecBursts)
 {
   // re-use last buffer
   if (m_pauseDuration == millis)
-    return;
+    return false;
 
   switch (info.m_type)
   {
@@ -109,6 +89,7 @@ void CAEBitstreamPacker::PackPause(CAEStreamInfo &info, unsigned int millis, boo
 
     case CAEStreamInfo::STREAM_TYPE_AC3:
     case CAEStreamInfo::STREAM_TYPE_DTSHD:
+    case CAEStreamInfo::STREAM_TYPE_DTSHD_MA:
     case CAEStreamInfo::STREAM_TYPE_DTSHD_CORE:
     case CAEStreamInfo::STREAM_TYPE_DTS_512:
     case CAEStreamInfo::STREAM_TYPE_DTS_1024:
@@ -125,9 +106,11 @@ void CAEBitstreamPacker::PackPause(CAEStreamInfo &info, unsigned int millis, boo
   {
     memset(m_packedBuffer, 0, m_dataSize);
   }
+
+  return true;
 }
 
-unsigned int CAEBitstreamPacker::GetSize()
+unsigned int CAEBitstreamPacker::GetSize() const
 {
   return m_dataSize;
 }
@@ -140,51 +123,8 @@ uint8_t* CAEBitstreamPacker::GetBuffer()
 void CAEBitstreamPacker::Reset()
 {
   m_dataSize = 0;
-  m_trueHDPos = 0;
   m_pauseDuration = 0;
   m_packedBuffer[0] = 0;
-}
-
-/* we need to pack 24 TrueHD audio units into the unknown MAT format before packing into IEC61937 */
-void CAEBitstreamPacker::PackTrueHD(CAEStreamInfo &info, uint8_t* data, int size)
-{
-  /* magic MAT format values, meaning is unknown at this point */
-  static const uint8_t mat_start_code [20] = { 0x07, 0x9E, 0x00, 0x03, 0x84, 0x01, 0x01, 0x01, 0x80, 0x00, 0x56, 0xA5, 0x3B, 0xF4, 0x81, 0x83, 0x49, 0x80, 0x77, 0xE0 };
-  static const uint8_t mat_middle_code[12] = { 0xC3, 0xC1, 0x42, 0x49, 0x3B, 0xFA, 0x82, 0x83, 0x49, 0x80, 0x77, 0xE0 };
-  static const uint8_t mat_end_code   [16] = { 0xC3, 0xC2, 0xC0, 0xC4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x97, 0x11 };
-
-  /* create the buffer if it doesnt already exist */
-  if (!m_trueHD)
-  {
-    m_trueHD    = new uint8_t[MAT_FRAME_SIZE];
-    m_trueHDPos = 0;
-  }
-
-  /* setup the frame for the data */
-  if (m_trueHDPos == 0)
-  {
-    memset(m_trueHD, 0, MAT_FRAME_SIZE);
-    memcpy(m_trueHD, mat_start_code, sizeof(mat_start_code));
-    memcpy(m_trueHD + (12 * TRUEHD_FRAME_OFFSET) - BURST_HEADER_SIZE + MAT_MIDDLE_CODE_OFFSET, mat_middle_code, sizeof(mat_middle_code));
-    memcpy(m_trueHD + MAT_FRAME_SIZE - sizeof(mat_end_code), mat_end_code, sizeof(mat_end_code));
-  }
-
-  size_t offset;
-  if (m_trueHDPos == 0 )
-    offset = (m_trueHDPos * TRUEHD_FRAME_OFFSET) + sizeof(mat_start_code);
-  else if (m_trueHDPos == 12)
-    offset = (m_trueHDPos * TRUEHD_FRAME_OFFSET) + sizeof(mat_middle_code) - BURST_HEADER_SIZE + MAT_MIDDLE_CODE_OFFSET;
-  else
-    offset = (m_trueHDPos * TRUEHD_FRAME_OFFSET) - BURST_HEADER_SIZE;
-
-  memcpy(m_trueHD + offset, data, size);
-
-  /* if we have a full frame */
-  if (++m_trueHDPos == 24)
-  {
-    m_trueHDPos = 0;
-    m_dataSize  = CAEPackIEC61937::PackTrueHD(m_trueHD, MAT_FRAME_SIZE, m_packedBuffer);
-  }
 }
 
 void CAEBitstreamPacker::PackDTSHD(CAEStreamInfo &info, uint8_t* data, int size)
@@ -194,17 +134,17 @@ void CAEBitstreamPacker::PackDTSHD(CAEStreamInfo &info, uint8_t* data, int size)
 
   if (dataSize > m_dtsHDSize)
   {
-    delete[] m_dtsHD;
     m_dtsHDSize = dataSize;
-    m_dtsHD     = new uint8_t[dataSize];
-    memcpy(m_dtsHD, dtshd_start_code, sizeof(dtshd_start_code));
+    m_dtsHD.resize(dataSize);
+    memcpy(m_dtsHD.data(), dtshd_start_code, sizeof(dtshd_start_code));
   }
 
   m_dtsHD[sizeof(dtshd_start_code) + 0] = ((uint16_t)size & 0xFF00) >> 8;
   m_dtsHD[sizeof(dtshd_start_code) + 1] = ((uint16_t)size & 0x00FF);
-  memcpy(m_dtsHD + sizeof(dtshd_start_code) + 2, data, size);
+  memcpy(m_dtsHD.data() + sizeof(dtshd_start_code) + 2, data, size);
 
-  m_dataSize = CAEPackIEC61937::PackDTSHD(m_dtsHD, dataSize, m_packedBuffer, info.m_dtsPeriod);
+  m_dataSize =
+      CAEPackIEC61937::PackDTSHD(m_dtsHD.data(), dataSize, m_packedBuffer, info.m_dtsPeriod);
 }
 
 void CAEBitstreamPacker::PackEAC3(CAEStreamInfo &info, uint8_t* data, int size)
@@ -227,29 +167,29 @@ void CAEBitstreamPacker::PackEAC3(CAEStreamInfo &info, uint8_t* data, int size)
   {
     /* multiple frames needed to achieve 6 blocks as required by IEC 61937-3:2007 */
 
-    if (m_eac3 == NULL)
-      m_eac3 = new uint8_t[EAC3_MAX_BURST_PAYLOAD_SIZE];
+    if (m_eac3.empty())
+      m_eac3.resize(EAC3_MAX_BURST_PAYLOAD_SIZE);
 
     unsigned int newsize = m_eac3Size + size;
     bool overrun = newsize > EAC3_MAX_BURST_PAYLOAD_SIZE;
 
     if (!overrun)
     {
-      memcpy(m_eac3 + m_eac3Size, data, size);
+      memcpy(m_eac3.data() + m_eac3Size, data, size);
       m_eac3Size = newsize;
       m_eac3FramesCount++;
     }
 
     if (m_eac3FramesCount >= m_eac3FramesPerBurst || overrun)
     {
-      m_dataSize = CAEPackIEC61937::PackEAC3(m_eac3, m_eac3Size, m_packedBuffer);
+      m_dataSize = CAEPackIEC61937::PackEAC3(m_eac3.data(), m_eac3Size, m_packedBuffer);
       m_eac3Size = 0;
       m_eac3FramesCount = 0;
     }
   }
 }
 
-unsigned int CAEBitstreamPacker::GetOutputRate(CAEStreamInfo &info)
+unsigned int CAEBitstreamPacker::GetOutputRate(const CAEStreamInfo& info)
 {
   unsigned int rate;
   switch (info.m_type)
@@ -275,6 +215,7 @@ unsigned int CAEBitstreamPacker::GetOutputRate(CAEStreamInfo &info)
       rate = info.m_sampleRate;
       break;
     case CAEStreamInfo::STREAM_TYPE_DTSHD:
+    case CAEStreamInfo::STREAM_TYPE_DTSHD_MA:
       rate = 192000;
       break;
     default:
@@ -284,7 +225,7 @@ unsigned int CAEBitstreamPacker::GetOutputRate(CAEStreamInfo &info)
   return rate;
 }
 
-CAEChannelInfo CAEBitstreamPacker::GetOutputChannelMap(CAEStreamInfo &info)
+CAEChannelInfo CAEBitstreamPacker::GetOutputChannelMap(const CAEStreamInfo& info)
 {
   int channels = 2;
   switch (info.m_type)
@@ -295,11 +236,12 @@ CAEChannelInfo CAEBitstreamPacker::GetOutputChannelMap(CAEStreamInfo &info)
     case CAEStreamInfo::STREAM_TYPE_DTS_1024:
     case CAEStreamInfo::STREAM_TYPE_DTS_2048:
     case CAEStreamInfo::STREAM_TYPE_DTSHD_CORE:
+    case CAEStreamInfo::STREAM_TYPE_DTSHD:
       channels = 2;
       break;
 
     case CAEStreamInfo::STREAM_TYPE_TRUEHD:
-    case CAEStreamInfo::STREAM_TYPE_DTSHD:
+    case CAEStreamInfo::STREAM_TYPE_DTSHD_MA:
       channels = 8;
       break;
 

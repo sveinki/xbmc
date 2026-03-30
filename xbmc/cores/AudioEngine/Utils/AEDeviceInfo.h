@@ -1,29 +1,18 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
+
+#include "cores/AudioEngine/Utils/AEChannelInfo.h"
+#include "cores/AudioEngine/Utils/AEStreamInfo.h"
 
 #include <string>
 #include <vector>
-#include "AEAudioFormat.h"
-#include "cores/AudioEngine/Utils/AEChannelInfo.h"
-#include "cores/AudioEngine/Utils/AEStreamInfo.h"
 
 typedef std::vector<unsigned int> AESampleRateList;
 typedef std::vector<enum AEDataFormat> AEDataFormatList;
@@ -53,8 +42,13 @@ public:
 
   bool m_wantsIECPassthrough;           /* if sink supports passthrough encapsulation is done when set to true */
 
+  bool m_onlyPassthrough{false}; // sink only only should be used for passthrough (audio PT device)
+  bool m_onlyPCM{false}; // sink only should be used for PCM (audio device)
+
   operator std::string();
   static std::string DeviceTypeToString(enum AEDeviceType deviceType);
+  std::string GetFriendlyName() const;
+  std::string ToDeviceString(const std::string& driver) const;
 };
 
 typedef std::vector<CAEDeviceInfo> AEDeviceInfoList;

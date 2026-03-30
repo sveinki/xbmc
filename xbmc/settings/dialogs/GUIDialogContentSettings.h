@@ -1,32 +1,20 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <map>
+#pragma once
 
-#include "addons/Addon.h"
 #include "addons/Scraper.h"
 #include "settings/dialogs/GUIDialogSettingsManualBase.h"
 
-namespace VIDEO
+#include <map>
+#include <utility>
+
+namespace KODI::VIDEO
 {
   struct SScanSettings;
 }
@@ -38,36 +26,37 @@ public:
   CGUIDialogContentSettings();
 
   // specialization of CGUIWindow
-  bool HasListItems() const override { return true; };
+  bool HasListItems() const override { return true; }
 
-  CONTENT_TYPE GetContent() const { return m_content; }
-  void SetContent(CONTENT_TYPE content);
+  ADDON::ContentType GetContent() const { return m_content; }
+  void SetContent(ADDON::ContentType content);
   void ResetContent();
 
   const ADDON::ScraperPtr& GetScraper() const { return m_scraper; }
-  void SetScraper(ADDON::ScraperPtr scraper) { m_scraper = scraper; }
+  void SetScraper(ADDON::ScraperPtr scraper) { m_scraper = std::move(scraper); }
 
-  void SetScanSettings(const VIDEO::SScanSettings &scanSettings);
+  void SetScanSettings(const KODI::VIDEO::SScanSettings& scanSettings);
   bool GetScanRecursive() const { return m_scanRecursive; }
   bool GetUseDirectoryNames() const { return m_useDirectoryNames; }
   bool GetContainsSingleItem() const { return m_containsSingleItem; }
   bool GetExclude() const { return m_exclude; }
   bool GetNoUpdating() const { return m_noUpdating; }
+  bool GetUseAllExternalAudio() const { return m_allExternalAudio; }
 
-  static bool Show(ADDON::ScraperPtr& scraper, CONTENT_TYPE content = CONTENT_NONE);
-  static bool Show(ADDON::ScraperPtr& scraper, VIDEO::SScanSettings& settings, CONTENT_TYPE content = CONTENT_NONE);
+  static bool Show(ADDON::ScraperPtr& scraper,
+                   ADDON::ContentType content = ADDON::ContentType::NONE);
+  static bool Show(ADDON::ScraperPtr& scraper,
+                   KODI::VIDEO::SScanSettings& settings,
+                   ADDON::ContentType content = ADDON::ContentType::NONE);
 
 protected:
-  // specializations of CGUIWindow
-  void OnInitWindow() override;
-
   // implementations of ISettingCallback
-  void OnSettingChanged(std::shared_ptr<const CSetting> setting) override;
-  void OnSettingAction(std::shared_ptr<const CSetting> setting) override;
+  void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
+  void OnSettingAction(const std::shared_ptr<const CSetting>& setting) override;
 
   // specialization of CGUIDialogSettingsBase
   bool AllowResettingSettings() const override { return false; }
-  void Save() override;
+  bool Save() override;
   void SetupView() override;
 
   // specialization of CGUIDialogSettingsManualBase
@@ -77,25 +66,26 @@ private:
   void SetLabel2(const std::string &settingid, const std::string &label);
   void ToggleState(const std::string &settingid, bool enabled);
   using CGUIDialogSettingsManualBase::SetFocus;
-  void SetFocus(const std::string &settingid);
+  void SetFocusToSetting(const std::string& settingid);
 
   /*!
   * @brief The currently selected content type
   */
-  CONTENT_TYPE m_content;
+  ADDON::ContentType m_content{ADDON::ContentType::NONE};
   /*!
   * @brief The selected content type at dialog creation
   */
-  CONTENT_TYPE m_originalContent;
+  ADDON::ContentType m_originalContent{ADDON::ContentType::NONE};
   /*!
   * @brief The currently selected scraper
   */
   ADDON::ScraperPtr m_scraper;
 
-  bool m_showScanSettings;
-  bool m_scanRecursive;
-  bool m_useDirectoryNames;
-  bool m_containsSingleItem;
-  bool m_exclude;
-  bool m_noUpdating;
+  bool m_showScanSettings = false;
+  bool m_scanRecursive = false;
+  bool m_useDirectoryNames = false;
+  bool m_containsSingleItem = false;
+  bool m_exclude = false;
+  bool m_noUpdating = false;
+  bool m_allExternalAudio = false;
 };

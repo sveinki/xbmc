@@ -1,37 +1,28 @@
 /*
- *      Copyright (C) 2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIWindowEventLog.h"
+
 #include "FileItem.h"
+#include "FileItemList.h"
 #include "GUIUserMessages.h"
 #include "ServiceBroker.h"
 #include "URL.h"
 #include "events/EventLog.h"
 #include "filesystem/EventsDirectory.h"
 #include "guilib/GUIWindowManager.h"
-#include "guilib/LocalizeStrings.h"
 #include "guilib/WindowIDs.h"
-#include "input/Key.h"
+#include "input/actions/ActionIDs.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
 #include "utils/StringUtils.h"
-#include "utils/URIUtils.h"
 #include "view/ViewStateSettings.h"
 
 #define CONTROL_BUTTON_CLEAR          20
@@ -55,7 +46,10 @@ bool CGUIWindowEventLog::OnMessage(CGUIMessage& message)
     // check if we should clear all items
     if (iControl == CONTROL_BUTTON_CLEAR)
     {
-      CEventLog::GetInstance().Clear(CViewStateSettings::GetInstance().GetEventLevel(), CViewStateSettings::GetInstance().ShowHigherEventLevels());
+      auto eventLog = CServiceBroker::GetEventLog();
+      if (eventLog)
+        eventLog->Clear(CViewStateSettings::GetInstance().GetEventLevel(),
+                        CViewStateSettings::GetInstance().ShowHigherEventLevels());
 
       // refresh the list
       Refresh(true);
@@ -67,7 +61,7 @@ bool CGUIWindowEventLog::OnMessage(CGUIMessage& message)
     {
       // update the event level
       CViewStateSettings::GetInstance().CycleEventLevel();
-      CServiceBroker::GetSettings().Save();
+      CServiceBroker::GetSettingsComponent()->GetSettings()->Save();
 
       // update the listing
       Refresh();
@@ -79,7 +73,7 @@ bool CGUIWindowEventLog::OnMessage(CGUIMessage& message)
     {
       // update whether to show higher event levels
       CViewStateSettings::GetInstance().ToggleShowHigherEventLevels();
-      CServiceBroker::GetSettings().Save();
+      CServiceBroker::GetSettingsComponent()->GetSettings()->Save();
 
       // update the listing
       Refresh();
@@ -153,11 +147,16 @@ void CGUIWindowEventLog::GetContextButtons(int itemNumber, CContextButtons &butt
   if (eventIdentifier.empty())
     return;
 
-  EventPtr eventPtr = CEventLog::GetInstance().Get(eventIdentifier);
+  auto eventLog = CServiceBroker::GetEventLog();
+  if (!eventLog)
+    return;
+
+  EventPtr eventPtr = eventLog->Get(eventIdentifier);
   if (eventPtr == nullptr)
     return;
 
-  buttons.Add(CONTEXT_BUTTON_DELETE, g_localizeStrings.Get(1210));
+  buttons.Add(CONTEXT_BUTTON_DELETE,
+              CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1210));
 }
 
 bool CGUIWindowEventLog::OnContextButton(int itemNumber, CONTEXT_BUTTON button)
@@ -188,7 +187,11 @@ void CGUIWindowEventLog::UpdateButtons()
 
   EventLevel eventLevel = CViewStateSettings::GetInstance().GetEventLevel();
   // set the label of the "level" button
-  SET_CONTROL_LABEL(CONTROL_BUTTON_LEVEL, StringUtils::Format(g_localizeStrings.Get(14119).c_str(), g_localizeStrings.Get(14115 + (int)eventLevel).c_str()));
+  SET_CONTROL_LABEL(
+      CONTROL_BUTTON_LEVEL,
+      StringUtils::Format(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(14119),
+                          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+                              14115 + (int)eventLevel)));
 
   // set the label, value and enabled state of the "level only" button
   SET_CONTROL_LABEL(CONTROL_BUTTON_LEVEL_ONLY, 14120);
@@ -218,7 +221,7 @@ bool CGUIWindowEventLog::GetDirectory(const std::string &strDirectory, CFileItem
     if (!item->HasProperty(PROPERTY_EVENT_LEVEL))
       continue;
 
-    EventLevel level = CEventLog::GetInstance().EventLevelFromString(item->GetProperty(PROPERTY_EVENT_LEVEL).asString());
+    EventLevel level = CEventLog::EventLevelFromString(item->GetProperty(PROPERTY_EVENT_LEVEL).asString());
     if (level == currentLevel ||
       (level > currentLevel && showHigherLevels))
       filteredItems.Add(item);
@@ -230,7 +233,7 @@ bool CGUIWindowEventLog::GetDirectory(const std::string &strDirectory, CFileItem
   return result;
 }
 
-bool CGUIWindowEventLog::OnSelect(CFileItemPtr item)
+bool CGUIWindowEventLog::OnSelect(const CFileItemPtr& item)
 {
   if (item == nullptr)
     return false;
@@ -239,7 +242,7 @@ bool CGUIWindowEventLog::OnSelect(CFileItemPtr item)
   return true;
 }
 
-bool CGUIWindowEventLog::OnDelete(CFileItemPtr item)
+bool CGUIWindowEventLog::OnDelete(const CFileItemPtr& item)
 {
   if (item == nullptr)
     return false;
@@ -248,11 +251,15 @@ bool CGUIWindowEventLog::OnDelete(CFileItemPtr item)
   if (eventIdentifier.empty())
     return false;
 
-  CEventLog::GetInstance().Remove(eventIdentifier);
+  auto eventLog = CServiceBroker::GetEventLog();
+  if (!eventLog)
+    return false;
+
+  eventLog->Remove(eventIdentifier);
   return true;
 }
 
-bool CGUIWindowEventLog::OnExecute(CFileItemPtr item)
+bool CGUIWindowEventLog::OnExecute(const CFileItemPtr& item)
 {
   if (item == nullptr)
     return false;
@@ -261,7 +268,11 @@ bool CGUIWindowEventLog::OnExecute(CFileItemPtr item)
   if (eventIdentifier.empty())
     return false;
 
-  const EventPtr eventPtr = CEventLog::GetInstance().Get(eventIdentifier);
+  auto eventLog = CServiceBroker::GetEventLog();
+  if (!eventLog)
+    return false;
+
+  const EventPtr eventPtr = eventLog->Get(eventIdentifier);
   if (eventPtr == nullptr)
     return false;
 
@@ -271,7 +282,7 @@ bool CGUIWindowEventLog::OnExecute(CFileItemPtr item)
   return eventPtr->Execute();
 }
 
-void CGUIWindowEventLog::OnEventAdded(CFileItemPtr item)
+void CGUIWindowEventLog::OnEventAdded(const CFileItemPtr& item)
 {
   if (!IsActive())
     return;
@@ -279,7 +290,7 @@ void CGUIWindowEventLog::OnEventAdded(CFileItemPtr item)
   Refresh(true);
 }
 
-void CGUIWindowEventLog::OnEventRemoved(CFileItemPtr item)
+void CGUIWindowEventLog::OnEventRemoved(const CFileItemPtr& item)
 {
   if (!IsActive())
     return;

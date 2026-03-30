@@ -1,137 +1,123 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "utils/Observer.h"
+#pragma once
+
+#include "threads/CriticalSection.h"
+#include "threads/SystemClock.h"
 #include "windows/GUIMediaWindow.h"
 
-#include "pvr/PVRTypes.h"
-
-#define CONTROL_BTNVIEWASICONS            2
-#define CONTROL_BTNSORTBY                 3
-#define CONTROL_BTNSORTASC                4
-#define CONTROL_BTNGROUPITEMS             5
-#define CONTROL_BTNSHOWHIDDEN             6
-#define CONTROL_BTNSHOWDELETED            7
-#define CONTROL_BTNHIDEDISABLEDTIMERS     8
-#define CONTROL_BTNSHOWMODE               10
-
-#define CONTROL_BTNCHANNELGROUPS          28
-#define CONTROL_BTNFILTERCHANNELS         31
-
-#define CONTROL_LABEL_HEADER1             29
-#define CONTROL_LABEL_HEADER2             30
+#include <atomic>
+#include <memory>
+#include <string>
 
 class CGUIDialogProgressBarHandle;
 
 namespace PVR
 {
-  enum EPGSelectAction
-  {
-    EPG_SELECT_ACTION_CONTEXT_MENU   = 0,
-    EPG_SELECT_ACTION_SWITCH         = 1,
-    EPG_SELECT_ACTION_INFO           = 2,
-    EPG_SELECT_ACTION_RECORD         = 3,
-    EPG_SELECT_ACTION_PLAY_RECORDING = 4,
-    EPG_SELECT_ACTION_SMART_SELECT   = 5
-  };
+enum class PVREvent;
 
-  class CGUIWindowPVRBase : public CGUIMediaWindow, public Observer
-  {
-  public:
-    ~CGUIWindowPVRBase(void) override;
+enum EPGSelectAction
+{
+  EPG_SELECT_ACTION_CONTEXT_MENU = 0,
+  EPG_SELECT_ACTION_SWITCH = 1,
+  EPG_SELECT_ACTION_INFO = 2,
+  EPG_SELECT_ACTION_RECORD = 3,
+  EPG_SELECT_ACTION_PLAY_RECORDING = 4,
+  EPG_SELECT_ACTION_SMART_SELECT = 5
+};
 
-    void OnInitWindow(void) override;
-    void OnDeinitWindow(int nextWindowID) override;
-    bool OnMessage(CGUIMessage& message) override;
-    bool Update(const std::string &strDirectory, bool updateFilterPath = true) override;
-    void UpdateButtons(void) override;
-    bool OnAction(const CAction &action) override;
-    bool OnBack(int actionID) override;
-    void Notify(const Observable &obs, const ObservableMessage msg) override;
-    void SetInvalid() override;
-    bool CanBeActivated() const override;
+class CPVRChannelGroup;
+class CGUIPVRChannelGroupsSelector;
 
-    static std::string GetSelectedItemPath(bool bRadio);
-    static void SetSelectedItemPath(bool bRadio, const std::string &path);
+class CGUIWindowPVRBase : public CGUIMediaWindow
+{
+public:
+  ~CGUIWindowPVRBase() override;
 
-    /*!
-     * @brief Refresh window content.
-     * @return true, if refresh succeeded, false otherwise.
-     */
-    bool DoRefresh(void) { return Refresh(true); }
+  void OnInitWindow() override;
+  void OnDeinitWindow(int nextWindowID) override;
+  bool OnMessage(CGUIMessage& message) override;
+  bool Update(const std::string& strDirectory, bool updateFilterPath = true) override;
+  void UpdateButtons() override;
+  bool OnAction(const CAction& action) override;
+  void SetInvalid() override;
+  bool CanBeActivated() const override;
 
-  protected:
-    CGUIWindowPVRBase(bool bRadio, int id, const std::string &xmlFile);
+  bool UseFileDirectories() override { return false; }
 
-    virtual std::string GetDirectoryPath(void) = 0;
+  /*!
+   * @brief CEventStream callback for PVR events.
+   * @param event The event.
+   */
+  virtual void NotifyEvent(const PVREvent& event);
 
-    virtual void ClearData();
+  bool ActivatePreviousChannelGroup();
+  bool ActivateNextChannelGroup();
+  bool OpenChannelGroupSelectionDialog();
 
-    /*!
-     * @brief Init this window's channel group with the currently active (the "playing") channel group.
-     * @return true if group could be set, false otherwise.
-     */
-    bool InitChannelGroup(void);
+protected:
+  CGUIWindowPVRBase(bool bRadio, int id, const std::string& xmlFile);
 
-    /*!
-     * @brief Get the channel group for this window.
-     * @return the group or null, if no group set.
-     */
-   virtual CPVRChannelGroupPtr GetChannelGroup(void);
+  virtual std::string GetDirectoryPath() = 0;
 
-    /*!
-     * @brief Set a new channel group, start listening to this group, optionally update window content.
-     * @param group The new group.
-     * @param bUpdate if true, window content will be updated.
-     */
-    void SetChannelGroup(const CPVRChannelGroupPtr &group, bool bUpdate = true);
+  virtual void ClearData();
 
-    virtual void UpdateSelectedItemPath();
+  /*!
+   * @brief Init this window's channel group with the currently active (the "playing") channel group.
+   * @return true if group could be set, false otherwise.
+   */
+  bool InitChannelGroup();
 
-    void RegisterObservers(void);
-    void UnregisterObservers(void);
+  /*!
+   * @brief Get the channel group for this window.
+   * @return the group or null, if no group set.
+   */
+  std::shared_ptr<CPVRChannelGroup> GetChannelGroup();
 
-    static CCriticalSection m_selectedItemPathsLock;
-    static std::string m_selectedItemPaths[2];
+  /*!
+   * @brief Set a new channel group, start listening to this group, optionally update window content.
+   * @param group The new group.
+   * @param bUpdate if true, window content will be updated.
+   */
+  void SetChannelGroup(const std::shared_ptr<CPVRChannelGroup>& group, bool bUpdate = true);
 
-    CCriticalSection m_critSection;
-    bool m_bRadio;
+  void SetChannelGroupPath(const std::string& path);
 
-  private:
-    bool OpenChannelGroupSelectionDialog(void);
+  virtual void UpdateSelectedItemPath();
 
-    /*!
-     * @brief Show or update the progress dialog.
-     * @param strText The current status.
-     * @param iProgress The current progress in %.
-     */
-    void ShowProgressDialog(const std::string &strText, int iProgress);
+  bool IsRadio() const { return m_bRadio; }
 
-    /*!
-     * @brief Hide the progress dialog if it's visible.
-     */
-    void HideProgressDialog(void);
+  bool IsUpdating() const { return m_bUpdating; }
 
-    CPVRChannelGroupPtr m_channelGroup;
-    XbmcThreads::EndTime m_refreshTimeout;
-    CGUIDialogProgressBarHandle *m_progressHandle; /*!< progress dialog that is displayed while the pvr manager is loading */
-  };
-}
+  CCriticalSection m_critSection;
+
+private:
+  /*!
+   * @brief Show or update the progress dialog.
+   * @param strText The current status.
+   * @param iProgress The current progress in %.
+   */
+  void ShowProgressDialog(const std::string& strText, int iProgress);
+
+  /*!
+   * @brief Hide the progress dialog if it's visible.
+   */
+  void HideProgressDialog();
+
+  bool m_bRadio{false};
+  std::atomic_bool m_bUpdating{false};
+
+  std::unique_ptr<CGUIPVRChannelGroupsSelector> m_channelGroupsSelector;
+  std::shared_ptr<CPVRChannelGroup> m_channelGroup;
+  XbmcThreads::EndTime<> m_refreshTimeout;
+  CGUIDialogProgressBarHandle* m_progressHandle =
+      nullptr; /*!< progress dialog that is displayed while the pvr manager is loading */
+  std::string m_channelGroupPath;
+};
+} // namespace PVR

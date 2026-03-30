@@ -4,56 +4,42 @@ set(SOURCES AddonVideoCodec.cpp
 
 set(HEADERS AddonVideoCodec.h
             DVDVideoCodec.h
-            DVDVideoCodecFFmpeg.h)
+            DVDVideoCodecFFmpeg.h
+            DVDVideoPP.h)
 
-if(NOT ENABLE_EXTERNAL_LIBAV)
+if(TARGET ffmpeg::libpostproc)
   list(APPEND SOURCES DVDVideoPPFFmpeg.cpp)
   list(APPEND HEADERS DVDVideoPPFFmpeg.h)
 endif()
 
-if(AML_FOUND)
-  list(APPEND SOURCES AMLCodec.cpp
-                      DVDVideoCodecAmlogic.cpp)
-  list(APPEND HEADERS AMLCodec.h
-                      DVDVideoCodecAmlogic.h)
-endif()
-
-if(CORE_SYSTEM_NAME STREQUAL windows)
+if(CORE_SYSTEM_NAME STREQUAL windows OR CORE_SYSTEM_NAME STREQUAL windowsstore)
   list(APPEND SOURCES DXVA.cpp)
   list(APPEND HEADERS DXVA.h)
 endif()
 
-if(VDPAU_FOUND)
+if(TARGET ${APP_NAME_LC}::VDPAU)
   list(APPEND SOURCES VDPAU.cpp)
   list(APPEND HEADERS VDPAU.h)
 endif()
 
-if(VAAPI_FOUND)
+if(TARGET ${APP_NAME_LC}::VAAPI)
   list(APPEND SOURCES VAAPI.cpp)
   list(APPEND HEADERS VAAPI.h)
 endif()
 
 if(APPLE)
   list(APPEND SOURCES VTB.cpp)
-  list(APPEND HEADERS DllVideoToolBox.h
-                      VTB.h)
-endif()
-
-if(MMAL_FOUND)
-  list(APPEND SOURCES MMALCodec.cpp)
-  list(APPEND HEADERS MMALCodec.h)
-  list(APPEND SOURCES MMALFFmpeg.cpp)
-  list(APPEND HEADERS MMALFFmpeg.h)
-endif()
-
-if(IMX_FOUND)
-  list(APPEND SOURCES DVDVideoCodecIMX.cpp)
-  list(APPEND HEADERS DVDVideoCodecIMX.h)
+  list(APPEND HEADERS VTB.h)
 endif()
 
 if(CORE_SYSTEM_NAME STREQUAL android)
   list(APPEND SOURCES DVDVideoCodecAndroidMediaCodec.cpp)
   list(APPEND HEADERS DVDVideoCodecAndroidMediaCodec.h)
+endif()
+
+if("gbm" IN_LIST CORE_PLATFORM_NAME_LC OR "wayland" IN_LIST CORE_PLATFORM_NAME_LC)
+  list(APPEND SOURCES DVDVideoCodecDRMPRIME.cpp)
+  list(APPEND HEADERS DVDVideoCodecDRMPRIME.h)
 endif()
 
 core_add_library(dvdvideocodecs)

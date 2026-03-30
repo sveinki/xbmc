@@ -1,7 +1,12 @@
-set(SOURCES GUIWindowTestPatternGL.cpp
-            RenderSystemGL.cpp)
+if(TARGET ${APP_NAME_LC}::OpenGl)
+  set(SOURCES RenderSystemGL.cpp
+              ScreenshotSurfaceGL.cpp
+              GLShader.cpp)
 
-set(HEADERS GUIWindowTestPatternGL.h
-            RenderSystemGL.h)
+  set(HEADERS RenderSystemGL.h
+              ScreenshotSurfaceGL.h
+              GLShader.h)
 
-core_add_library(rendering_gl)
+  core_add_library(rendering_gl)
+endif()
+

@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 #ifndef __STDC_LIMIT_MACROS
   #define __STDC_LIMIT_MACROS
@@ -27,15 +15,8 @@
 
 #include <cassert>
 
-extern "C" {
-#include "libavutil/channel_layout.h"
-}
-
-/* declare the rng seed and initialize it */
-unsigned int CAEUtil::m_seed = (unsigned int)(CurrentHostCounter() / 1000.0f);
-#if defined(HAVE_SSE2) && defined(__SSE2__)
-  /* declare the SSE seed and initialize it */
-  MEMALIGN(16, __m128i CAEUtil::m_sseSeed) = _mm_set_epi32(CAEUtil::m_seed, CAEUtil::m_seed+1, CAEUtil::m_seed, CAEUtil::m_seed+1);
+#if defined(HAVE_SSE) && defined(__SSE__)
+#include <xmmintrin.h>
 #endif
 
 void AEDelayStatus::SetDelay(double d)
@@ -45,7 +26,7 @@ void AEDelayStatus::SetDelay(double d)
   tick = CurrentHostCounter();
 }
 
-double AEDelayStatus::GetDelay()
+double AEDelayStatus::GetDelay() const
 {
   double d = 0;
   if (tick)
@@ -107,20 +88,20 @@ unsigned int CAEUtil::DataFormatToBits(const enum AEDataFormat dataFormat)
     16,                  /* S16BE  */
     16,                  /* S16LE  */
     16,                  /* S16NE  */
-    
+
     32,                  /* S32BE  */
     32,                  /* S32LE  */
     32,                  /* S32NE  */
-    
+
     32,                  /* S24BE  */
     32,                  /* S24LE  */
     32,                  /* S24NE  */
     32,                  /* S24NER */
-    
+
     24,                  /* S24BE3 */
     24,                  /* S24LE3 */
     24,                  /* S24NE3 */
-    
+
     sizeof(double) << 3, /* DOUBLE */
     sizeof(float ) << 3, /* FLOAT  */
 
@@ -166,6 +147,8 @@ const char* CAEUtil::StreamTypeToStr(const enum CAEStreamInfo::DataType dataType
       return "STREAM_TYPE_AC3";
     case CAEStreamInfo::STREAM_TYPE_DTSHD:
       return "STREAM_TYPE_DTSHD";
+    case CAEStreamInfo::STREAM_TYPE_DTSHD_MA:
+      return "STREAM_TYPE_DTSHD_MA";
     case CAEStreamInfo::STREAM_TYPE_DTSHD_CORE:
       return "STREAM_TYPE_DTSHD_CORE";
     case CAEStreamInfo::STREAM_TYPE_DTS_1024:
@@ -198,23 +181,23 @@ const char* CAEUtil::DataFormatToStr(const enum AEDataFormat dataFormat)
     "AE_FMT_S16BE",
     "AE_FMT_S16LE",
     "AE_FMT_S16NE",
-    
+
     "AE_FMT_S32BE",
     "AE_FMT_S32LE",
     "AE_FMT_S32NE",
-    
+
     "AE_FMT_S24BE4",
     "AE_FMT_S24LE4",
     "AE_FMT_S24NE4",  /* S24 in 4 bytes */
     "AE_FMT_S24NE4MSB",
-    
+
     "AE_FMT_S24BE3",
     "AE_FMT_S24LE3",
     "AE_FMT_S24NE3", /* S24 in 3 bytes */
-    
+
     "AE_FMT_DOUBLE",
     "AE_FMT_FLOAT",
-    
+
     "AE_FMT_RAW",
 
     /* planar formats */
@@ -563,34 +546,86 @@ AVSampleFormat CAEUtil::GetAVSampleFormat(AEDataFormat format)
   }
 }
 
-uint64_t CAEUtil::GetAVChannel(enum AEChannel aechannel)
+uint64_t CAEUtil::GetAVChannelMask(enum AEChannel aechannel)
+{
+  enum AVChannel ch = GetAVChannel(aechannel);
+  if (ch == AV_CHAN_NONE)
+    return 0;
+  return (1ULL << ch);
+}
+
+enum AVChannel CAEUtil::GetAVChannel(enum AEChannel aechannel)
 {
   switch (aechannel)
   {
-  case AE_CH_FL:   return AV_CH_FRONT_LEFT;
-  case AE_CH_FR:   return AV_CH_FRONT_RIGHT;
-  case AE_CH_FC:   return AV_CH_FRONT_CENTER;
-  case AE_CH_LFE:  return AV_CH_LOW_FREQUENCY;
-  case AE_CH_BL:   return AV_CH_BACK_LEFT;
-  case AE_CH_BR:   return AV_CH_BACK_RIGHT;
-  case AE_CH_FLOC: return AV_CH_FRONT_LEFT_OF_CENTER;
-  case AE_CH_FROC: return AV_CH_FRONT_RIGHT_OF_CENTER;
-  case AE_CH_BC:   return AV_CH_BACK_CENTER;
-  case AE_CH_SL:   return AV_CH_SIDE_LEFT;
-  case AE_CH_SR:   return AV_CH_SIDE_RIGHT;
-  case AE_CH_TC:   return AV_CH_TOP_CENTER;
-  case AE_CH_TFL:  return AV_CH_TOP_FRONT_LEFT;
-  case AE_CH_TFC:  return AV_CH_TOP_FRONT_CENTER;
-  case AE_CH_TFR:  return AV_CH_TOP_FRONT_RIGHT;
-  case AE_CH_TBL:  return AV_CH_TOP_BACK_LEFT;
-  case AE_CH_TBC:  return AV_CH_TOP_BACK_CENTER;
-  case AE_CH_TBR:  return AV_CH_TOP_BACK_RIGHT;
-  default:
-    return 0;
+    case AE_CH_FL:
+      return AV_CHAN_FRONT_LEFT;
+    case AE_CH_FR:
+      return AV_CHAN_FRONT_RIGHT;
+    case AE_CH_FC:
+      return AV_CHAN_FRONT_CENTER;
+    case AE_CH_LFE:
+      return AV_CHAN_LOW_FREQUENCY;
+    case AE_CH_BL:
+      return AV_CHAN_BACK_LEFT;
+    case AE_CH_BR:
+      return AV_CHAN_BACK_RIGHT;
+    case AE_CH_FLOC:
+      return AV_CHAN_FRONT_LEFT_OF_CENTER;
+    case AE_CH_FROC:
+      return AV_CHAN_FRONT_RIGHT_OF_CENTER;
+    case AE_CH_BC:
+      return AV_CHAN_BACK_CENTER;
+    case AE_CH_SL:
+      return AV_CHAN_SIDE_LEFT;
+    case AE_CH_SR:
+      return AV_CHAN_SIDE_RIGHT;
+    case AE_CH_TC:
+      return AV_CHAN_TOP_CENTER;
+    case AE_CH_TFL:
+      return AV_CHAN_TOP_FRONT_LEFT;
+    case AE_CH_TFC:
+      return AV_CHAN_TOP_FRONT_CENTER;
+    case AE_CH_TFR:
+      return AV_CHAN_TOP_FRONT_RIGHT;
+    case AE_CH_TBL:
+      return AV_CHAN_TOP_BACK_LEFT;
+    case AE_CH_TBC:
+      return AV_CHAN_TOP_BACK_CENTER;
+    case AE_CH_TBR:
+      return AV_CHAN_TOP_BACK_RIGHT;
+    default:
+      return AV_CHAN_NONE;
   }
 }
 
 int CAEUtil::GetAVChannelIndex(enum AEChannel aechannel, uint64_t layout)
 {
-  return av_get_channel_layout_channel_index(layout, GetAVChannel(aechannel));
+  AVChannelLayout ch_layout = {};
+  av_channel_layout_from_mask(&ch_layout, layout);
+  int idx = av_channel_layout_index_from_channel(&ch_layout, GetAVChannel(aechannel));
+  av_channel_layout_uninit(&ch_layout);
+  return idx;
+}
+
+void CAEUtil::GenerateSilence(AEDataFormat format,
+                              unsigned int frameSize,
+                              void* buffer,
+                              unsigned int frames)
+
+{
+  const unsigned int dataLength{frames * frameSize};
+
+  switch (format)
+  {
+    case AE_FMT_U8:
+    case AE_FMT_U8P:
+      memset(buffer, 0x80, dataLength);
+      break;
+
+    default:
+      // binary representation of 0 in all other formats regardless of number of bits per sample
+      // is a concatenation of 0 bytes.
+      memset(buffer, 0, dataLength);
+  }
 }

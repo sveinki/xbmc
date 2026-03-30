@@ -3,35 +3,69 @@
 # --------
 # Finds the Lzo2 library
 #
-# This will will define the following variables::
+# This will define the following target:
 #
-# LZO2_FOUND - system has Lzo2
-# LZO2_INCLUDE_DIRS - the Lzo2 include directory
-# LZO2_LIBRARIES - the Lzo2 libraries
-#
-# and the following imported targets::
-#
-#   Lzo2::Lzo2   - The Lzo2 library
+#   ${APP_NAME_LC}::Lzo2   - The Lzo2 library
 
-find_path(LZO2_INCLUDE_DIR NAMES lzo1x.h
-                           PATH_SUFFIXES lzo)
+if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
 
-find_library(LZO2_LIBRARY NAMES lzo2 liblzo2)
+  include(cmake/scripts/common/ModuleHelpers.cmake)
 
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(Lzo2
-                                  REQUIRED_VARS LZO2_LIBRARY LZO2_INCLUDE_DIR)
+  macro(buildmacroLzo2)
+    set(patches "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/001-all-enable_tests.patch"
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/002-all-enable_docs.patch"
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/003-all-install_pkgconfig.patch"
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/004-all-win_set_debug_postfix.patch"
+                "${CORE_SOURCE_DIR}/tools/depends/target/${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}/005-all-win_set_compile_mp.patch")
 
-if(LZO2_FOUND)
-  set(LZO2_LIBRARIES ${LZO2_LIBRARY})
-  set(LZO2_INCLUDE_DIRS ${LZO2_INCLUDE_DIR})
+    if(WIN32 OR WINDOWS_STORE)
+      # Debug postfix only used for windows
+      set(${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_DEBUG_POSTFIX d)
+    endif()
 
-  if(NOT TARGET Lzo2::Lzo2)
-    add_library(Lzo2::Lzo2 UNKNOWN IMPORTED)
-    set_target_properties(Lzo2::Lzo2 PROPERTIES
-                                     IMPORTED_LOCATION "${LZO2_LIBRARY}"
-                                     INTERFACE_INCLUDE_DIRECTORIES "${LZO2_INCLUDE_DIR}")
+    generate_patchcommand("${patches}")
+    unset(patches)
+
+    set(CMAKE_ARGS -DENABLE_STATIC=ON
+                   -DENABLE_SHARED=OFF
+                   -DCMAKE_POLICY_VERSION_MINIMUM=3.10)
+
+    BUILD_DEP_TARGET()
+  endmacro()
+
+  set(${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC liblzo2)
+  set(${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME lzo2)
+
+  SETUP_BUILD_VARS()
+
+  SETUP_FIND_SPECS()
+
+  SEARCH_EXISTING_PACKAGES()
+
+  if(("${${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_VERSION}" VERSION_LESS ${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_VER} AND ENABLE_INTERNAL_LZO2) OR
+     (((CORE_SYSTEM_NAME STREQUAL linux AND NOT "webos" IN_LIST CORE_PLATFORM_NAME_LC) OR CORE_SYSTEM_NAME STREQUAL freebsd) AND ENABLE_INTERNAL_LZO2))
+    message(STATUS "Building ${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}: \(version \"${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_VER}\"\)")
+    cmake_language(EVAL CODE "
+      buildmacro${CMAKE_FIND_PACKAGE_NAME}()
+    ")
+  endif()
+
+  if(${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_FOUND)
+    if(TARGET PkgConfig::${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME} AND NOT TARGET ${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_BUILD_NAME})
+      add_library(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} ALIAS PkgConfig::${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME})
+    elseif(TARGET lzo2::lzo2 AND NOT TARGET ${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_BUILD_NAME})
+      # Kodi target - windows prebuilt lib
+      add_library(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} ALIAS lzo2::lzo2)
+    else()
+      SETUP_BUILD_TARGET()
+
+      add_dependencies(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} ${${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_BUILD_NAME})
+    endif()
+
+    ADD_MULTICONFIG_BUILDMACRO()
+  else()
+    if(Lzo2_FIND_REQUIRED)
+      message(FATAL_ERROR "Lzo2 library was not found.")
+    endif()
   endif()
 endif()
-
-mark_as_advanced(LZO2_INCLUDE_DIR LZO2_LIBRARY)

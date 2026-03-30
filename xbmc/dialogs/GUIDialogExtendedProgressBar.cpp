@@ -1,28 +1,19 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <cmath>
 #include "GUIDialogExtendedProgressBar.h"
+
+#include "guilib/GUIMessage.h"
 #include "guilib/GUIProgressControl.h"
-#include "threads/SingleLock.h"
-#include "threads/SystemClock.h"
+#include "utils/TimeUtils.h"
+
+#include <cmath>
+#include <mutex>
 
 #define CONTROL_LABELHEADER       30
 #define CONTROL_LABELTITLE        31
@@ -32,20 +23,20 @@
 
 std::string CGUIDialogProgressBarHandle::Text(void) const
 {
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
   std::string retVal(m_strText);
   return retVal;
 }
 
 void CGUIDialogProgressBarHandle::SetText(const std::string &strText)
 {
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
   m_strText = strText;
 }
 
 void CGUIDialogProgressBarHandle::SetTitle(const std::string &strTitle)
 {
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
   m_strTitle = strTitle;
 }
 
@@ -68,7 +59,7 @@ CGUIDialogProgressBarHandle *CGUIDialogExtendedProgressBar::GetHandle(const std:
 {
   CGUIDialogProgressBarHandle *handle = new CGUIDialogProgressBarHandle(strTitle);
   {
-    CSingleLock lock(m_critSection);
+    std::unique_lock lock(m_critSection);
     m_handles.push_back(handle);
   }
 
@@ -83,7 +74,7 @@ bool CGUIDialogExtendedProgressBar::OnMessage(CGUIMessage& message)
   {
   case GUI_MSG_WINDOW_INIT:
     {
-      m_iLastSwitchTime = XbmcThreads::SystemClockMillis();
+      m_iLastSwitchTime = CTimeUtils::GetFrameTime();
       m_iCurrentItem = 0;
       CGUIDialog::OnMessage(message);
 
@@ -111,7 +102,7 @@ void CGUIDialogExtendedProgressBar::UpdateState(unsigned int currentTime)
   float  fProgress(-1.0f);
 
   {
-    CSingleLock lock(m_critSection);
+    std::unique_lock lock(m_critSection);
 
     // delete finished items
     for (int iPtr = m_handles.size() - 1; iPtr >= 0; iPtr--)
@@ -123,7 +114,7 @@ void CGUIDialogExtendedProgressBar::UpdateState(unsigned int currentTime)
       }
     }
 
-    if (!m_handles.size())
+    if (m_handles.empty())
     {
       Close(false, 0, true, false);
       return;

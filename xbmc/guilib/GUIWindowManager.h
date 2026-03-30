@@ -1,50 +1,36 @@
-/*!
-\file GUIWindowManager.h
-\brief
-*/
-
-#ifndef GUILIB_CGUIWindowManager_H
-#define GUILIB_CGUIWindowManager_H
+/*
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
 
 #pragma once
 
-/*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
- *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
- */
-
-#include <list>
-#include <utility>
-#include <unordered_map>
-#include <vector>
-
 #include "DirtyRegionTracker.h"
-#include "guilib/WindowIDs.h"
 #include "GUIWindow.h"
 #include "IMsgTargetCallback.h"
 #include "IWindowManagerCallback.h"
+#include "guilib/WindowIDs.h"
 #include "messaging/IMessageTarget.h"
-#include "utils/GlobalsHandling.h"
+
+#include <list>
+#include <memory>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 class CGUIDialog;
 class CGUIMediaWindow;
 
+#ifdef TARGET_WINDOWS_STORE
+#pragma pack(push, 8)
+#endif
 enum class DialogModalityType;
+#ifdef TARGET_WINDOWS_STORE
+#pragma pack(pop)
+#endif
 
 namespace KODI
 {
@@ -71,7 +57,7 @@ public:
   bool SendMessage(int message, int senderID, int destID, int param1 = 0, int param2 = 0);
   bool SendMessage(CGUIMessage& message, int window);
   void Initialize();
-  void Add(CGUIWindow* pWindow);
+  bool Add(CGUIWindow* pWindow);
   void AddUniqueInstance(CGUIWindow *window);
   void AddCustomWindow(CGUIWindow* pWindow);
   void Remove(int id);
@@ -81,6 +67,14 @@ public:
   void ChangeActiveWindow(int iNewID, const std::string &strPath = "");
   void ActivateWindow(int iWindowID, const std::vector<std::string>& params, bool swappingWindows = false, bool force = false);
   void PreviousWindow();
+
+  /**
+   * \brief Switch window to fullscreen
+   *
+   * \param force enforce fullscreen switch
+   * \return True if switch is made to fullscreen, otherwise False
+   */
+  bool SwitchToFullScreen(bool force = false);
 
   void CloseDialogs(bool forceClose = false) const;
   void CloseInternalModalDialogs(bool forceClose = false) const;
@@ -129,7 +123,7 @@ public:
    no windows should be able to be initialized.
    \return true if the window manager is initialized, false otherwise.
    */
-  bool Initialized() const { return m_initialized; };
+  bool Initialized() const { return m_initialized; }
 
   /*! \brief Create and initialize all windows and dialogs
    */
@@ -154,8 +148,12 @@ public:
    * \param id the window id
    * \return the window with for the given type \code{T} or null
    */
-  template<typename T, typename std::enable_if<std::is_base_of<CGUIWindow,T>::value>::type* = nullptr>
-  T* GetWindow(int id) const { return dynamic_cast<T *>(GetWindow(id)); };
+  template<typename T,
+           typename std::enable_if<std::is_base_of<CGUIWindow, T>::value>::type* = nullptr>
+  T* GetWindow(int id) const
+  {
+    return dynamic_cast<T*>(GetWindow(id));
+  }
 
   /*! \brief Return the window with the given id or null.
    *
@@ -180,36 +178,53 @@ public:
    */
   void RegisterDialog(CGUIWindow* dialog);
   void RemoveDialog(int id);
-  int GetTopMostModalDialogID(bool ignoreClosing = false) const;
 
-  void SendThreadMessage(CGUIMessage& message, int window = 0);
+  /*! \brief Get the ID of the topmost dialog
+   *
+   * \param ignoreClosing ignore dialog is closing
+   * \return the ID of the topmost dialog or WINDOW_INVALID if no dialog is active
+   */
+  int GetTopmostDialog(bool ignoreClosing = false) const;
+
+  /*! \brief Get the ID of the topmost modal dialog
+   *
+   * \param ignoreClosing ignore dialog is closing
+   * \return the ID of the topmost modal dialog or WINDOW_INVALID if no modal dialog is active
+   */
+  int GetTopmostModalDialog(bool ignoreClosing = false) const;
+
+  void SendThreadMessage(const CGUIMessage& message, int window = 0);
   void DispatchThreadMessages();
   // method to removed queued messages with message id in the requested message id list.
   // pMessageIDList: point to first integer of a 0 ends integer array.
-  int RemoveThreadMessageByMessageIds(int *pMessageIDList);
+  int RemoveThreadMessageByMessageIds(const int* pMessageIDList);
   void AddMsgTarget( IMsgTargetCallback* pMsgTarget );
+  void RemoveMsgTarget(IMsgTargetCallback* pMsgTarget);
   int GetActiveWindow() const;
-  int GetActiveWindowID() const;
-  int GetFocusedWindow() const;
-  bool HasModalDialog(const std::vector<DialogModalityType>& types = std::vector<DialogModalityType>(), bool ignoreClosing = true) const;
-  bool HasVisibleModalDialog(const std::vector<DialogModalityType>& types = std::vector<DialogModalityType>()) const;
-  bool HasDialogOnScreen() const;
+  int GetActiveWindowOrDialog() const;
+  bool HasModalDialog(bool ignoreClosing) const;
+  bool HasVisibleModalDialog() const;
+  bool IsDialogTopmost(int id, bool modal = false) const;
+  bool IsDialogTopmost(const std::string &xmlFile, bool modal = false) const;
+  bool IsModalDialogTopmost(int id) const;
+  bool IsModalDialogTopmost(const std::string &xmlFile) const;
   bool IsWindowActive(int id, bool ignoreClosing = true) const;
   bool IsWindowVisible(int id) const;
-  bool IsWindowTopMost(int id) const;
   bool IsWindowActive(const std::string &xmlFile, bool ignoreClosing = true) const;
   bool IsWindowVisible(const std::string &xmlFile) const;
-  bool IsWindowTopMost(const std::string &xmlFile) const;
   /*! \brief Checks if the given window is an addon window.
    *
    * \return true if the given window is an addon window, otherwise false.
    */
-  bool IsAddonWindow(int id) const { return (id >= WINDOW_ADDON_START && id <= WINDOW_ADDON_END); };
+  bool IsAddonWindow(int id) const { return (id >= WINDOW_ADDON_START && id <= WINDOW_ADDON_END); }
   /*! \brief Checks if the given window is a python window.
    *
    * \return true if the given window is a python window, otherwise false.
    */
-  bool IsPythonWindow(int id) const { return (id >= WINDOW_PYTHON_START && id <= WINDOW_PYTHON_END); };
+  bool IsPythonWindow(int id) const
+  {
+    return (id >= WINDOW_PYTHON_START && id <= WINDOW_PYTHON_END);
+  }
 
   bool HasVisibleControls();
 
@@ -218,6 +233,12 @@ public:
 #endif
 private:
   void RenderPass() const;
+  /*! \brief Render in one back to front pass.
+   */
+  void RenderPassSingle() const;
+  /*! \brief Render opaque elements front to back, and transparent ones back to front
+   */
+  void RenderPassDual() const;
 
   void LoadNotOnDemandWindows();
   void UnloadNotOnDemandWindows();
@@ -233,10 +254,10 @@ private:
   void RemoveFromWindowHistory(int windowID);
   void ClearWindowHistory();
   void CloseWindowSync(CGUIWindow *window, int nextWindowID = 0);
-  CGUIWindow *GetTopMostDialog() const;
+  int GetTopmostDialog(bool modal, bool ignoreClosing) const;
 
   friend class KODI::MESSAGING::CApplicationMessenger;
-  
+
   /*! \brief Activate the given window.
    *
    * \param windowID The window ID to activate.
@@ -246,16 +267,16 @@ private:
    */
   void ActivateWindow_Internal(int windowID, const std::vector<std::string> &params, bool swappingWindows, bool force = false);
 
-  void ProcessRenderLoop(bool renderOnly = false);
+  bool ProcessRenderLoop(bool renderOnly);
 
   bool HandleAction(const CAction &action) const;
 
-  std::unordered_map<int, CGUIWindow*> m_mapWindows;
-  std::vector<CGUIWindow*> m_vecCustomWindows;
-  std::vector<CGUIWindow*> m_activeDialogs;
-  std::vector<CGUIWindow*> m_deleteWindows;
+  std::unordered_map<int, std::shared_ptr<CGUIWindow>> m_mapWindows;
+  std::vector<std::shared_ptr<CGUIWindow>> m_vecCustomWindows;
+  std::vector<std::shared_ptr<CGUIWindow>> m_activeDialogs;
+  std::vector<std::shared_ptr<CGUIWindow>> m_deleteWindows;
 
-  std::stack<int> m_windowHistory;
+  std::deque<int> m_windowHistory;
 
   IWindowManagerCallback* m_pCallback;
   std::list< std::pair<CGUIMessage*,int> > m_vecThreadMessages;
@@ -270,12 +291,3 @@ private:
   CDirtyRegionList m_dirtyregions;
   CDirtyRegionTracker m_tracker;
 };
-
-/*!
- \ingroup winman
- \brief
- */
-XBMC_GLOBAL_REF(CGUIWindowManager,g_windowManager);
-#define g_windowManager XBMC_GLOBAL_USE(CGUIWindowManager)
-#endif
-

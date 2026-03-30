@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://www.xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "XSLTUtils.h"
@@ -34,16 +22,17 @@ void err(void *ctx, const char *msg, ...) {
   va_start(arg_ptr, msg);
   vsnprintf(string, TMP_BUF_SIZE, msg, arg_ptr);
   va_end(arg_ptr);
-  CLog::Log(LOGDEBUG, "XSLT: %s", string);
-  return;
+  CLog::Log(LOGDEBUG, "XSLT: {}", string);
 }
 
-XSLTUtils::XSLTUtils() :
-m_xmlInput(nullptr), m_xmlOutput(nullptr), m_xmlStylesheet(nullptr), m_xsltStylesheet(nullptr)
+XSLTUtils::XSLTUtils()
 {
   // initialize libxslt
+  // The following two functions are deprecated
+#if LIBXML_VERSION <= 21200
   xmlSubstituteEntitiesDefault(1);
   xmlLoadExtDtdDefaultValue = 0;
+#endif
   xsltSetGenericErrorFunc(NULL, err);
 }
 
@@ -85,7 +74,8 @@ bool XSLTUtils::XSLTTransform(std::string& output)
 
 bool XSLTUtils::SetInput(const std::string& input)
 {
-  m_xmlInput = xmlParseMemory(input.c_str(), input.size());
+  m_xmlInput = xmlReadMemory(input.c_str(), input.size(), NULL, NULL, XML_PARSE_NOENT);
+
   if (!m_xmlInput)
     return false;
   return true;
@@ -98,10 +88,12 @@ bool XSLTUtils::SetStylesheet(const std::string& stylesheet)
     m_xsltStylesheet = NULL;
   }
 
-  m_xmlStylesheet = xmlParseMemory(stylesheet.c_str(), stylesheet.size());
+  m_xmlStylesheet =
+      xmlReadMemory(stylesheet.c_str(), stylesheet.size(), NULL, NULL, XML_PARSE_NOENT);
+
   if (!m_xmlStylesheet)
   {
-    CLog::Log(LOGDEBUG, "could not xmlParseMemory stylesheetdoc");
+    CLog::Log(LOGDEBUG, "could not read stylesheetdoc");
     return false;
   }
 
@@ -112,6 +104,6 @@ bool XSLTUtils::SetStylesheet(const std::string& stylesheet)
     m_xmlStylesheet = NULL;
     return false;
   }
-  
+
   return true;
 }

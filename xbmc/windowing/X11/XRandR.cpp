@@ -1,43 +1,32 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "XRandR.h"
 
-#include <string.h>
-#include <sys/wait.h>
-#include "system.h"
-#include "PlatformInclude.h"
-#include "utils/XBMCTinyXML.h"
-#include "utils/StringUtils.h"
-#include "../xbmc/utils/log.h"
-#include "threads/SystemClock.h"
 #include "CompileInfo.h"
+#include "threads/SystemClock.h"
+#include "utils/StringUtils.h"
+#include "utils/XBMCTinyXML2.h"
+#include "utils/XTimeUtils.h"
+#include "utils/log.h"
+
+#include <string.h>
+
+#include <sys/wait.h>
+
+#include "PlatformDefs.h"
 
 #if defined(TARGET_FREEBSD)
 #include <sys/types.h>
 #include <sys/wait.h>
 #endif
 
-#ifdef TARGET_POSIX
-#include "linux/XTimeUtils.h"
-#endif
+using namespace std::chrono_literals;
 
 CXRandR::CXRandR(bool query)
 {
@@ -51,7 +40,7 @@ bool CXRandR::Query(bool force, bool ignoreoff)
 {
   if (!force)
     if (m_bInit)
-      return m_outputs.size() > 0;
+      return !m_outputs.empty();
 
   m_bInit = true;
 
@@ -79,7 +68,7 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
   {
     cmd  = getenv("KODI_BIN_HOME");
     cmd += "/" + appname + "-xrandr";
-    cmd = StringUtils::Format("%s -q --screen %d", cmd.c_str(), screennum);
+    cmd = StringUtils::Format("{} -q --screen {}", cmd, screennum);
   }
 
   FILE* file = popen(cmd.c_str(),"r");
@@ -89,9 +78,8 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
     return false;
   }
 
-
-  CXBMCTinyXML xmlDoc;
-  if (!xmlDoc.LoadFile(file, TIXML_DEFAULT_ENCODING))
+  CXBMCTinyXML2 xmlDoc;
+  if (!xmlDoc.LoadFile(file))
   {
     CLog::Log(LOGERROR, "CXRandR::Query - unable to open xrandr xml");
     pclose(file);
@@ -99,19 +87,20 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
   }
   pclose(file);
 
-  TiXmlElement *pRootElement = xmlDoc.RootElement();
-  if (atoi(pRootElement->Attribute("id")) != screennum)
+  auto* rootElement = xmlDoc.RootElement();
+  if (atoi(rootElement->Attribute("id")) != screennum)
   {
     //! @todo ERROR
     return false;
   }
 
-  for (TiXmlElement* output = pRootElement->FirstChildElement("output"); output; output = output->NextSiblingElement("output"))
+  for (auto* output = rootElement->FirstChildElement("output"); output;
+       output = output->NextSiblingElement("output"))
   {
     XOutput xoutput;
     xoutput.name = output->Attribute("name");
     StringUtils::Trim(xoutput.name);
-    xoutput.isConnected = (strcasecmp(output->Attribute("connected"), "true") == 0);
+    xoutput.isConnected = (StringUtils::CompareNoCase(output->Attribute("connected"), "true") == 0);
     xoutput.screen = screennum;
     xoutput.w = (output->Attribute("w") != NULL ? atoi(output->Attribute("w")) : 0);
     xoutput.h = (output->Attribute("h") != NULL ? atoi(output->Attribute("h")) : 0);
@@ -120,8 +109,9 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
     xoutput.crtc = (output->Attribute("crtc") != NULL ? atoi(output->Attribute("crtc")) : 0);
     xoutput.wmm = (output->Attribute("wmm") != NULL ? atoi(output->Attribute("wmm")) : 0);
     xoutput.hmm = (output->Attribute("hmm") != NULL ? atoi(output->Attribute("hmm")) : 0);
-    if (output->Attribute("rotation") != NULL
-        && (strcasecmp(output->Attribute("rotation"), "left") == 0 || strcasecmp(output->Attribute("rotation"), "right") == 0))
+    if (output->Attribute("rotation") != NULL &&
+        (StringUtils::CompareNoCase(output->Attribute("rotation"), "left") == 0 ||
+         StringUtils::CompareNoCase(output->Attribute("rotation"), "right") == 0))
     {
       xoutput.isRotated = true;
     }
@@ -132,7 +122,8 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
        continue;
 
     bool hascurrent = false;
-    for (TiXmlElement* mode = output->FirstChildElement("mode"); mode; mode = mode->NextSiblingElement("mode"))
+    for (auto* mode = output->FirstChildElement("mode"); mode;
+         mode = mode->NextSiblingElement("mode"))
     {
       XMode xmode;
       xmode.id = mode->Attribute("id");
@@ -140,8 +131,8 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
       xmode.hz = atof(mode->Attribute("hz"));
       xmode.w = atoi(mode->Attribute("w"));
       xmode.h = atoi(mode->Attribute("h"));
-      xmode.isPreferred = (strcasecmp(mode->Attribute("preferred"), "true") == 0);
-      xmode.isCurrent = (strcasecmp(mode->Attribute("current"), "true") == 0);
+      xmode.isPreferred = (StringUtils::CompareNoCase(mode->Attribute("preferred"), "true") == 0);
+      xmode.isCurrent = (StringUtils::CompareNoCase(mode->Attribute("current"), "true") == 0);
       xoutput.modes.push_back(xmode);
       if (xmode.isCurrent)
         hascurrent = true;
@@ -149,9 +140,10 @@ bool CXRandR::Query(bool force, int screennum, bool ignoreoff)
     if (hascurrent || !ignoreoff)
       m_outputs.push_back(xoutput);
     else
-      CLog::Log(LOGWARNING, "CXRandR::Query - output %s has no current mode, assuming disconnected", xoutput.name.c_str());
+      CLog::Log(LOGWARNING, "CXRandR::Query - output {} has no current mode, assuming disconnected",
+                xoutput.name);
   }
-  return m_outputs.size() > 0;
+  return !m_outputs.empty();
 }
 
 bool CXRandR::TurnOffOutput(const std::string& name)
@@ -168,7 +160,7 @@ bool CXRandR::TurnOffOutput(const std::string& name)
   {
     cmd  = getenv("KODI_BIN_HOME");
     cmd += "/" + appname + "-xrandr";
-    cmd = StringUtils::Format("%s --screen %d --output %s --off", cmd.c_str(), output->screen, name.c_str());
+    cmd = StringUtils::Format("{} --screen {} --output {} --off", cmd, output->screen, name);
   }
 
   int status = system(cmd.c_str());
@@ -213,7 +205,7 @@ bool CXRandR::TurnOnOutput(const std::string& name)
   if (!SetMode(*output, mode))
     return false;
 
-  XbmcThreads::EndTime timeout(5000);
+  XbmcThreads::EndTime<> timeout(5s);
   while (!timeout.IsTimePast())
   {
     if (!Query(true))
@@ -223,7 +215,7 @@ bool CXRandR::TurnOnOutput(const std::string& name)
     if (output && output->h > 0)
       return true;
 
-    Sleep(200);
+    KODI::TIME::Sleep(200ms);
   }
 
   return false;
@@ -240,9 +232,9 @@ void CXRandR::SaveState()
   Query(true);
 }
 
-bool CXRandR::SetMode(XOutput output, XMode mode)
+bool CXRandR::SetMode(const XOutput& output, const XMode& mode)
 {
-  if ((output.name == "" && mode.id == ""))
+  if ((output.name.empty() && mode.id.empty()))
     return true;
 
   Query();
@@ -261,7 +253,9 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
 
   if (!isOutputFound)
   {
-    CLog::Log(LOGERROR, "CXRandR::SetMode: asked to change resolution for non existing output: %s mode: %s", output.name.c_str(), mode.id.c_str());
+    CLog::Log(LOGERROR,
+              "CXRandR::SetMode: asked to change resolution for non existing output: {} mode: {}",
+              output.name, mode.id);
     return false;
   }
 
@@ -281,7 +275,10 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
       }
       else
       {
-        CLog::Log(LOGERROR, "CXRandR::SetMode: asked to change resolution for mode that exists but with different w/h/hz: %s mode: %s. Searching for similar modes...", output.name.c_str(), mode.id.c_str());
+        CLog::Log(LOGERROR,
+                  "CXRandR::SetMode: asked to change resolution for mode that exists but with "
+                  "different w/h/hz: {} mode: {}. Searching for similar modes...",
+                  output.name, mode.id);
         break;
       }
     }
@@ -297,7 +294,8 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
       {
         isModeFound = true;
         modeFound = outputFound.modes[i];
-        CLog::Log(LOGWARNING, "CXRandR::SetMode: found alternative mode (same hz): %s mode: %s.", output.name.c_str(), outputFound.modes[i].id.c_str());
+        CLog::Log(LOGWARNING, "CXRandR::SetMode: found alternative mode (same hz): {} mode: {}.",
+                  output.name, outputFound.modes[i].id);
       }
     }
   }
@@ -311,7 +309,9 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
       {
         isModeFound = true;
         modeFound = outputFound.modes[i];
-        CLog::Log(LOGWARNING, "CXRandR::SetMode: found alternative mode (different hz): %s mode: %s.", output.name.c_str(), outputFound.modes[i].id.c_str());
+        CLog::Log(LOGWARNING,
+                  "CXRandR::SetMode: found alternative mode (different hz): {} mode: {}.",
+                  output.name, outputFound.modes[i].id);
       }
     }
   }
@@ -319,7 +319,9 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
   // Let's try finding a mode that is the same
   if (!isModeFound)
   {
-    CLog::Log(LOGERROR, "CXRandR::SetMode: asked to change resolution for non existing mode: %s mode: %s", output.name.c_str(), mode.id.c_str());
+    CLog::Log(LOGERROR,
+              "CXRandR::SetMode: asked to change resolution for non existing mode: {} mode: {}",
+              output.name, mode.id);
     return false;
   }
 
@@ -330,12 +332,12 @@ bool CXRandR::SetMode(XOutput output, XMode mode)
   char cmd[255];
 
   if (getenv("KODI_BIN_HOME"))
-    snprintf(cmd, sizeof(cmd), "%s/%s-xrandr --screen %d --output %s --mode %s", 
+    snprintf(cmd, sizeof(cmd), "%s/%s-xrandr --screen %d --output %s --mode %s",
                getenv("KODI_BIN_HOME"),appname.c_str(),
                outputFound.screen, outputFound.name.c_str(), modeFound.id.c_str());
   else
     return false;
-  CLog::Log(LOGINFO, "XRANDR: %s", cmd);
+  CLog::Log(LOGINFO, "XRANDR: {}", cmd);
   int status = system(cmd);
   if (status == -1)
     return false;
@@ -353,7 +355,7 @@ XMode CXRandR::GetCurrentMode(const std::string& outputName)
 
   for (unsigned int j = 0; j < m_outputs.size(); j++)
   {
-    if (m_outputs[j].name == outputName || outputName == "")
+    if (m_outputs[j].name == outputName || outputName.empty())
     {
       for (unsigned int i = 0; i < m_outputs[j].modes.size(); i++)
       {
@@ -376,7 +378,7 @@ XMode CXRandR::GetPreferredMode(const std::string& outputName)
 
   for (unsigned int j = 0; j < m_outputs.size(); j++)
   {
-    if (m_outputs[j].name == outputName || outputName == "")
+    if (m_outputs[j].name == outputName || outputName.empty())
     {
       for (unsigned int i = 0; i < m_outputs[j].modes.size(); i++)
       {
@@ -395,15 +397,15 @@ XMode CXRandR::GetPreferredMode(const std::string& outputName)
 void CXRandR::LoadCustomModeLinesToAllOutputs(void)
 {
   Query();
-  CXBMCTinyXML xmlDoc;
+  CXBMCTinyXML2 xmlDoc;
 
   if (!xmlDoc.LoadFile("special://xbmc/userdata/ModeLines.xml"))
   {
     return;
   }
 
-  TiXmlElement *pRootElement = xmlDoc.RootElement();
-  if (strcasecmp(pRootElement->Value(), "modelines") != 0)
+  auto* rootElement = xmlDoc.RootElement();
+  if (StringUtils::CompareNoCase(rootElement->Value(), "modelines") != 0)
   {
     //! @todo ERROR
     return;
@@ -413,7 +415,8 @@ void CXRandR::LoadCustomModeLinesToAllOutputs(void)
   std::string name;
   std::string strModeLine;
 
-  for (TiXmlElement* modeline = pRootElement->FirstChildElement("modeline"); modeline; modeline = modeline->NextSiblingElement("modeline"))
+  for (auto* modeline = rootElement->FirstChildElement("modeline"); modeline;
+       modeline = modeline->NextSiblingElement("modeline"))
   {
     name = modeline->Attribute("label");
     StringUtils::Trim(name);
@@ -427,7 +430,7 @@ void CXRandR::LoadCustomModeLinesToAllOutputs(void)
       snprintf(cmd, sizeof(cmd), "%s/%s-xrandr --newmode \"%s\" %s > /dev/null 2>&1", getenv("KODI_BIN_HOME"),
                appname.c_str(), name.c_str(), strModeLine.c_str());
       if (system(cmd) != 0)
-        CLog::Log(LOGERROR, "Unable to create modeline \"%s\"", name.c_str());
+        CLog::Log(LOGERROR, "Unable to create modeline \"{}\"", name);
     }
 
     for (unsigned int i = 0; i < m_outputs.size(); i++)
@@ -437,7 +440,7 @@ void CXRandR::LoadCustomModeLinesToAllOutputs(void)
         snprintf(cmd, sizeof(cmd), "%s/%s-xrandr --addmode %s \"%s\"  > /dev/null 2>&1", getenv("KODI_BIN_HOME"),
                  appname.c_str(), m_outputs[i].name.c_str(), name.c_str());
         if (system(cmd) != 0)
-          CLog::Log(LOGERROR, "Unable to add modeline \"%s\"", name.c_str());
+          CLog::Log(LOGERROR, "Unable to add modeline \"{}\"", name);
       }
     }
   }
@@ -492,7 +495,7 @@ int CXRandR::GetCrtc(int x, int y, float &hz)
         (m_outputs[i].y <= y && (m_outputs[i].y+m_outputs[i].h) > y))
     {
       crtc = m_outputs[i].crtc;
-      for (auto mode: m_outputs[i].modes)
+      for (const auto& mode : m_outputs[i].modes)
       {
         if (mode.isCurrent)
         {

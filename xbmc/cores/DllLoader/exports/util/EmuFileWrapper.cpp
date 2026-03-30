@@ -1,33 +1,23 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "EmuFileWrapper.h"
+
 #include "filesystem/File.h"
-#include "threads/SingleLock.h"
+
+#include <mutex>
 
 CEmuFileWrapper g_emuFileWrapper;
 
 namespace
 {
 
-constexpr bool isValidFilePtr(FILE* f)
+constexpr bool isValidFilePtr(const FILE* f)
 {
   return (f != nullptr);
 }
@@ -36,11 +26,11 @@ constexpr bool isValidFilePtr(FILE* f)
 CEmuFileWrapper::CEmuFileWrapper()
 {
   // since we always use dlls we might just initialize it directly
-  for (int i = 0; i < MAX_EMULATED_FILES; i++)
+  for (EmuFileObject& file : m_files)
   {
-    memset(&m_files[i], 0, sizeof(EmuFileObject));
-    m_files[i].used = false;
-    m_files[i].fd = -1;
+    memset(&file, 0, sizeof(EmuFileObject));
+    file.used = false;
+    file.fd = -1;
   }
 }
 
@@ -51,21 +41,21 @@ CEmuFileWrapper::~CEmuFileWrapper()
 
 void CEmuFileWrapper::CleanUp()
 {
-  CSingleLock lock(m_criticalSection);
-  for (int i = 0; i < MAX_EMULATED_FILES; i++)
+  std::unique_lock lock(m_criticalSection);
+  for (EmuFileObject& file : m_files)
   {
-    if (m_files[i].used)
+    if (file.used)
     {
-      m_files[i].file_xbmc->Close();
-      delete m_files[i].file_xbmc;
+      file.file_xbmc->Close();
+      delete file.file_xbmc;
 
-      if (m_files[i].file_lock)
+      if (file.file_lock)
       {
-        delete m_files[i].file_lock;
-        m_files[i].file_lock = nullptr;
+        delete file.file_lock;
+        file.file_lock = nullptr;
       }
-      m_files[i].used = false;
-      m_files[i].fd = -1;
+      file.used = false;
+      file.fd = -1;
     }
   }
 }
@@ -74,7 +64,7 @@ EmuFileObject* CEmuFileWrapper::RegisterFileObject(XFILE::CFile* pFile)
 {
   EmuFileObject* object = nullptr;
 
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
 
   for (int i = 0; i < MAX_EMULATED_FILES; i++)
   {
@@ -102,7 +92,7 @@ void CEmuFileWrapper::UnRegisterFileObjectByDescriptor(int fd)
   if (!m_files[i].used)
     return;
 
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
 
   // we assume the emulated function already deleted the CFile object
   if (m_files[i].file_lock)

@@ -1,26 +1,17 @@
 /*
- *      Copyright (C) 2016 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
 #include "threads/CriticalSection.h"
-#include "threads/SingleLock.h"
+
+#include <functional>
+#include <mutex>
 
 namespace detail
 {
@@ -39,42 +30,42 @@ template<typename Event, typename Owner>
 class CSubscription : public ISubscription<Event>
 {
 public:
-  typedef void (Owner::*Fn)(const Event&);
-  CSubscription(Owner* owner, Fn fn);
+  using EventHandler = std::function<void(const Event&)>;
+  CSubscription(Owner* owner, const EventHandler& eventHandler);
   void HandleEvent(const Event& event) override;
   void Cancel() override;
   bool IsOwnedBy(void *obj) override;
 
 private:
   Owner* m_owner;
-  Fn m_eventHandler;
+  EventHandler m_eventHandler;
   CCriticalSection m_criticalSection;
 };
 
 template<typename Event, typename Owner>
-CSubscription<Event, Owner>::CSubscription(Owner* owner, Fn fn)
-    : m_owner(owner), m_eventHandler(fn)
+CSubscription<Event, Owner>::CSubscription(Owner* owner, const EventHandler& eventHandler)
+  : m_owner(owner), m_eventHandler(eventHandler)
 {}
 
 template<typename Event, typename Owner>
 bool CSubscription<Event, Owner>::IsOwnedBy(void* obj)
 {
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
   return obj != nullptr && obj == m_owner;
 }
 
 template<typename Event, typename Owner>
 void CSubscription<Event, Owner>::Cancel()
 {
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
   m_owner = nullptr;
 }
 
 template<typename Event, typename Owner>
 void CSubscription<Event, Owner>::HandleEvent(const Event& event)
 {
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
   if (m_owner)
-    (m_owner->*m_eventHandler)(event);
+    m_eventHandler(event);
 }
 }

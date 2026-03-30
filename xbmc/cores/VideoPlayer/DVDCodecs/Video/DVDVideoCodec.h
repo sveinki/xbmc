@@ -1,33 +1,21 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-#include "cores/VideoPlayer/Process/ProcessInfo.h"
-#include "cores/VideoPlayer/Process/VideoBuffer.h"
-#include "cores/VideoPlayer/DVDDemuxers/DVDDemuxPacket.h"
+#pragma once
+
 #include "DVDResource.h"
+#include "cores/VideoPlayer/Buffers/VideoBuffer.h"
+#include "cores/VideoPlayer/Interface/DemuxPacket.h"
+#include "cores/VideoPlayer/Process/ProcessInfo.h"
 
 extern "C" {
-#include "libavcodec/avcodec.h"
+#include <libavcodec/avcodec.h>
+#include <libavutil/mastering_display_metadata.h>
 }
 
 #include <vector>
@@ -48,10 +36,12 @@ class CSetting;
 struct VideoPicture
 {
 public:
-  VideoPicture();
+  VideoPicture() = default;
   ~VideoPicture();
   VideoPicture& CopyRef(const VideoPicture &pic);
   VideoPicture& SetParams(const VideoPicture &pic);
+  void Reset(); // reinitialize members, videoBuffer will be released if set!
+  bool IsSameParams(const VideoPicture& pic) const;
 
   CVideoBuffer *videoBuffer = nullptr;
 
@@ -61,16 +51,30 @@ public:
   double iRepeatPicture;
   double iDuration;
   unsigned int iFrameType         : 4;  //< see defines above // 1->I, 2->P, 3->B, 0->Undef
-  unsigned int color_matrix       : 4;
+  AVColorSpace color_space;
   unsigned int color_range        : 1;  //< 1 indicate if we have a full range of color
-  unsigned int chroma_position;
-  unsigned int color_primaries;
-  unsigned int color_transfer;
-  char stereo_mode[32];
+  AVChromaLocation chroma_position;
+  AVColorPrimaries color_primaries; // heuristics applied when original is AVCOL_PRI_UNSPECIFIED
+  AVColorPrimaries m_originalColorPrimaries;
+  AVColorTransferCharacteristic color_transfer;
+  unsigned int colorBits = 8;
+  std::string stereoMode;
 
   int8_t* qp_table;                //< Quantization parameters, primarily used by filters
   int qstride;
   int qscale_type;
+  int pict_type;
+
+  StreamHdrType hdrType;
+  StreamHdrType hdrTypeAlt;
+  std::string strDVELType;
+
+  bool hasDisplayMetadata = false;
+  AVMasteringDisplayMetadata displayMetadata;
+  bool hasLightMetadata = false;
+  AVContentLightMetadata lightMetadata;
+
+  AVPixelFormat pixelFormat; //< source pixel format
 
   unsigned int iWidth;
   unsigned int iHeight;
@@ -78,8 +82,10 @@ public:
   unsigned int iDisplayHeight;          //< height of the picture without black bars
 
 private:
-  VideoPicture(VideoPicture const&);
-  VideoPicture& operator=(VideoPicture const&);
+  VideoPicture(VideoPicture const&) = default;
+  VideoPicture& operator=(VideoPicture const&) = default;
+
+  bool CompareDisplayMetadata(const VideoPicture& pic) const;
 };
 
 #define DVP_FLAG_TOP_FIELD_FIRST    0x00000001
@@ -113,7 +119,8 @@ public:
   enum VCReturn
   {
     VC_NONE = 0,
-    VC_ERROR,           //< an error occured, no other messages will be returned
+    VC_ERROR,           //< an error occurred, no other messages will be returned
+    VC_FATAL,           //< non recoverable error
     VC_BUFFER,          //< the decoder needs more data
     VC_PICTURE,         //< the decoder got a picture, call Decode(NULL, 0) again to parse the rest of the data
     VC_FLUSHED,         //< the decoder lost it's state, we need to restart decoding again
@@ -122,19 +129,19 @@ public:
     VC_EOF              //< EOF
   };
 
-  CDVDVideoCodec(CProcessInfo &processInfo) : m_processInfo(processInfo) {}
+  explicit CDVDVideoCodec(CProcessInfo &processInfo) : m_processInfo(processInfo) {}
   virtual ~CDVDVideoCodec() = default;
 
   /**
    * Open the decoder, returns true on success
-   * Decoders not capable of runnung multiple instances should return false in case
+   * Decoders not capable of running multiple instances should return false in case
    * there is already a instance open
    */
   virtual bool Open(CDVDStreamInfo &hints, CDVDCodecOptions &options) = 0;
 
   /**
    * Reconfigure the decoder, returns true on success
-   * Decoders not capable of runnung multiple instances may be capable of reconfiguring
+   * Decoders not capable of running multiple instances may be capable of reconfiguring
    * the running instance. If Reconfigure returns false, player will close / open
    * the decoder
    */
@@ -166,7 +173,7 @@ public:
    * will be called by video player indicating the playback speed. see DVD_PLAYSPEED_NORMAL,
    * DVD_PLAYSPEED_PAUSE and friends.
    */
-  virtual void SetSpeed(int iSpeed) {};
+  virtual void SetSpeed(int iSpeed) {}
 
   /**
    * should return codecs name
@@ -187,16 +194,6 @@ public:
    * calling decode on the next demux packet
    */
   virtual unsigned GetAllowedReferences() { return 0; }
-
-  /**
-   * Hide or Show Settings depending on the currently running hardware
-   */
-  static bool IsSettingVisible(const std::string &condition, const std::string &value, std::shared_ptr<const CSetting> setting, void *data);
-
-  /**
-   * Interact with user settings so that user disabled codecs are disabled
-   */
-  static bool IsCodecDisabled(const std::map<AVCodecID, std::string> &map, AVCodecID id);
 
   /**
    * For calculation of dropping requirements player asks for some information.
@@ -246,7 +243,7 @@ public:
    * Re-open the decoder.
    * Decoder request to re-open
    */
-  virtual void Reopen() {};
+  virtual void Reopen() {}
 
 protected:
   CProcessInfo &m_processInfo;
@@ -266,7 +263,7 @@ public:
   virtual unsigned GetAllowedReferences() { return 0; }
   virtual bool CanSkipDeint() {return false; }
   virtual const std::string Name() = 0;
-  virtual void SetCodecControl(int flags) {};
+  virtual void SetCodecControl(int flags) {}
 };
 
 class ICallbackHWAccel

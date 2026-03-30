@@ -15,13 +15,16 @@
     </category>
     <category id="discs">
       <group id="3">
-      <visible>false</visible>
+        <visible>false</visible>
       </group>
     </category>
   </section>
   <section id="system">
     <category id="display">
       <group id="1">
+        <setting id="videoscreen.resolution">
+          <default>17</default> <!-- RES_CUSTOM -->
+        </setting>
         <setting id="videoscreen.fakefullscreen">
           <visible>false</visible>
         </setting>
@@ -58,12 +61,11 @@
           <visible>false</visible>
         </setting>
       </group>
-      <group id="3">
-        <setting id="input.appleremotemode" type="integer" label="13600" help="36416">
-          <visible>false</visible>
-        </setting>
-        <setting id="input.appleremotesequencetime" type="integer" label="13603" help="36418">
-          <visible>false</visible>
+    </category>
+    <category id="logging">
+      <group id="1">
+        <setting id="debug.sharelog" type="action" label="39118">
+          <control type="button" format="action" />
         </setting>
       </group>
     </category>
@@ -72,7 +74,7 @@
     <category id="skin">
       <group id="1">
         <setting id="lookandfeel.skin" type="addon">
-          <default>skin.estouchy</default>
+          <default>skin.estuary</default>
         </setting>
       </group>
     </category>

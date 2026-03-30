@@ -1,38 +1,27 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#include "PlayListB4S.h"
+
+#include "FileItem.h"
+#include "Util.h"
+#include "filesystem/File.h"
+#include "music/tags/MusicInfoTag.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+#include "utils/XBMCTinyXML2.h"
+#include "utils/XMLUtils.h"
+#include "utils/log.h"
 
 #include <iostream>
 #include <string>
 
-#include "PlayListB4S.h"
-#include "Util.h"
-#include "utils/XBMCTinyXML.h"
-#include "music/tags/MusicInfoTag.h"
-#include "filesystem/File.h"
-#include "utils/log.h"
-#include "utils/StringUtils.h"
-#include "utils/URIUtils.h"
-#include "utils/XMLUtils.h"
-
 using namespace XFILE;
-using namespace PLAYLIST;
 
 /* ------------------------ example b4s playlist file ---------------------------------
  <?xml version="1.0" encoding='UTF-8' standalone="yes"?>
@@ -50,6 +39,10 @@ using namespace PLAYLIST;
   </playlist>
  </WinampXML>
 ------------------------ end of example b4s playlist file ---------------------------------*/
+
+namespace KODI::PLAYLIST
+{
+
 CPlayListB4S::CPlayListB4S(void) = default;
 
 CPlayListB4S::~CPlayListB4S(void) = default;
@@ -57,39 +50,46 @@ CPlayListB4S::~CPlayListB4S(void) = default;
 
 bool CPlayListB4S::LoadData(std::istream& stream)
 {
-  CXBMCTinyXML xmlDoc;
+  CXBMCTinyXML2 xmlDoc;
 
-  stream >> xmlDoc;
+  std::string b4sStream(std::istreambuf_iterator<char>(stream), {});
+
+  xmlDoc.Parse(b4sStream);
 
   if (xmlDoc.Error())
   {
-    CLog::Log(LOGERROR, "Unable to parse B4S info Error: %s", xmlDoc.ErrorDesc());
+    CLog::Log(LOGERROR, "Unable to parse B4S info Error: {}", xmlDoc.ErrorStr());
     return false;
   }
 
-  TiXmlElement* pRootElement = xmlDoc.RootElement();
-  if (!pRootElement ) return false;
+  auto* pRootElement = xmlDoc.RootElement();
+  if (!pRootElement)
+    return false;
 
-  TiXmlElement* pPlayListElement = pRootElement->FirstChildElement("playlist");
-  if (!pPlayListElement ) return false;
+  auto* pPlayListElement = pRootElement->FirstChildElement("playlist");
+  if (!pPlayListElement)
+    return false;
+
   m_strPlayListName = XMLUtils::GetAttribute(pPlayListElement, "label");
 
-  TiXmlElement* pEntryElement = pPlayListElement->FirstChildElement("entry");
+  auto* pEntryElement = pPlayListElement->FirstChildElement("entry");
 
-  if (!pEntryElement) return false;
+  if (!pEntryElement)
+    return false;
+
   while (pEntryElement)
   {
     std::string strFileName = XMLUtils::GetAttribute(pEntryElement, "Playstring");
-    size_t iColon = strFileName.find(":");
+    size_t iColon = strFileName.find(':');
     if (iColon != std::string::npos)
     {
       iColon++;
       strFileName.erase(0, iColon);
     }
-    if (strFileName.size())
+    if (!strFileName.empty())
     {
-      TiXmlNode* pNodeInfo = pEntryElement->FirstChild("Name");
-      TiXmlNode* pNodeLength = pEntryElement->FirstChild("Length");
+      auto* pNodeInfo = pEntryElement->FirstChildElement("Name");
+      auto* pNodeLength = pEntryElement->FirstChildElement("Length");
       long lDuration = 0;
       if (pNodeLength)
       {
@@ -113,28 +113,34 @@ bool CPlayListB4S::LoadData(std::istream& stream)
 
 void CPlayListB4S::Save(const std::string& strFileName) const
 {
-  if (!m_vecItems.size()) return ;
+  if (m_vecItems.empty())
+    return;
   std::string strPlaylist = strFileName;
   strPlaylist = CUtil::MakeLegalPath(strPlaylist);
   CFile file;
   if (!file.OpenForWrite(strPlaylist, true))
   {
-    CLog::Log(LOGERROR, "Could not save B4S playlist: [%s]", strPlaylist.c_str());
+    CLog::Log(LOGERROR, "Could not save B4S playlist: [{}]", strPlaylist);
     return ;
   }
   std::string write;
-  write += StringUtils::Format("<?xml version=%c1.0%c encoding='UTF-8' standalone=%cyes%c?>\n", 34, 34, 34, 34);
+  write += StringUtils::Format("<?xml version={}1.0{} encoding='UTF-8' standalone={}yes{}?>\n", 34,
+                               34, 34, 34);
   write += StringUtils::Format("<WinampXML>\n");
-  write += StringUtils::Format("  <playlist num_entries=\"{0}\" label=\"{1}\">\n", m_vecItems.size(),m_strPlayListName.c_str());
+  write += StringUtils::Format("  <playlist num_entries=\"{0}\" label=\"{1}\">\n",
+                               m_vecItems.size(), m_strPlayListName);
   for (int i = 0; i < (int)m_vecItems.size(); ++i)
   {
     const CFileItemPtr item = m_vecItems[i];
-    write += StringUtils::Format("    <entry Playstring=%cfile:%s%c>\n", 34, item->GetPath().c_str(), 34 );
-    write += StringUtils::Format("      <Name>%s</Name>\n", item->GetLabel().c_str());
-    write += StringUtils::Format("      <Length>%u</Length>\n", item->GetMusicInfoTag()->GetDuration());
+    write += StringUtils::Format("    <entry Playstring={}file:{}{}>\n", 34, item->GetPath(), 34);
+    write += StringUtils::Format("      <Name>{}</Name>\n", item->GetLabel().c_str());
+    write +=
+        StringUtils::Format("      <Length>{}</Length>\n", item->GetMusicInfoTag()->GetDuration());
   }
   write += StringUtils::Format("  </playlist>\n");
   write += StringUtils::Format("</WinampXML>\n");
   file.Write(write.c_str(), write.size());
   file.Close();
 }
+
+} // namespace KODI::PLAYLIST

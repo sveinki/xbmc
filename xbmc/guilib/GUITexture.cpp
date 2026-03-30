@@ -1,29 +1,27 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUITexture.h"
-#include "GraphicContext.h"
-#include "TextureManager.h"
+
 #include "GUILargeTextureManager.h"
+#include "GUITextureCallbackManager.h"
+#include "ServiceBroker.h"
+#include "Texture.h"
+#include "TextureManager.h"
 #include "utils/MathUtils.h"
 #include "utils/StringUtils.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
+
+#include <stdexcept>
+
+CreateGUITextureFunc CGUITexture::m_createGUITextureFunc;
+DrawQuadFunc CGUITexture::m_drawQuadFunc;
 
 CTextureInfo::CTextureInfo()
 {
@@ -38,19 +36,45 @@ CTextureInfo::CTextureInfo(const std::string &file):
   useLarge = false;
 }
 
-CTextureInfo& CTextureInfo::operator=(const CTextureInfo &right)
+void CGUITexture::Register(const CreateGUITextureFunc& createFunction,
+                           const DrawQuadFunc& drawQuadFunction)
 {
-  border = right.border;
-  orientation = right.orientation;
-  diffuse = right.diffuse;
-  filename = right.filename;
-  useLarge = right.useLarge;
-  diffuseColor = right.diffuseColor;
-  return *this;
+  m_createGUITextureFunc = createFunction;
+  m_drawQuadFunc = drawQuadFunction;
 }
 
-CGUITextureBase::CGUITextureBase(float posX, float posY, float width, float height, const CTextureInfo& texture) :
-  m_height(height), m_info(texture)
+CGUITexture* CGUITexture::CreateTexture(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
+{
+  if (!m_createGUITextureFunc)
+    throw std::runtime_error(
+        "No GUITexture Create function available. Did you forget to register?");
+
+  return m_createGUITextureFunc(posX, posY, width, height, texture);
+}
+
+void CGUITexture::DrawQuad(const CRect& coords,
+                           KODI::UTILS::COLOR::Color color,
+                           CTexture* texture,
+                           const CRect* texCoords,
+                           const float depth,
+                           const bool blending)
+{
+  // bail for now if we render front to back
+  if (CServiceBroker::GetWinSystem()->GetGfxContext().GetRenderOrder() ==
+      RENDER_ORDER_FRONT_TO_BACK)
+    return;
+
+  if (!m_drawQuadFunc)
+    throw std::runtime_error(
+        "No GUITexture DrawQuad function available. Did you forget to register?");
+
+  m_drawQuadFunc(coords, color, texture, texCoords, depth, blending);
+}
+
+CGUITexture::CGUITexture(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
+  : m_height(height), m_info(texture)
 {
   m_posX = posX;
   m_posY = posY;
@@ -82,22 +106,19 @@ CGUITextureBase::CGUITextureBase(float posX, float posY, float width, float heig
   m_use_cache = true;
 }
 
-CGUITextureBase::CGUITextureBase(const CGUITextureBase &right) :
-  m_height(right.m_height),
-  m_alpha(right.m_alpha),
-  m_info(right.m_info),
-  m_aspect(right.m_aspect)
+CGUITexture::CGUITexture(const CGUITexture& right)
+  : m_visible(right.m_visible),
+    m_diffuseColor(right.m_diffuseColor),
+    m_posX(right.m_posX),
+    m_posY(right.m_posY),
+    m_width(right.m_width),
+    m_height(right.m_height),
+    m_use_cache(right.m_use_cache),
+    m_alpha(right.m_alpha),
+    m_allocateDynamically(right.m_allocateDynamically),
+    m_info(right.m_info),
+    m_aspect(right.m_aspect)
 {
-  m_posX = right.m_posX;
-  m_posY = right.m_posY;
-  m_width = right.m_width;
-
-  m_visible = right.m_visible;
-  m_diffuseColor = right.m_diffuseColor;
-
-  m_allocateDynamically = right.m_allocateDynamically;
-  m_use_cache = right.m_use_cache;
-
   // defaults
   m_vertex.SetRect(m_posX, m_posY, m_posX + m_width, m_posY + m_height);
 
@@ -117,9 +138,7 @@ CGUITextureBase::CGUITextureBase(const CGUITextureBase &right) :
   m_invalid = true;
 }
 
-CGUITextureBase::~CGUITextureBase(void) = default;
-
-bool CGUITextureBase::AllocateOnDemand()
+bool CGUITexture::AllocateOnDemand()
 {
   if (m_visible)
   { // visible, so make sure we're allocated
@@ -137,7 +156,7 @@ bool CGUITextureBase::AllocateOnDemand()
   return false;
 }
 
-bool CGUITextureBase::Process(unsigned int currentTime)
+bool CGUITexture::Process(unsigned int currentTime)
 {
   bool changed = false;
   // check if we need to allocate our resources
@@ -150,32 +169,66 @@ bool CGUITextureBase::Process(unsigned int currentTime)
     changed |= CalculateSize();
 
   if (m_isAllocated)
-    changed |= !ReadyToRender();
+  {
+    // Only report change on ready state transition, not every frame while loading
+    const bool ready = ReadyToRender();
+    if (ready != m_lastReadyState)
+    {
+      m_lastReadyState = ready;
+      changed = true;
+    }
+  }
 
   return changed;
 }
 
-void CGUITextureBase::Render()
+void CGUITexture::Render(int32_t depthOffset, int32_t overrideDepth)
 {
   if (!m_visible || !m_texture.size())
     return;
-
-  // see if we need to clip the image
-  if (m_vertex.Width() > m_width || m_vertex.Height() > m_height)
-  {
-    if (!g_graphicsContext.SetClipRegion(m_posX, m_posY, m_width, m_height))
-      return;
-  }
 
   // set our draw color
   #define MIX_ALPHA(a,c) (((a * (c >> 24)) / 255) << 24) | (c & 0x00ffffff)
 
   // diffuse color
-  color_t color = (m_info.diffuseColor) ? (color_t)m_info.diffuseColor : m_diffuseColor;
+  KODI::UTILS::COLOR::Color color =
+      (m_info.diffuseColor) ? (KODI::UTILS::COLOR::Color)m_info.diffuseColor : m_diffuseColor;
+  // clang-format off
   if (m_alpha != 0xFF)
-	  color = MIX_ALPHA(m_alpha, color);
+    color = MIX_ALPHA(m_alpha, color);
+  // clang-format on
 
-  color = g_graphicsContext.MergeAlpha(color);
+  color = CServiceBroker::GetWinSystem()->GetGfxContext().MergeColor(color);
+
+  if (overrideDepth >= 0)
+  {
+    m_depth = CServiceBroker::GetWinSystem()->GetGfxContext().GetNormalizedDepth(overrideDepth +
+                                                                                 depthOffset);
+  }
+  else
+  {
+    m_depth = CServiceBroker::GetWinSystem()->GetGfxContext().GetTransformDepth(depthOffset);
+  }
+
+  bool hasAlpha =
+      (((color >> 24) & 0xFF) != 0xFF || m_texture.m_textures[m_currentFrame]->HasAlpha());
+  if (m_diffuse.size())
+    hasAlpha |= m_diffuse.m_textures[0]->HasAlpha();
+
+  // bail if it is not the appropriate render pass
+  RENDER_ORDER renderOrder = CServiceBroker::GetWinSystem()->GetGfxContext().GetRenderOrder();
+  if (hasAlpha && renderOrder == RENDER_ORDER_FRONT_TO_BACK)
+    return;
+  if (!hasAlpha && renderOrder == RENDER_ORDER_BACK_TO_FRONT)
+    return;
+
+  // see if we need to clip the image
+  if (m_vertex.Width() > m_width || m_vertex.Height() > m_height)
+  {
+    if (!CServiceBroker::GetWinSystem()->GetGfxContext().SetClipRegion(m_posX, m_posY, m_width,
+                                                                       m_height))
+      return;
+  }
 
   // setup our renderer
   Begin(color);
@@ -215,7 +268,9 @@ void CGUITextureBase::Render()
   // middle segment (u1,0,u2,v3)
   if (m_info.border.y1)
     Render(m_vertex.x1 + m_info.border.x1, m_vertex.y1, m_vertex.x2 - m_info.border.x2, m_vertex.y1 + m_info.border.y1, u1, 0, u2, v1, u3, v3);
-  Render(m_vertex.x1 + m_info.border.x1, m_vertex.y1 + m_info.border.y1, m_vertex.x2 - m_info.border.x2, m_vertex.y2 - m_info.border.y2, u1, v1, u2, v2, u3, v3);
+  if (m_info.m_infill)
+    Render(m_vertex.x1 + m_info.border.x1, m_vertex.y1 + m_info.border.y1,
+           m_vertex.x2 - m_info.border.x2, m_vertex.y2 - m_info.border.y2, u1, v1, u2, v2, u3, v3);
   if (m_info.border.y2)
     Render(m_vertex.x1 + m_info.border.x1, m_vertex.y2 - m_info.border.y2, m_vertex.x2 - m_info.border.x2, m_vertex.y2, u1, v2, u2, v3, u3, v3);
   // right segment
@@ -232,15 +287,24 @@ void CGUITextureBase::Render()
   End();
 
   if (m_vertex.Width() > m_width || m_vertex.Height() > m_height)
-    g_graphicsContext.RestoreClipRegion();
+    CServiceBroker::GetWinSystem()->GetGfxContext().RestoreClipRegion();
 }
 
-void CGUITextureBase::Render(float left, float top, float right, float bottom, float u1, float v1, float u2, float v2, float u3, float v3)
+void CGUITexture::Render(float left,
+                         float top,
+                         float right,
+                         float bottom,
+                         float u1,
+                         float v1,
+                         float u2,
+                         float v2,
+                         float u3,
+                         float v3)
 {
   CRect diffuse(u1, v1, u2, v2);
   CRect texture(u1, v1, u2, v2);
   CRect vertex(left, top, right, bottom);
-  g_graphicsContext.ClipRect(vertex, texture, m_diffuse.size() ? &diffuse : NULL);
+  CServiceBroker::GetWinSystem()->GetGfxContext().ClipRect(vertex, texture, m_diffuse.size() ? &diffuse : NULL);
 
   if (vertex.IsEmpty())
     return; // nothing to render
@@ -260,20 +324,20 @@ void CGUITextureBase::Render(float left, float top, float right, float bottom, f
 
   float x[4], y[4], z[4];
 
-#define ROUND_TO_PIXEL(x) (float)(MathUtils::round_int(x))
+#define ROUND_TO_PIXEL(x) static_cast<float>(MathUtils::round_int(static_cast<double>(x)))
 
-  x[0] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalXCoord(vertex.x1, vertex.y1));
-  y[0] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalYCoord(vertex.x1, vertex.y1));
-  z[0] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalZCoord(vertex.x1, vertex.y1));
-  x[1] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalXCoord(vertex.x2, vertex.y1));
-  y[1] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalYCoord(vertex.x2, vertex.y1));
-  z[1] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalZCoord(vertex.x2, vertex.y1));
-  x[2] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalXCoord(vertex.x2, vertex.y2));
-  y[2] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalYCoord(vertex.x2, vertex.y2));
-  z[2] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalZCoord(vertex.x2, vertex.y2));
-  x[3] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalXCoord(vertex.x1, vertex.y2));
-  y[3] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalYCoord(vertex.x1, vertex.y2));
-  z[3] = ROUND_TO_PIXEL(g_graphicsContext.ScaleFinalZCoord(vertex.x1, vertex.y2));
+  x[0] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord(vertex.x1, vertex.y1));
+  y[0] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(vertex.x1, vertex.y1));
+  z[0] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalZCoord(vertex.x1, vertex.y1));
+  x[1] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord(vertex.x2, vertex.y1));
+  y[1] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(vertex.x2, vertex.y1));
+  z[1] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalZCoord(vertex.x2, vertex.y1));
+  x[2] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord(vertex.x2, vertex.y2));
+  y[2] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(vertex.x2, vertex.y2));
+  z[2] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalZCoord(vertex.x2, vertex.y2));
+  x[3] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord(vertex.x1, vertex.y2));
+  y[3] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(vertex.x1, vertex.y2));
+  z[3] = ROUND_TO_PIXEL(CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalZCoord(vertex.x1, vertex.y2));
 
   if (y[2] == y[0]) y[2] += 1.0f;
   if (x[2] == x[0]) x[2] += 1.0f;
@@ -283,7 +347,7 @@ void CGUITextureBase::Render(float left, float top, float right, float bottom, f
   Draw(x, y, z, texture, diffuse, orientation);
 }
 
-bool CGUITextureBase::AllocResources()
+bool CGUITexture::AllocResources()
 {
   if (m_info.filename.empty())
     return false;
@@ -295,13 +359,13 @@ bool CGUITextureBase::AllocResources()
   ResetAnimState();
 
   bool changed = false;
-  bool useLarge = m_info.useLarge || !g_TextureManager.CanLoad(m_info.filename);
+  bool useLarge = m_info.useLarge || !CServiceBroker::GetGUI()->GetTextureManager().CanLoad(m_info.filename);
   if (useLarge)
   { // we want to use the large image loader, but we first check for bundled textures
     if (!IsAllocated())
     {
       CTextureArray texture;
-      texture = g_TextureManager.Load(m_info.filename, true);
+      texture = CServiceBroker::GetGUI()->GetTextureManager().Load(m_info.filename, true);
       if (texture.size())
       {
         m_isAllocated = NORMAL;
@@ -312,7 +376,16 @@ bool CGUITextureBase::AllocResources()
     if (m_isAllocated != NORMAL)
     { // use our large image background loader
       CTextureArray texture;
-      if (g_largeTextureManager.GetImage(m_info.filename, texture, !IsAllocated(), m_use_cache))
+      if (m_requestWidth == REQUEST_SIZE_UNSET && m_requestHeight == REQUEST_SIZE_UNSET)
+      {
+        CGraphicContext& gfxContext = CServiceBroker::GetWinSystem()->GetGfxContext();
+        m_requestWidth = (int)(m_width / gfxContext.GetGUIScaleX() + 0.5f);
+        m_requestHeight = (int)(m_height / gfxContext.GetGUIScaleY() + 0.5f);
+        CServiceBroker::GetGUI()->GetTextureCallbackManager().RegisterOnWindowResizeCallback(*this);
+      }
+      if (CServiceBroker::GetGUI()->GetLargeTextureManager().GetImage(
+              m_info.filename, texture, m_requestWidth, m_requestHeight, m_aspect.ratio,
+              !IsAllocated(), m_use_cache))
       {
         m_isAllocated = LARGE;
 
@@ -329,7 +402,7 @@ bool CGUITextureBase::AllocResources()
   }
   else if (!IsAllocated())
   {
-    CTextureArray texture = g_TextureManager.Load(m_info.filename);
+    CTextureArray texture = CServiceBroker::GetGUI()->GetTextureManager().Load(m_info.filename);
 
     // set allocated to true even if we couldn't load the image to save
     // us hitting the disk every frame
@@ -345,10 +418,14 @@ bool CGUITextureBase::AllocResources()
   // load the diffuse texture (if necessary)
   if (!m_info.diffuse.empty())
   {
-    m_diffuse = g_TextureManager.Load(m_info.diffuse);
+    m_diffuse = CServiceBroker::GetGUI()->GetTextureManager().Load(m_info.diffuse);
   }
 
   CalculateSize();
+
+  // Set scaling method of the loaded textures
+  m_texture.SetScalingMethod(m_scalingMethod);
+  m_diffuse.SetScalingMethod(m_diffuseScalingMethod);
 
   // call our implementation
   Allocate();
@@ -356,7 +433,7 @@ bool CGUITextureBase::AllocResources()
   return changed;
 }
 
-bool CGUITextureBase::CalculateSize()
+bool CGUITexture::CalculateSize()
 {
   if (m_currentFrame >= m_texture.size())
     return false;
@@ -374,10 +451,10 @@ bool CGUITextureBase::CalculateSize()
   float newWidth = m_width;
   float newHeight = m_height;
 
-  if (m_aspect.ratio != CAspectRatio::AR_STRETCH && m_frameWidth && m_frameHeight)
+  if (m_aspect.ratio != CAspectRatio::STRETCH && m_frameWidth && m_frameHeight)
   {
     // to get the pixel ratio, we must use the SCALED output sizes
-    float pixelRatio = g_graphicsContext.GetScalingPixelRatio();
+    float pixelRatio = CServiceBroker::GetWinSystem()->GetGfxContext().GetScalingPixelRatio();
 
     float fSourceFrameRatio = m_frameWidth / m_frameHeight;
     if (GetOrientation() & 4)
@@ -387,13 +464,13 @@ bool CGUITextureBase::CalculateSize()
     // maximize the width
     newHeight = m_width / fOutputFrameRatio;
 
-    if ((m_aspect.ratio == CAspectRatio::AR_SCALE && newHeight < m_height) ||
-        (m_aspect.ratio == CAspectRatio::AR_KEEP && newHeight > m_height))
+    if ((m_aspect.ratio == CAspectRatio::SCALE && newHeight < m_height) ||
+        (m_aspect.ratio == CAspectRatio::KEEP && newHeight > m_height))
     {
       newHeight = m_height;
       newWidth = newHeight * fOutputFrameRatio;
     }
-    if (m_aspect.ratio == CAspectRatio::AR_CENTER)
+    if (m_aspect.ratio == CAspectRatio::CENTER)
     { // keep original size + center
       newWidth = m_frameWidth / sqrt(pixelRatio);
       newHeight = m_frameHeight * sqrt(pixelRatio);
@@ -412,7 +489,7 @@ bool CGUITextureBase::CalculateSize()
     else
       newPosY = m_posY + (m_height - newHeight) * 0.5f;
   }
-  
+
   m_vertex.SetRect(newPosX, newPosY, newPosX + newWidth, newPosY + newHeight);
 
   // scale the diffuse coords as well
@@ -451,15 +528,22 @@ bool CGUITextureBase::CalculateSize()
   return true;
 }
 
-void CGUITextureBase::FreeResources(bool immediately /* = false */)
+void CGUITexture::FreeResources(bool immediately /* = false */)
 {
   if (m_isAllocated == LARGE || m_isAllocated == LARGE_FAILED)
-    g_largeTextureManager.ReleaseImage(m_info.filename, immediately || (m_isAllocated == LARGE_FAILED));
+  {
+    CServiceBroker::GetGUI()->GetLargeTextureManager().ReleaseImage(
+        m_info.filename, m_requestWidth, m_requestHeight, m_aspect.ratio,
+        immediately || (m_isAllocated == LARGE_FAILED));
+    m_requestWidth = REQUEST_SIZE_UNSET;
+    m_requestHeight = REQUEST_SIZE_UNSET;
+    CServiceBroker::GetGUI()->GetTextureCallbackManager().UnregisterOnWindowResizeCallback(*this);
+  }
   else if (m_isAllocated == NORMAL && m_texture.size())
-    g_TextureManager.ReleaseTexture(m_info.filename, immediately);
+    CServiceBroker::GetGUI()->GetTextureManager().ReleaseTexture(m_info.filename, immediately);
 
   if (m_diffuse.size())
-    g_TextureManager.ReleaseTexture(m_info.diffuse, immediately);
+    CServiceBroker::GetGUI()->GetTextureManager().ReleaseTexture(m_info.diffuse, immediately);
   m_diffuse.Reset();
 
   m_texture.Reset();
@@ -473,19 +557,25 @@ void CGUITextureBase::FreeResources(bool immediately /* = false */)
   Free();
 
   m_isAllocated = NO;
+  m_lastReadyState.reset(); // reset for next allocation cycle
 }
 
-void CGUITextureBase::DynamicResourceAlloc(bool allocateDynamically)
+void CGUITexture::DynamicResourceAlloc(bool allocateDynamically)
 {
   m_allocateDynamically = allocateDynamically;
 }
 
-void CGUITextureBase::SetInvalid()
+void CGUITexture::SetInvalid()
 {
   m_invalid = true;
 }
 
-bool CGUITextureBase::UpdateAnimFrame(unsigned int currentTime)
+void CGUITexture::OnWindowResize()
+{
+  FreeResources(true);
+}
+
+bool CGUITexture::UpdateAnimFrame(unsigned int currentTime)
 {
   bool changed = false;
   unsigned int delay = m_texture.m_delays[m_currentFrame];
@@ -530,34 +620,35 @@ bool CGUITextureBase::UpdateAnimFrame(unsigned int currentTime)
   return changed;
 }
 
-bool CGUITextureBase::SetVisible(bool visible)
+bool CGUITexture::SetVisible(bool visible)
 {
   bool changed = m_visible != visible;
   m_visible = visible;
   return changed;
 }
 
-bool CGUITextureBase::SetAlpha(unsigned char alpha)
+bool CGUITexture::SetAlpha(unsigned char alpha)
 {
   bool changed = m_alpha != alpha;
   m_alpha = alpha;
   return changed;
 }
 
-bool CGUITextureBase::SetDiffuseColor(color_t color)
+bool CGUITexture::SetDiffuseColor(KODI::UTILS::COLOR::Color color,
+                                  const CGUIListItem* item /* = nullptr */)
 {
   bool changed = m_diffuseColor != color;
   m_diffuseColor = color;
-  changed |= m_info.diffuseColor.Update();
+  changed |= m_info.diffuseColor.Update(item);
   return changed;
 }
 
-bool CGUITextureBase::ReadyToRender() const
+bool CGUITexture::ReadyToRender() const
 {
   return m_texture.size() > 0;
 }
 
-void CGUITextureBase::OrientateTexture(CRect &rect, float width, float height, int orientation)
+void CGUITexture::OrientateTexture(CRect& rect, float width, float height, int orientation)
 {
   switch (orientation & 3)
   {
@@ -594,14 +685,14 @@ void CGUITextureBase::OrientateTexture(CRect &rect, float width, float height, i
   }
 }
 
-void CGUITextureBase::ResetAnimState()
+void CGUITexture::ResetAnimState()
 {
   m_lasttime = 0;
   m_currentFrame = 0;
   m_currentLoop = 0;
 }
 
-bool CGUITextureBase::SetWidth(float width)
+bool CGUITexture::SetWidth(float width)
 {
   if (width < m_info.border.x1 + m_info.border.x2)
     width = m_info.border.x1 + m_info.border.x2;
@@ -615,7 +706,7 @@ bool CGUITextureBase::SetWidth(float width)
     return false;
 }
 
-bool CGUITextureBase::SetHeight(float height)
+bool CGUITexture::SetHeight(float height)
 {
   if (height < m_info.border.y1 + m_info.border.y2)
     height = m_info.border.y1 + m_info.border.y2;
@@ -629,7 +720,7 @@ bool CGUITextureBase::SetHeight(float height)
     return false;
 }
 
-bool CGUITextureBase::SetPosition(float posX, float posY)
+bool CGUITexture::SetPosition(float posX, float posY)
 {
   if (m_posX != posX || m_posY != posY)
   {
@@ -642,7 +733,7 @@ bool CGUITextureBase::SetPosition(float posX, float posY)
     return false;
 }
 
-bool CGUITextureBase::SetAspectRatio(const CAspectRatio &aspect)
+bool CGUITexture::SetAspectRatio(const CAspectRatio& aspect)
 {
   if (m_aspect != aspect)
   {
@@ -654,7 +745,7 @@ bool CGUITextureBase::SetAspectRatio(const CAspectRatio &aspect)
     return false;
 }
 
-bool CGUITextureBase::SetFileName(const std::string& filename)
+bool CGUITexture::SetFileName(const std::string& filename)
 {
   if (m_info.filename == filename) return false;
   // Don't completely free resources here - we may be just changing
@@ -673,12 +764,26 @@ bool CGUITextureBase::SetFileName(const std::string& filename)
   return true;
 }
 
-void CGUITextureBase::SetUseCache(const bool useCache)
+void CGUITexture::SetUseCache(const bool useCache)
 {
   m_use_cache = useCache;
 }
 
-int CGUITextureBase::GetOrientation() const
+void CGUITexture::SetScalingMethod(TEXTURE_SCALING scalingMethod)
+{
+  m_scalingMethod = scalingMethod;
+
+  m_texture.SetScalingMethod(m_scalingMethod);
+}
+
+void CGUITexture::SetDiffuseScalingMethod(TEXTURE_SCALING scalingMethod)
+{
+  m_diffuseScalingMethod = scalingMethod;
+
+  m_diffuse.SetScalingMethod(m_diffuseScalingMethod);
+}
+
+int CGUITexture::GetOrientation() const
 {
   // multiply our orientations
   static char orient_table[] = { 0, 1, 2, 3, 4, 5, 6, 7,

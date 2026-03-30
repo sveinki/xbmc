@@ -1,42 +1,37 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "NetworkServices.h"
 
-#include <utility>
-
-#include "Application.h"
 #include "ServiceBroker.h"
 #include "dialogs/GUIDialogKaiToast.h"
-#include "dialogs/GUIDialogOK.h"
-#include "guilib/LocalizeStrings.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "interfaces/json-rpc/JSONRPC.h"
 #include "messaging/ApplicationMessenger.h"
 #include "messaging/helpers/DialogHelper.h"
+#include "messaging/helpers/DialogOKHelper.h"
+#include "network/EventServer.h"
 #include "network/Network.h"
+#include "network/TCPServer.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
-#include "settings/lib/Setting.h"
 #include "settings/Settings.h"
-#include "utils/log.h"
+#include "settings/SettingsComponent.h"
+#include "settings/lib/Setting.h"
+#include "settings/lib/SettingsManager.h"
 #include "utils/RssManager.h"
 #include "utils/SystemInfo.h"
 #include "utils/Variant.h"
+#include "utils/log.h"
+
+#include <utility>
 
 #ifdef TARGET_LINUX
 #include "Util.h"
@@ -48,15 +43,6 @@
 #ifdef HAS_AIRTUNES
 #include "network/AirTunesServer.h"
 #endif // HAS_AIRTUNES
-
-#ifdef HAS_EVENT_SERVER
-#include "network/EventServer.h"
-#endif // HAS_EVENT_SERVER
-
-#ifdef HAS_JSONRPC
-#include "interfaces/json-rpc/JSONRPC.h"
-#include "network/TCPServer.h"
-#endif
 
 #ifdef HAS_ZEROCONF
 #include "network/Zeroconf.h"
@@ -71,9 +57,7 @@
 #include "network/httprequesthandler/HTTPImageHandler.h"
 #include "network/httprequesthandler/HTTPImageTransformationHandler.h"
 #include "network/httprequesthandler/HTTPVfsHandler.h"
-#ifdef HAS_JSONRPC
 #include "network/httprequesthandler/HTTPJsonRpcHandler.h"
-#endif // HAS_JSONRPC
 #ifdef HAS_WEB_INTERFACE
 #ifdef HAS_PYTHON
 #include "network/httprequesthandler/HTTPPythonHandler.h"
@@ -83,17 +67,17 @@
 #endif // HAS_WEB_INTERFACE
 #endif // HAS_WEB_SERVER
 
-#if defined(TARGET_DARWIN_OSX)
-#include "platform/darwin/osx/XBMCHelper.h"
+#if defined(HAS_FILESYSTEM_SMB)
+#if defined(TARGET_WINDOWS)
+#include "platform/win32/network/WSDiscoveryWin32.h"
+#else // defined(TARGET_POSIX)
+#include "platform/posix/filesystem/SMBWSDiscovery.h"
+#endif
 #endif
 
 using namespace KODI::MESSAGING;
-#ifdef HAS_JSONRPC
 using namespace JSONRPC;
-#endif // HAS_JSONRPC
-#ifdef HAS_EVENT_SERVER
 using namespace EVENTSERVER;
-#endif // HAS_EVENT_SERVER
 #ifdef HAS_UPNP
 using namespace UPNP;
 #endif // HAS_UPNP
@@ -102,14 +86,11 @@ using KODI::MESSAGING::HELPERS::DialogResponse;
 
 CNetworkServices::CNetworkServices()
 #ifdef HAS_WEB_SERVER
-  :
-  m_webserver(*new CWebServer),
+  : m_webserver(*new CWebServer),
   m_httpImageHandler(*new CHTTPImageHandler),
   m_httpImageTransformationHandler(*new CHTTPImageTransformationHandler),
-  m_httpVfsHandler(*new CHTTPVfsHandler)
-#ifdef HAS_JSONRPC
-  , m_httpJsonRpcHandler(*new CHTTPJsonRpcHandler)
-#endif // HAS_JSONRPC
+  m_httpVfsHandler(*new CHTTPVfsHandler),
+  m_httpJsonRpcHandler(*new CHTTPJsonRpcHandler)
 #ifdef HAS_WEB_INTERFACE
 #ifdef HAS_PYTHON
   , m_httpPythonHandler(*new CHTTPPythonHandler)
@@ -118,15 +99,12 @@ CNetworkServices::CNetworkServices()
   , m_httpWebinterfaceAddonsHandler(*new CHTTPWebinterfaceAddonsHandler)
 #endif // HAS_WEB_INTERFACE
 #endif // HAS_WEB_SERVER
-
 {
 #ifdef HAS_WEB_SERVER
   m_webserver.RegisterRequestHandler(&m_httpImageHandler);
   m_webserver.RegisterRequestHandler(&m_httpImageTransformationHandler);
   m_webserver.RegisterRequestHandler(&m_httpVfsHandler);
-#ifdef HAS_JSONRPC
   m_webserver.RegisterRequestHandler(&m_httpJsonRpcHandler);
-#endif // HAS_JSONRPC
 #ifdef HAS_WEB_INTERFACE
 #ifdef HAS_PYTHON
   m_webserver.RegisterRequestHandler(&m_httpPythonHandler);
@@ -135,10 +113,40 @@ CNetworkServices::CNetworkServices()
   m_webserver.RegisterRequestHandler(&m_httpWebinterfaceHandler);
 #endif // HAS_WEB_INTERFACE
 #endif // HAS_WEB_SERVER
+  m_settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  m_settings->GetSettingsManager()->RegisterCallback(
+      this, {CSettings::SETTING_SERVICES_WEBSERVER,
+             CSettings::SETTING_SERVICES_WEBSERVERPORT,
+             CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION,
+             CSettings::SETTING_SERVICES_WEBSERVERUSERNAME,
+             CSettings::SETTING_SERVICES_WEBSERVERPASSWORD,
+             CSettings::SETTING_SERVICES_WEBSERVERSSL,
+             CSettings::SETTING_SERVICES_ZEROCONF,
+             CSettings::SETTING_SERVICES_AIRPLAY,
+             CSettings::SETTING_SERVICES_AIRPLAYVOLUMECONTROL,
+             CSettings::SETTING_SERVICES_AIRPLAYVIDEOSUPPORT,
+             CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD,
+             CSettings::SETTING_SERVICES_AIRPLAYPASSWORD,
+             CSettings::SETTING_SERVICES_UPNP,
+             CSettings::SETTING_SERVICES_UPNPSERVER,
+             CSettings::SETTING_SERVICES_UPNPRENDERER,
+             CSettings::SETTING_SERVICES_UPNPCONTROLLER,
+             CSettings::SETTING_SERVICES_ESENABLED,
+             CSettings::SETTING_SERVICES_ESPORT,
+             CSettings::SETTING_SERVICES_ESALLINTERFACES,
+             CSettings::SETTING_SERVICES_ESINITIALDELAY,
+             CSettings::SETTING_SERVICES_ESCONTINUOUSDELAY,
+             CSettings::SETTING_SMB_WINSSERVER,
+             CSettings::SETTING_SMB_WORKGROUP,
+             CSettings::SETTING_SMB_MINPROTOCOL,
+             CSettings::SETTING_SMB_MAXPROTOCOL,
+             CSettings::SETTING_SMB_LEGACYSECURITY,
+             CSettings::SETTING_SERVICES_WSDISCOVERY});
 }
 
 CNetworkServices::~CNetworkServices()
 {
+  m_settings->GetSettingsManager()->UnregisterCallback(this);
 #ifdef HAS_WEB_SERVER
   m_webserver.UnregisterRequestHandler(&m_httpImageHandler);
   delete &m_httpImageHandler;
@@ -146,11 +154,9 @@ CNetworkServices::~CNetworkServices()
   delete &m_httpImageTransformationHandler;
   m_webserver.UnregisterRequestHandler(&m_httpVfsHandler);
   delete &m_httpVfsHandler;
-#ifdef HAS_JSONRPC
   m_webserver.UnregisterRequestHandler(&m_httpJsonRpcHandler);
   delete &m_httpJsonRpcHandler;
   CJSONRPC::Cleanup();
-#endif // HAS_JSONRPC
 #ifdef HAS_WEB_INTERFACE
 #ifdef HAS_PYTHON
   m_webserver.UnregisterRequestHandler(&m_httpPythonHandler);
@@ -165,30 +171,68 @@ CNetworkServices::~CNetworkServices()
 #endif // HAS_WEB_SERVER
 }
 
-CNetworkServices& CNetworkServices::GetInstance()
-{
-  static CNetworkServices sNetworkServices;
-  return sNetworkServices;
-}
-
-bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting)
+bool CNetworkServices::OnSettingChanging(const std::shared_ptr<const CSetting>& setting)
 {
   if (setting == NULL)
     return false;
 
   const std::string &settingId = setting->GetId();
 #ifdef HAS_WEB_SERVER
+  // Ask user to confirm disabling the authentication requirement, but not when the configuration
+  // would be invalid when authentication was enabled (meaning that the change was triggered
+  // automatically)
+  if (settingId == CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION &&
+      !std::static_pointer_cast<const CSettingBool>(setting)->GetValue() &&
+      (!m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER) ||
+       (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER) &&
+        !m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())) &&
+      HELPERS::ShowYesNoDialogText(19098, 36634) != DialogResponse::CHOICE_YES)
+  {
+    // Leave it as-is
+    return false;
+  }
+
   if (settingId == CSettings::SETTING_SERVICES_WEBSERVER ||
-      settingId == CSettings::SETTING_SERVICES_WEBSERVERPORT)
+      settingId == CSettings::SETTING_SERVICES_WEBSERVERPORT ||
+      settingId == CSettings::SETTING_SERVICES_WEBSERVERSSL ||
+      settingId == CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION ||
+      settingId == CSettings::SETTING_SERVICES_WEBSERVERUSERNAME ||
+      settingId == CSettings::SETTING_SERVICES_WEBSERVERPASSWORD)
   {
     if (IsWebserverRunning() && !StopWebserver())
       return false;
 
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
     {
+      // Prevent changing to an invalid configuration
+      if ((settingId == CSettings::SETTING_SERVICES_WEBSERVER ||
+           settingId == CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION ||
+           settingId == CSettings::SETTING_SERVICES_WEBSERVERPASSWORD) &&
+          m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION) &&
+          m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())
+      {
+        if (settingId == CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION)
+        {
+          HELPERS::ShowOKDialogText(CVariant{257}, CVariant{36636});
+        }
+        else
+        {
+          HELPERS::ShowOKDialogText(CVariant{257}, CVariant{36635});
+        }
+        return false;
+      }
+
+      // Ask for confirmation when enabling the web server
+      if (settingId == CSettings::SETTING_SERVICES_WEBSERVER &&
+          HELPERS::ShowYesNoDialogText(19098, 36632) != DialogResponse::CHOICE_YES)
+      {
+        // Revert change, do not start server
+        return false;
+      }
+
       if (!StartWebserver())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{33101}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{33101}, CVariant{33100});
         return false;
       }
     }
@@ -207,10 +251,10 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
 #ifdef HAS_AIRPLAY
     else
     {
-      // cannot disable 
+      // cannot disable
       if (IsAirPlayServerRunning() || IsAirTunesServerRunning())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{1259}, CVariant{34303});
+        HELPERS::ShowOKDialogText(CVariant{1259}, CVariant{34303});
         return false;
       }
 
@@ -228,9 +272,9 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
     {
 #ifdef HAS_ZEROCONF
       // AirPlay needs zeroconf
-      if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ZEROCONF))
+      if (!m_settings->GetBool(CSettings::SETTING_SERVICES_ZEROCONF))
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{1273}, CVariant{34302});
+        HELPERS::ShowOKDialogText(CVariant{1273}, CVariant{34302});
         return false;
       }
 #endif //HAS_ZEROCONF
@@ -239,16 +283,16 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
 #ifdef HAS_AIRTUNES
       if (!StartAirTunesServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{1274}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{1274}, CVariant{33100});
         return false;
       }
 #endif //HAS_AIRTUNES
-      
+
       if (!StartAirPlayServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{1273}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{1273}, CVariant{33100});
         return false;
-      }      
+      }
     }
     else
     {
@@ -257,7 +301,7 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
       if (!StopAirTunesServer(true))
         ret = false;
 #endif //HAS_AIRTUNES
-      
+
       if (!StopAirPlayServer(true))
         ret = false;
 
@@ -271,7 +315,7 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
     {
       if (!StartAirPlayServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{1273}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{1273}, CVariant{33100});
         return false;
       }
     }
@@ -284,11 +328,11 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
   else if (settingId == CSettings::SETTING_SERVICES_AIRPLAYPASSWORD ||
            settingId == CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD)
   {
-    if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
+    if (!m_settings->GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
       return false;
 
-    if (!CAirPlayServer::SetCredentials(CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
-                                        CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
+    if (!CAirPlayServer::SetCredentials(m_settings->GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
+                                        m_settings->GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
       return false;
   }
   else
@@ -350,127 +394,122 @@ bool CNetworkServices::OnSettingChanging(std::shared_ptr<const CSetting> setting
     if (std::static_pointer_cast<const CSettingBool>(setting)->GetValue())
     {
       bool result = true;
-#ifdef HAS_EVENT_SERVER
       if (!StartEventServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{33102}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{33102}, CVariant{33100});
         result = false;
       }
-#endif // HAS_EVENT_SERVER
 
-#ifdef HAS_JSONRPC
       if (!StartJSONRPCServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{33103}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{33103}, CVariant{33100});
         result = false;
       }
-#endif // HAS_JSONRPC
       return result;
     }
     else
     {
       bool result = true;
-#ifdef HAS_EVENT_SERVER
       result = StopEventServer(true, true);
-#endif // HAS_EVENT_SERVER
-#ifdef HAS_JSONRPC
       result &= StopJSONRPCServer(false);
-#endif // HAS_JSONRPC
       return result;
     }
   }
   else if (settingId == CSettings::SETTING_SERVICES_ESPORT)
   {
-#ifdef HAS_EVENT_SERVER
     // restart eventserver without asking user
     if (!StopEventServer(true, false))
       return false;
 
     if (!StartEventServer())
     {
-      CGUIDialogOK::ShowAndGetInput(CVariant{33102}, CVariant{33100});
+      HELPERS::ShowOKDialogText(CVariant{33102}, CVariant{33100});
       return false;
     }
-
-#if defined(TARGET_DARWIN_OSX)
-    // reconfigure XBMCHelper for port changes
-    XBMCHelper::GetInstance().Configure();
-#endif // TARGET_DARWIN_OSX
-#endif // HAS_EVENT_SERVER
   }
   else if (settingId == CSettings::SETTING_SERVICES_ESALLINTERFACES)
   {
-#ifdef HAS_EVENT_SERVER
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESALLINTERFACES) &&
+        HELPERS::ShowYesNoDialogText(19098, 36633) != DialogResponse::CHOICE_YES)
+    {
+      // Revert change, do not start server
+      return false;
+    }
+
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
     {
       if (!StopEventServer(true, true))
         return false;
 
       if (!StartEventServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{33102}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{33102}, CVariant{33100});
         return false;
       }
     }
-#endif // HAS_EVENT_SERVER
 
-#ifdef HAS_JSONRPC
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
     {
       if (!StopJSONRPCServer(true))
         return false;
 
       if (!StartJSONRPCServer())
       {
-        CGUIDialogOK::ShowAndGetInput(CVariant{33103}, CVariant{33100});
+        HELPERS::ShowOKDialogText(CVariant{33103}, CVariant{33100});
         return false;
       }
     }
-#endif // HAS_JSONRPC
   }
 
-#ifdef HAS_EVENT_SERVER
   else if (settingId == CSettings::SETTING_SERVICES_ESINITIALDELAY ||
            settingId == CSettings::SETTING_SERVICES_ESCONTINUOUSDELAY)
   {
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
       return RefreshEventServer();
   }
-#endif // HAS_EVENT_SERVER
+
+#if defined(HAS_FILESYSTEM_SMB)
+  else if (settingId == CSettings::SETTING_SERVICES_WSDISCOVERY)
+  {
+    if (std::static_pointer_cast<const CSettingBool>(setting)->GetValue())
+    {
+      if (!StartWSDiscovery())
+        return false;
+    }
+    else
+      return StopWSDiscovery();
+  }
+#endif // HAS_FILESYSTEM_SMB
 
   return true;
 }
 
-void CNetworkServices::OnSettingChanged(std::shared_ptr<const CSetting> setting)
+void CNetworkServices::OnSettingChanged(const std::shared_ptr<const CSetting>& setting)
 {
   if (setting == NULL)
     return;
 
-  const std::string &settingId = setting->GetId();
-#ifdef HAS_WEB_SERVER
-  if (settingId == CSettings::SETTING_SERVICES_WEBSERVERUSERNAME ||
-      settingId == CSettings::SETTING_SERVICES_WEBSERVERPASSWORD)
-  {
-    m_webserver.SetCredentials(CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERUSERNAME),
-                               CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD));
-  }
-  else
-#endif // HAS_WEB_SERVER
+  const std::string& settingId = setting->GetId();
   if (settingId == CSettings::SETTING_SMB_WINSSERVER ||
       settingId == CSettings::SETTING_SMB_WORKGROUP ||
-      settingId == CSettings::SETTING_SMB_MAXPROTOCOL)
+      settingId == CSettings::SETTING_SMB_MINPROTOCOL ||
+      settingId == CSettings::SETTING_SMB_MAXPROTOCOL ||
+      settingId == CSettings::SETTING_SMB_LEGACYSECURITY)
   {
     // okey we really don't need to restart, only deinit samba, but that could be damn hard if something is playing
     //! @todo - General way of handling setting changes that require restart
-    if (HELPERS::ShowYesNoDialogText(CVariant{14038}, CVariant{14039}) == DialogResponse::YES)
+    if (HELPERS::ShowYesNoDialogText(CVariant{14038}, CVariant{14039}) ==
+        DialogResponse::CHOICE_YES)
     {
-      CServiceBroker::GetSettings().Save();
-      CApplicationMessenger::GetInstance().PostMsg(TMSG_RESTARTAPP);
+      m_settings->Save();
+      CServiceBroker::GetAppMessenger()->PostMsg(TMSG_RESTARTAPP);
     }
   }
 }
 
-bool CNetworkServices::OnSettingUpdate(std::shared_ptr<CSetting> setting, const char *oldSettingId, const TiXmlNode *oldSettingNode)
+bool CNetworkServices::OnSettingUpdate(const std::shared_ptr<CSetting>& setting,
+                                       const char* oldSettingId,
+                                       const TiXmlNode* oldSettingNode)
 {
   if (setting == NULL)
     return false;
@@ -480,15 +519,15 @@ bool CNetworkServices::OnSettingUpdate(std::shared_ptr<CSetting> setting, const 
   {
     // if webserverusername is xbmc and pw is not empty we treat it as altered
     // and don't change the username to kodi - part of rebrand
-    if (CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERUSERNAME) == "xbmc" &&
-        !CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())
+    if (m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERUSERNAME) == "xbmc" &&
+        !m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())
       return true;
   }
   if (settingId == CSettings::SETTING_SERVICES_WEBSERVERPORT)
   {
     // if webserverport is default but webserver is activated then treat it as altered
     // and don't change the port to new value
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
       return true;
   }
   return false;
@@ -497,21 +536,52 @@ bool CNetworkServices::OnSettingUpdate(std::shared_ptr<CSetting> setting, const 
 void CNetworkServices::Start()
 {
   StartZeroconf();
-#ifdef HAS_WEB_SERVER
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_WEBSERVER) && !StartWebserver())
-    CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Warning, g_localizeStrings.Get(33101), g_localizeStrings.Get(33100));
-#endif // HAS_WEB_SERVER
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNP))
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     StartUPnP();
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED) && !StartEventServer())
-    CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Warning, g_localizeStrings.Get(33102), g_localizeStrings.Get(33100));
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED) && !StartJSONRPCServer())
-    CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Warning, g_localizeStrings.Get(33103), g_localizeStrings.Get(33100));
-  
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED) && !StartEventServer())
+    CGUIDialogKaiToast::QueueNotification(
+        CGUIDialogKaiToast::Warning,
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33102),
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33100));
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED) && !StartJSONRPCServer())
+    CGUIDialogKaiToast::QueueNotification(
+        CGUIDialogKaiToast::Warning,
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33103),
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33100));
+
+#ifdef HAS_WEB_SERVER
+  // Start web server after eventserver and JSON-RPC server, so users can use these interfaces
+  // to confirm the warning message below if it is shown
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
+  {
+    // services.webserverauthentication setting was added in Kodi v18 and requires a valid password
+    // to be set, but on upgrade the setting will be activated automatically regardless of whether
+    // a password was set before -> this can lead to an invalid configuration
+    if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION) &&
+        m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())
+    {
+      // Alert user to new default security settings in new Kodi version
+      HELPERS::ShowOKDialogText(33101, 33104);
+      // Fix settings: Disable web server
+      m_settings->SetBool(CSettings::SETTING_SERVICES_WEBSERVER, false);
+      // Bring user to settings screen where authentication can be configured properly
+      CServiceBroker::GetGUI()->GetWindowManager().ActivateWindow(
+          WINDOW_SETTINGS_SERVICE, std::vector<std::string>{"services.webserverauthentication"});
+    }
+    // Only try to start server if configuration is OK
+    else if (!StartWebserver())
+      CGUIDialogKaiToast::QueueNotification(
+          CGUIDialogKaiToast::Warning,
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33101),
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(33100));
+  }
+#endif // HAS_WEB_SERVER
+
   // note - airtunesserver has to start before airplay server (ios7 client detection bug)
   StartAirTunesServer();
   StartAirPlayServer();
   StartRss();
+  StartWSDiscovery();
 }
 
 void CNetworkServices::Stop(bool bWait)
@@ -528,39 +598,123 @@ void CNetworkServices::Stop(bool bWait)
   StopJSONRPCServer(bWait);
   StopAirPlayServer(bWait);
   StopAirTunesServer(bWait);
+  StopWSDiscovery();
+}
+
+bool CNetworkServices::StartServer(enum ESERVERS server, bool start)
+{
+  auto settingsComponent = CServiceBroker::GetSettingsComponent();
+  if (!settingsComponent)
+    return false;
+
+  auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  if (!settings)
+    return false;
+
+  bool ret = false;
+  switch (server)
+  {
+    case ES_WEBSERVER:
+      // the callback will take care of starting/stopping webserver
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_WEBSERVER, start);
+      break;
+
+    case ES_AIRPLAYSERVER:
+      // the callback will take care of starting/stopping airplay
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_AIRPLAY, start);
+      break;
+
+    case ES_JSONRPCSERVER:
+      // the callback will take care of starting/stopping jsonrpc server
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_ESENABLED, start);
+      break;
+
+    case ES_UPNPSERVER:
+      // the callback will take care of starting/stopping upnp server
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_UPNPSERVER, start);
+      break;
+
+    case ES_UPNPRENDERER:
+      // the callback will take care of starting/stopping upnp renderer
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_UPNPRENDERER, start);
+      break;
+
+    case ES_EVENTSERVER:
+      // the callback will take care of starting/stopping event server
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_ESENABLED, start);
+      break;
+
+    case ES_ZEROCONF:
+      // the callback will take care of starting/stopping zeroconf
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_ZEROCONF, start);
+      break;
+
+    case ES_WSDISCOVERY:
+      // the callback will take care of starting/stopping WS-Discovery
+      ret = settings->SetBool(CSettings::SETTING_SERVICES_WSDISCOVERY, start);
+      break;
+
+    default:
+      ret = false;
+      break;
+  }
+  settings->Save();
+
+  return ret;
 }
 
 bool CNetworkServices::StartWebserver()
 {
 #ifdef HAS_WEB_SERVER
-  if (!g_application.getNetwork().IsAvailable())
+  if (!CServiceBroker::GetNetwork().IsAvailable())
     return false;
 
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVER))
     return false;
 
-  int webPort = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_SERVICES_WEBSERVERPORT);
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION) &&
+      m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD).empty())
+  {
+    CLog::Log(LOGERROR, "Tried to start webserver with invalid configuration (authentication "
+                        "enabled, but no password set");
+    return false;
+  }
+
+  int webPort = m_settings->GetInt(CSettings::SETTING_SERVICES_WEBSERVERPORT);
   if (!ValidatePort(webPort))
   {
-    CLog::Log(LOGERROR, "Cannot start Web Server on port %i", webPort);
+    CLog::Log(LOGERROR, "Cannot start Web Server on port {}", webPort);
     return false;
   }
 
   if (IsWebserverRunning())
     return true;
 
-  if (!m_webserver.Start(webPort, CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERUSERNAME), CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD)))
+  std::string username;
+  std::string password;
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_WEBSERVERAUTHENTICATION))
+  {
+    username = m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERUSERNAME);
+    password = m_settings->GetString(CSettings::SETTING_SERVICES_WEBSERVERPASSWORD);
+  }
+
+  if (!m_webserver.Start(webPort, username, password))
     return false;
 
 #ifdef HAS_ZEROCONF
   std::vector<std::pair<std::string, std::string> > txt;
+  txt.emplace_back("txtvers", "1");
+  txt.emplace_back("uuid", CServiceBroker::GetSettingsComponent()->GetSettings()->GetString(
+                             CSettings::SETTING_SERVICES_DEVICEUUID));
+
   // publish web frontend and API services
 #ifdef HAS_WEB_INTERFACE
-  CZeroconf::GetInstance()->PublishService("servers.webserver", "_http._tcp", CSysInfo::GetDeviceName(), webPort, txt);
+  CZeroconf::GetInstance()->PublishService("servers.webserver", "_http._tcp",
+                                           CSysInfo::GetDeviceName() + " webserver", webPort, txt);
 #endif // HAS_WEB_INTERFACE
-#ifdef HAS_JSONRPC
-  CZeroconf::GetInstance()->PublishService("servers.jsonrpc-http", "_xbmc-jsonrpc-h._tcp", CSysInfo::GetDeviceName(), webPort, txt);
-#endif // HAS_JSONRPC
+  CZeroconf::GetInstance()->PublishService("servers.jsonrpc-http", "_xbmc-jsonrpc-h._tcp",
+                                           CSysInfo::GetDeviceName() + " jsonrpc-http", webPort,
+                                           txt);
 #endif // HAS_ZEROCONF
 
   return true;
@@ -587,14 +741,12 @@ bool CNetworkServices::StopWebserver()
     CLog::Log(LOGWARNING, "Webserver: Failed to stop.");
     return false;
   }
-  
+
 #ifdef HAS_ZEROCONF
 #ifdef HAS_WEB_INTERFACE
   CZeroconf::GetInstance()->RemoveService("servers.webserver");
 #endif // HAS_WEB_INTERFACE
-#ifdef HAS_JSONRPC
   CZeroconf::GetInstance()->RemoveService("servers.jsonrpc-http");
-#endif // HAS_JSONRPC
 #endif // HAS_ZEROCONF
 
   return true;
@@ -604,37 +756,39 @@ bool CNetworkServices::StopWebserver()
 
 bool CNetworkServices::StartAirPlayServer()
 {
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_AIRPLAYVIDEOSUPPORT))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_AIRPLAYVIDEOSUPPORT))
     return true;
 
 #ifdef HAS_AIRPLAY
-  if (!g_application.getNetwork().IsAvailable() || !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
+  if (!CServiceBroker::GetNetwork().IsAvailable() || !m_settings->GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
     return false;
 
   if (IsAirPlayServerRunning())
     return true;
-  
-  if (!CAirPlayServer::StartServer(g_advancedSettings.m_airPlayPort, true))
+
+  if (!CAirPlayServer::StartServer(CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_airPlayPort, true))
     return false;
-  
-  if (!CAirPlayServer::SetCredentials(CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
-                                      CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
+
+  if (!CAirPlayServer::SetCredentials(m_settings->GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
+                                      m_settings->GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
     return false;
-  
+
 #ifdef HAS_ZEROCONF
   std::vector<std::pair<std::string, std::string> > txt;
-  CNetworkInterface* iface = g_application.getNetwork().GetFirstConnectedInterface();
-  txt.push_back(std::make_pair("deviceid", iface != NULL ? iface->GetMacAddress() : "FF:FF:FF:FF:FF:F2"));
-  txt.push_back(std::make_pair("model", "Xbmc,1"));
-  txt.push_back(std::make_pair("srcvers", AIRPLAY_SERVER_VERSION_STR));
+  CNetworkInterface* iface = CServiceBroker::GetNetwork().GetFirstConnectedInterface();
+  txt.emplace_back("deviceid", iface != nullptr ? iface->GetMacAddress() : "FF:FF:FF:FF:FF:F2");
+  txt.emplace_back("model", "Xbmc,1");
+  txt.emplace_back("srcvers", AIRPLAY_SERVER_VERSION_STR);
 
   // for ios8 clients we need to announce mirroring support
   // else we won't get video urls anymore.
   // We also announce photo caching support (as it seems faster and
   // we have implemented it anyways).
-  txt.push_back(std::make_pair("features", "0x20F7"));
+  txt.emplace_back("features", "0x20F7");
 
-  CZeroconf::GetInstance()->PublishService("servers.airplay", "_airplay._tcp", CSysInfo::GetDeviceName(), g_advancedSettings.m_airPlayPort, txt);
+  CZeroconf::GetInstance()->PublishService(
+      "servers.airplay", "_airplay._tcp", CSysInfo::GetDeviceName() + " airplay",
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_airPlayPort, txt);
 #endif // HAS_ZEROCONF
 
   return true;
@@ -670,15 +824,15 @@ bool CNetworkServices::StopAirPlayServer(bool bWait)
 bool CNetworkServices::StartAirTunesServer()
 {
 #ifdef HAS_AIRTUNES
-  if (!g_application.getNetwork().IsAvailable() || !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
+  if (!CServiceBroker::GetNetwork().IsAvailable() || !m_settings->GetBool(CSettings::SETTING_SERVICES_AIRPLAY))
     return false;
 
   if (IsAirTunesServerRunning())
     return true;
 
-  if (!CAirTunesServer::StartServer(g_advancedSettings.m_airTunesPort, true,
-                                    CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
-                                    CServiceBroker::GetSettings().GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
+  if (!CAirTunesServer::StartServer(CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_airTunesPort, true,
+                                    m_settings->GetBool(CSettings::SETTING_SERVICES_USEAIRPLAYPASSWORD),
+                                    m_settings->GetString(CSettings::SETTING_SERVICES_AIRPLAYPASSWORD)))
   {
     CLog::Log(LOGERROR, "Failed to start AirTunes Server");
     return false;
@@ -711,37 +865,36 @@ bool CNetworkServices::StopAirTunesServer(bool bWait)
 
 bool CNetworkServices::StartJSONRPCServer()
 {
-#ifdef HAS_JSONRPC
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
     return false;
 
   if (IsJSONRPCServerRunning())
     return true;
 
-  if (!CTCPServer::StartServer(g_advancedSettings.m_jsonTcpPort, CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESALLINTERFACES)))
+  if (!CTCPServer::StartServer(CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_jsonTcpPort, m_settings->GetBool(CSettings::SETTING_SERVICES_ESALLINTERFACES)))
     return false;
 
 #ifdef HAS_ZEROCONF
   std::vector<std::pair<std::string, std::string> > txt;
-  CZeroconf::GetInstance()->PublishService("servers.jsonrpc-tpc", "_xbmc-jsonrpc._tcp", CSysInfo::GetDeviceName(), g_advancedSettings.m_jsonTcpPort, txt);
+  txt.emplace_back("txtvers", "1");
+  txt.emplace_back("uuid", CServiceBroker::GetSettingsComponent()->GetSettings()->GetString(
+                             CSettings::SETTING_SERVICES_DEVICEUUID));
+
+  CZeroconf::GetInstance()->PublishService(
+      "servers.jsonrpc-tcp", "_xbmc-jsonrpc._tcp", CSysInfo::GetDeviceName() + " jsonrpc-tcp",
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_jsonTcpPort, txt);
 #endif // HAS_ZEROCONF
 
   return true;
-#endif // HAS_JSONRPC
-  return false;
 }
 
 bool CNetworkServices::IsJSONRPCServerRunning()
 {
-#ifdef HAS_JSONRPC
   return CTCPServer::IsRunning();
-#endif // HAS_JSONRPC
-  return false;
 }
 
 bool CNetworkServices::StopJSONRPCServer(bool bWait)
 {
-#ifdef HAS_JSONRPC
   if (!IsJSONRPCServerRunning())
     return true;
 
@@ -752,14 +905,11 @@ bool CNetworkServices::StopJSONRPCServer(bool bWait)
 #endif // HAS_ZEROCONF
 
   return true;
-#endif // HAS_JSONRPC
-  return false;
 }
 
 bool CNetworkServices::StartEventServer()
 {
-#ifdef HAS_EVENT_SERVER
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
     return false;
 
   if (IsEventServerRunning())
@@ -775,21 +925,15 @@ bool CNetworkServices::StartEventServer()
   server->StartServer();
 
   return true;
-#endif // HAS_EVENT_SERVER
-  return false;
 }
 
 bool CNetworkServices::IsEventServerRunning()
 {
-#ifdef HAS_EVENT_SERVER
   return CEventServer::GetInstance()->Running();
-#endif // HAS_EVENT_SERVER
-  return false;
 }
 
 bool CNetworkServices::StopEventServer(bool bWait, bool promptuser)
 {
-#ifdef HAS_EVENT_SERVER
   if (!IsEventServerRunning())
     return true;
 
@@ -804,34 +948,31 @@ bool CNetworkServices::StopEventServer(bool bWait, bool promptuser)
   {
     if (server->GetNumberOfClients() > 0)
     {
-      if (HELPERS::ShowYesNoDialogText(CVariant{13140}, CVariant{13141}, CVariant{""}, CVariant{""}, 10000) != 
-        DialogResponse::YES)
+      if (HELPERS::ShowYesNoDialogText(CVariant{13140}, CVariant{13141}, CVariant{""}, CVariant{""},
+                                       10000) != DialogResponse::CHOICE_YES)
       {
-        CLog::Log(LOGNOTICE, "ES: Not stopping event server");
+        CLog::Log(LOGINFO, "ES: Not stopping event server");
         return false;
       }
     }
-    CLog::Log(LOGNOTICE, "ES: Stopping event server with confirmation");
+    CLog::Log(LOGINFO, "ES: Stopping event server with confirmation");
 
     CEventServer::GetInstance()->StopServer(true);
   }
   else
   {
     if (!bWait)
-      CLog::Log(LOGNOTICE, "ES: Stopping event server");
+      CLog::Log(LOGINFO, "ES: Stopping event server");
 
     CEventServer::GetInstance()->StopServer(bWait);
   }
 
   return true;
-#endif // HAS_EVENT_SERVER
-  return false;
 }
 
 bool CNetworkServices::RefreshEventServer()
 {
-#ifdef HAS_EVENT_SERVER
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESENABLED))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_ESENABLED))
     return false;
 
   if (!IsEventServerRunning())
@@ -839,8 +980,6 @@ bool CNetworkServices::RefreshEventServer()
 
   CEventServer::GetInstance()->RefreshSettings();
   return true;
-#endif // HAS_EVENT_SERVER
-  return false;
 }
 
 bool CNetworkServices::StartUPnP()
@@ -848,17 +987,17 @@ bool CNetworkServices::StartUPnP()
   bool ret = false;
 #ifdef HAS_UPNP
   ret |= StartUPnPClient();
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPSERVER))
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPSERVER))
   {
    ret |= StartUPnPServer();
   }
 
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPCONTROLLER))
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPCONTROLLER))
   {
     ret |= StartUPnPController();
   }
 
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPRENDERER))
+  if (m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPRENDERER))
   {
     ret |= StartUPnPRenderer();
   }
@@ -872,7 +1011,7 @@ bool CNetworkServices::StopUPnP(bool bWait)
   if (!CUPnP::IsInstantiated())
     return true;
 
-  CLog::Log(LOGNOTICE, "stopping upnp");
+  CLog::Log(LOGINFO, "stopping upnp");
   CUPnP::ReleaseInstance(bWait);
 
   return true;
@@ -883,10 +1022,10 @@ bool CNetworkServices::StopUPnP(bool bWait)
 bool CNetworkServices::StartUPnPClient()
 {
 #ifdef HAS_UPNP
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNP))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     return false;
 
-  CLog::Log(LOGNOTICE, "starting upnp client");
+  CLog::Log(LOGINFO, "starting upnp client");
   CUPnP::GetInstance()->StartClient();
   return IsUPnPClientRunning();
 #endif // HAS_UPNP
@@ -907,7 +1046,7 @@ bool CNetworkServices::StopUPnPClient()
   if (!IsUPnPClientRunning())
     return true;
 
-  CLog::Log(LOGNOTICE, "stopping upnp client");
+  CLog::Log(LOGINFO, "stopping upnp client");
   CUPnP::GetInstance()->StopClient();
 
   return true;
@@ -918,12 +1057,12 @@ bool CNetworkServices::StopUPnPClient()
 bool CNetworkServices::StartUPnPController()
 {
 #ifdef HAS_UPNP
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPCONTROLLER) ||
-      !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPSERVER) ||
-      !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNP))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPCONTROLLER) ||
+      !m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPSERVER) ||
+      !m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     return false;
 
-  CLog::Log(LOGNOTICE, "starting upnp controller");
+  CLog::Log(LOGINFO, "starting upnp controller");
   CUPnP::GetInstance()->StartController();
   return IsUPnPControllerRunning();
 #endif // HAS_UPNP
@@ -944,7 +1083,7 @@ bool CNetworkServices::StopUPnPController()
   if (!IsUPnPControllerRunning())
     return true;
 
-  CLog::Log(LOGNOTICE, "stopping upnp controller");
+  CLog::Log(LOGINFO, "stopping upnp controller");
   CUPnP::GetInstance()->StopController();
 
   return true;
@@ -955,11 +1094,11 @@ bool CNetworkServices::StopUPnPController()
 bool CNetworkServices::StartUPnPRenderer()
 {
 #ifdef HAS_UPNP
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPRENDERER) ||
-      !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNP))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPRENDERER) ||
+      !m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     return false;
 
-  CLog::Log(LOGNOTICE, "starting upnp renderer");
+  CLog::Log(LOGINFO, "starting upnp renderer");
   return CUPnP::GetInstance()->StartRenderer();
 #endif // HAS_UPNP
   return false;
@@ -979,7 +1118,7 @@ bool CNetworkServices::StopUPnPRenderer()
   if (!IsUPnPRendererRunning())
     return true;
 
-  CLog::Log(LOGNOTICE, "stopping upnp renderer");
+  CLog::Log(LOGINFO, "stopping upnp renderer");
   CUPnP::GetInstance()->StopRenderer();
 
   return true;
@@ -990,11 +1129,11 @@ bool CNetworkServices::StopUPnPRenderer()
 bool CNetworkServices::StartUPnPServer()
 {
 #ifdef HAS_UPNP
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNPSERVER) ||
-      !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_UPNP))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_UPNPSERVER) ||
+      !m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     return false;
 
-  CLog::Log(LOGNOTICE, "starting upnp server");
+  CLog::Log(LOGINFO, "starting upnp server");
   return CUPnP::GetInstance()->StartServer();
 #endif // HAS_UPNP
   return false;
@@ -1016,14 +1155,14 @@ bool CNetworkServices::StopUPnPServer()
 
   StopUPnPController();
 
-  CLog::Log(LOGNOTICE, "stopping upnp server");
+  CLog::Log(LOGINFO, "stopping upnp server");
   CUPnP::GetInstance()->StopServer();
 
   return true;
 #endif // HAS_UPNP
   return false;
 }
-  
+
 bool CNetworkServices::StartRss()
 {
   if (IsRssRunning())
@@ -1050,13 +1189,13 @@ bool CNetworkServices::StopRss()
 bool CNetworkServices::StartZeroconf()
 {
 #ifdef HAS_ZEROCONF
-  if (!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ZEROCONF))
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_ZEROCONF))
     return false;
 
   if (IsZeroconfRunning())
     return true;
 
-  CLog::Log(LOGNOTICE, "starting zeroconf publishing");
+  CLog::Log(LOGINFO, "starting zeroconf publishing");
   return CZeroconf::GetInstance()->Start();
 #endif // HAS_ZEROCONF
   return false;
@@ -1076,11 +1215,46 @@ bool CNetworkServices::StopZeroconf()
   if (!IsZeroconfRunning())
     return true;
 
-  CLog::Log(LOGNOTICE, "stopping zeroconf publishing");
+  CLog::Log(LOGINFO, "stopping zeroconf publishing");
   CZeroconf::GetInstance()->Stop();
 
   return true;
 #endif // HAS_ZEROCONF
+  return false;
+}
+
+bool CNetworkServices::StartWSDiscovery()
+{
+#if defined(HAS_FILESYSTEM_SMB)
+  if (!m_settings->GetBool(CSettings::SETTING_SERVICES_WSDISCOVERY))
+    return false;
+
+  if (IsWSDiscoveryRunning())
+    return true;
+
+  return CServiceBroker::GetWSDiscovery().StartServices();
+#endif // HAS_FILESYSTEM_SMB
+  return false;
+}
+
+bool CNetworkServices::IsWSDiscoveryRunning()
+{
+#if defined(HAS_FILESYSTEM_SMB)
+  return CServiceBroker::GetWSDiscovery().IsRunning();
+#endif // HAS_FILESYSTEM_SMB
+  return false;
+}
+
+bool CNetworkServices::StopWSDiscovery()
+{
+#if defined(HAS_FILESYSTEM_SMB)
+  if (!IsWSDiscoveryRunning())
+    return true;
+
+  CServiceBroker::GetWSDiscovery().StopServices();
+
+  return true;
+#endif // HAS_FILESYSTEM_SMB
   return false;
 }
 
@@ -1090,7 +1264,7 @@ bool CNetworkServices::ValidatePort(int port)
     return false;
 
 #ifdef TARGET_LINUX
-  if (!CUtil::CanBindPrivileged() && (port < 1024 || port > 65535))
+  if (!CUtil::CanBindPrivileged() && (port < 1024))
     return false;
 #endif
 

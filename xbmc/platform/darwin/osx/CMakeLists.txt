@@ -1,13 +1,15 @@
 set(SOURCES CocoaInterface.mm
-            HotKeyController.m
-            OSXTextInputResponder.mm
-            smc.c
-            XBMCHelper.cpp)
+            CPUInfoOsx.cpp
+            GPUInfoMacOS.cpp
+            HotKeyController.mm
+            MediaKeys.mm
+            PlatformDarwinOSX.mm)
 
 set(HEADERS CocoaInterface.h
+            CPUInfoOsx.h
+            GPUInfoMacOS.h
             HotKeyController.h
-            OSXTextInputResponder.h
-            smc.h
-            XBMCHelper.h)
+            MediaKeys.h
+            PlatformDarwinOSX.h)
 
 core_add_library(platform_osx)

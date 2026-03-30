@@ -1,37 +1,32 @@
-#pragma once
 /*
- *      Copyright (C) 2011-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2011-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <sys/types.h>
-#include <sys/select.h>
-#include <sys/socket.h>
+#pragma once
+
+#include "utils/HttpRangeUtils.h"
+
+#include <map>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <map>
 #include <string>
 
 #include <microhttpd.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
-#include "utils/HttpRangeUtils.h"
+#if MHD_VERSION >= 0x00097002
+using MHD_RESULT = MHD_Result;
+#else
+using MHD_RESULT = int;
+#endif
 
 class CDateTime;
 class CWebServer;
@@ -125,7 +120,7 @@ public:
    *
    * \return MHD_NO if a severe error has occurred otherwise MHD_YES.
    */
-  virtual int HandleRequest() = 0;
+  virtual MHD_RESULT HandleRequest() = 0;
 
   /*!
    * \brief Whether the HTTP response could also be provided in ranges.
@@ -150,13 +145,13 @@ public:
   * \details This is only used if the response can be cached.
   */
   virtual bool GetLastModifiedDate(CDateTime &lastModified) const { return false; }
- 
+
   /*!
    * \brief Returns the ranges with raw data belonging to the response.
    *
    * \details This is only used if the response type is one of the HTTPMemoryDownload types.
    */
-  virtual HttpResponseRanges GetResponseData() const { return HttpResponseRanges(); };
+  virtual HttpResponseRanges GetResponseData() const { return HttpResponseRanges(); }
 
   /*!
   * \brief Returns the URL to which the request should be redirected.
@@ -224,7 +219,6 @@ public:
    * \param value Value of the HTTP POST field
    */
   void AddPostField(const std::string &key, const std::string &value);
-#if (MHD_VERSION >= 0x00040001)
   /*!
   * \brief Adds the given raw HTTP POST data.
   *
@@ -232,19 +226,12 @@ public:
   * \param size Size of the raw HTTP POST data
   */
   bool AddPostData(const char *data, size_t size);
-#else
-  bool AddPostData(const char *data, unsigned int size);
-#endif
 
 protected:
   IHTTPRequestHandler();
   explicit IHTTPRequestHandler(const HTTPRequest &request);
 
-#if (MHD_VERSION >= 0x00040001)
   virtual bool appendPostData(const char *data, size_t size)
-#else
-  virtual bool appendPostData(const char *data, unsigned int size)
-#endif
   { return true; }
 
   bool GetRequestedRanges(uint64_t totalLength);
@@ -256,5 +243,5 @@ protected:
   std::map<std::string, std::string> m_postFields;
 
 private:
-  bool m_ranged;
+  bool m_ranged = false;
 };

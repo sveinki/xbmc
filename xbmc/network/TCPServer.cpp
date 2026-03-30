@@ -1,38 +1,32 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "TCPServer.h"
+
+#include "ServiceBroker.h"
+#include "interfaces/AnnouncementManager.h"
+#include "interfaces/json-rpc/JSONRPC.h"
+#include "network/Network.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/Variant.h"
+#include "utils/log.h"
+#include "websocket/WebSocketManager.h"
+
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include <arpa/inet.h>
 #include <memory.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 
-#include "settings/AdvancedSettings.h"
-#include "interfaces/json-rpc/JSONRPC.h"
-#include "interfaces/AnnouncementManager.h"
-#include "utils/log.h"
-#include "utils/Variant.h"
-#include "threads/SingleLock.h"
-#include "websocket/WebSocketManager.h"
-#include "Network.h"
+using namespace std::chrono_literals;
 
 #if defined(TARGET_WINDOWS) || defined(HAVE_LIBBLUETOOTH)
 static const char     bt_service_name[] = "XBMC JSON-RPC";
@@ -58,9 +52,13 @@ static const bdaddr_t bt_bdaddr_local = {{0, 0, 0, 0xff, 0xff, 0xff}};
 #endif
 
 using namespace JSONRPC;
-using namespace ANNOUNCEMENT;
 
-#define RECEIVEBUFFER 1024
+#define RECEIVEBUFFER 4096
+
+namespace
+{
+constexpr size_t maxBufferLength = 64 * 1024;
+}
 
 CTCPServer *CTCPServer::ServerInstance = NULL;
 
@@ -71,20 +69,7 @@ bool CTCPServer::StartServer(int port, bool nonlocal)
   ServerInstance = new CTCPServer(port, nonlocal);
   if (ServerInstance->Initialize())
   {
-    size_t thread_stacksize = 0;
-#if defined(TARGET_DARWIN_TVOS)
-    void *stack_addr;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_getstack(&attr, &stack_addr, &thread_stacksize);
-    pthread_attr_destroy(&attr);
-    // double the stack size under tvos, not sure why yet
-    // but it stoped crashing using Kodi json -> play video.
-    // non-tvos will pass a value of zero which means 'system default'
-    thread_stacksize *= 2;
-  CLog::Log(LOGDEBUG, "CTCPServer: increasing thread stack to %zu", thread_stacksize);
-#endif
-    ServerInstance->Create(false, thread_stacksize);
+    ServerInstance->Create(false);
     return true;
   }
   else
@@ -130,11 +115,11 @@ void CTCPServer::Process()
     struct timeval  to     = {1, 0};
     FD_ZERO(&rfds);
 
-    for (std::vector<SOCKET>::iterator it = m_servers.begin(); it != m_servers.end(); ++it)
+    for (auto& it : m_servers)
     {
-      FD_SET(*it, &rfds);
-      if ((intptr_t)*it > (intptr_t)max_fd)
-        max_fd = *it;
+      FD_SET(it, &rfds);
+      if ((intptr_t)it > (intptr_t)max_fd)
+        max_fd = it;
     }
 
     for (unsigned int i = 0; i < m_connections.size(); i++)
@@ -148,7 +133,7 @@ void CTCPServer::Process()
     if (res < 0)
     {
       CLog::Log(LOGERROR, "JSONRPC Server: Select failed");
-      Sleep(1000);
+      CThread::Sleep(1000ms);
       Initialize();
     }
     else if (res > 0)
@@ -182,7 +167,7 @@ void CTCPServer::Process()
               }
             }
 
-            if (response.size() <= 0)
+            if (response.empty())
               m_connections[i]->PushBuffer(this, buffer, nread);
 
             close = m_connections[i]->Closing();
@@ -200,20 +185,21 @@ void CTCPServer::Process()
         }
       }
 
-      for (std::vector<SOCKET>::iterator it = m_servers.begin(); it != m_servers.end(); ++it)
+      for (auto& it : m_servers)
       {
-        if (FD_ISSET(*it, &rfds))
+        if (FD_ISSET(it, &rfds))
         {
           CLog::Log(LOGDEBUG, "JSONRPC Server: New connection detected");
           CTCPClient *newconnection = new CTCPClient();
-          newconnection->m_socket = accept(*it, (sockaddr*)&newconnection->m_cliaddr, &newconnection->m_addrlen);
+          newconnection->m_socket =
+              accept(it, (sockaddr*)&newconnection->m_cliaddr, &newconnection->m_addrlen);
 
           if (newconnection->m_socket == INVALID_SOCKET)
           {
-            CLog::Log(LOGERROR, "JSONRPC Server: Accept of new connection failed: %d", errno);
+            CLog::Log(LOGERROR, "JSONRPC Server: Accept of new connection failed: {}", errno);
             if (EBADF == errno)
             {
-              Sleep(1000);
+              CThread::Sleep(1000ms);
               Initialize();
               break;
             }
@@ -246,14 +232,20 @@ int CTCPServer::GetCapabilities()
   return Response | Announcing;
 }
 
-void CTCPServer::Announce(AnnouncementFlag flag, const char *sender, const char *message, const CVariant &data)
+void CTCPServer::Announce(ANNOUNCEMENT::AnnouncementFlag flag,
+                          const std::string& sender,
+                          const std::string& message,
+                          const CVariant& data)
 {
-  std::string str = IJSONRPCAnnouncer::AnnouncementToJSONRPC(flag, sender, message, data, g_advancedSettings.m_jsonOutputCompact);
+  if (m_connections.empty())
+    return;
+
+  std::string str = IJSONRPCAnnouncer::AnnouncementToJSONRPC(flag, sender, message, data, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_jsonOutputCompact);
 
   for (unsigned int i = 0; i < m_connections.size(); i++)
   {
     {
-      CSingleLock lock (m_connections[i]->m_critSection);
+      std::unique_lock lock(m_connections[i]->m_critSection);
       if ((m_connections[i]->GetAnnouncementFlags() & flag) == 0)
         continue;
     }
@@ -273,13 +265,21 @@ bool CTCPServer::Initialize()
 
   if (started)
   {
-    CAnnouncementManager::GetInstance().AddAnnouncer(this);
+    CServiceBroker::GetAnnouncementManager()->AddAnnouncer(this);
     CLog::Log(LOGINFO, "JSONRPC Server: Successfully initialized");
     return true;
   }
   return false;
 }
 
+#ifdef TARGET_WINDOWS_STORE
+bool CTCPServer::InitializeBlue()
+{
+  CLog::Log(LOGDEBUG, "{} is not implemented", __FUNCTION__);
+  return true; // need to fake it for now
+}
+
+#else
 bool CTCPServer::InitializeBlue()
 {
   if (!m_nonlocal)
@@ -346,7 +346,8 @@ bool CTCPServer::InitializeBlue()
   service.dwNumberOfCsAddrs       = 1;
 
   if (WSASetService(&service, RNRSERVICE_REGISTER, 0) == SOCKET_ERROR)
-    CLog::Log(LOGERROR, "JSONRPC Server: failed to register bluetooth service error %d",  WSAGetLastError());
+    CLog::Log(LOGERROR, "JSONRPC Server: failed to register bluetooth service error {}",
+              WSAGetLastError());
 
   return true;
 #endif
@@ -359,7 +360,7 @@ bool CTCPServer::InitializeBlue()
     CLog::Log(LOGINFO, "JSONRPC Server: Unable to get bluetooth socket");
     return false;
   }
-  struct sockaddr_rc sa  = {0};
+  struct sockaddr_rc sa = {};
   sa.rc_family  = AF_BLUETOOTH;
   sa.rc_bdaddr  = bt_bdaddr_any;
   sa.rc_channel = 0;
@@ -377,7 +378,7 @@ bool CTCPServer::InitializeBlue()
 
   if (listen(fd, 10) < 0)
   {
-    CLog::Log(LOGERROR, "JSONRPC Server: Failed to listen to bluetooth port %d", sa.rc_channel);
+    CLog::Log(LOGERROR, "JSONRPC Server: Failed to listen to bluetooth port {}", sa.rc_channel);
     closesocket(fd);
     return false;
   }
@@ -448,7 +449,7 @@ bool CTCPServer::InitializeBlue()
 
   if (sdp_record_register(session, record, 0) < 0)
   {
-    CLog::Log(LOGERROR, "JSONRPC Server: Failed to register record with error %d", errno);
+    CLog::Log(LOGERROR, "JSONRPC Server: Failed to register record with error {}", errno);
     closesocket(fd);
     sdp_close(session);
     sdp_record_free(record);
@@ -462,17 +463,17 @@ bool CTCPServer::InitializeBlue()
 #endif
   return false;
 }
+#endif
 
 bool CTCPServer::InitializeTCP()
 {
-  SOCKET fd;
-
   Deinitialize();
 
-  if ((fd = CreateTCPServerSocket(m_port, !m_nonlocal, 10, "JSONRPC")) == INVALID_SOCKET)
+  std::vector<SOCKET> sockets = CreateTCPServerSocket(m_port, !m_nonlocal, 10, "JSONRPC");
+  if (sockets.empty())
     return false;
 
-  m_servers.push_back(fd);
+  m_servers.insert(m_servers.end(), sockets.begin(), sockets.end());
   return true;
 }
 
@@ -497,14 +498,13 @@ void CTCPServer::Deinitialize()
   m_sdpd = NULL;
 #endif
 
-  CAnnouncementManager::GetInstance().RemoveAnnouncer(this);
+  CServiceBroker::GetAnnouncementManager()->RemoveAnnouncer(this);
 }
 
 CTCPServer::CTCPClient::CTCPClient()
 {
   m_new = true;
-  m_announcementflags = ANNOUNCE_ALL;
-  m_socket = INVALID_SOCKET;
+  m_announcementflags = ANNOUNCEMENT::ANNOUNCE_ALL;
   m_beginBrackets = 0;
   m_endBrackets = 0;
   m_beginChar = 0;
@@ -545,7 +545,7 @@ void CTCPServer::CTCPClient::Send(const char *data, unsigned int size)
   unsigned int sent = 0;
   do
   {
-    CSingleLock lock (m_critSection);
+    std::unique_lock lock(m_critSection);
     sent += send(m_socket, data + sent, size - sent, 0);
   } while (sent < size);
 }
@@ -553,6 +553,9 @@ void CTCPServer::CTCPClient::Send(const char *data, unsigned int size)
 void CTCPServer::CTCPClient::PushBuffer(CTCPServer *host, const char *buffer, int length)
 {
   m_new = false;
+  bool inObject = false;
+  bool inString = false;
+  bool escapeNext = false;
 
   for (int i = 0; i < length; i++)
   {
@@ -572,10 +575,42 @@ void CTCPServer::CTCPClient::PushBuffer(CTCPServer *host, const char *buffer, in
     if (m_beginChar != 0)
     {
       m_buffer.push_back(c);
-      if (c == m_beginChar)
-        m_beginBrackets++;
-      else if (c == m_endChar)
-        m_endBrackets++;
+      if (inObject)
+      {
+        if (!inString)
+        {
+          if (c == '"')
+            inString = true;
+        }
+        else
+        {
+          if (escapeNext)
+          {
+            escapeNext = false;
+          }
+          else
+          {
+            if (c == '\\')
+              escapeNext = true;
+            else if (c == '"')
+              inString = false;
+          }
+        }
+      }
+      if (!inString)
+      {
+        if (c == m_beginChar)
+        {
+          m_beginBrackets++;
+          inObject = true;
+        }
+        else if (c == m_endChar)
+        {
+          m_endBrackets++;
+          if (m_beginBrackets == m_endBrackets)
+            inObject = false;
+        }
+      }
       if (m_beginBrackets > 0 && m_endBrackets > 0 && m_beginBrackets == m_endBrackets)
       {
         std::string line = CJSONRPC::MethodCall(m_buffer, host, this);
@@ -591,7 +626,7 @@ void CTCPServer::CTCPClient::Disconnect()
 {
   if (m_socket > 0)
   {
-    CSingleLock lock (m_critSection);
+    std::unique_lock lock(m_critSection);
     shutdown(m_socket, SHUT_RDWR);
     closesocket(m_socket);
     m_socket = INVALID_SOCKET;
@@ -615,11 +650,14 @@ void CTCPServer::CTCPClient::Copy(const CTCPClient& client)
 CTCPServer::CWebSocketClient::CWebSocketClient(CWebSocket *websocket)
 {
   m_websocket = websocket;
+  m_buffer.reserve(maxBufferLength);
 }
 
 CTCPServer::CWebSocketClient::CWebSocketClient(const CWebSocketClient& client)
+  : CTCPServer::CTCPClient(client)
 {
   *this = client;
+  m_buffer.reserve(maxBufferLength);
 }
 
 CTCPServer::CWebSocketClient::CWebSocketClient(CWebSocket *websocket, const CTCPClient& client)
@@ -627,6 +665,7 @@ CTCPServer::CWebSocketClient::CWebSocketClient(CWebSocket *websocket, const CTCP
   Copy(client);
 
   m_websocket = websocket;
+  m_buffer.reserve(maxBufferLength);
 }
 
 CTCPServer::CWebSocketClient::~CWebSocketClient()
@@ -639,6 +678,7 @@ CTCPServer::CWebSocketClient& CTCPServer::CWebSocketClient::operator=(const CWeb
   Copy(client);
 
   m_websocket = client.m_websocket;
+  m_buffer = client.m_buffer;
 
   return *this;
 }
@@ -658,16 +698,28 @@ void CTCPServer::CWebSocketClient::PushBuffer(CTCPServer *host, const char *buff
 {
   bool send;
   const CWebSocketMessage *msg = NULL;
-  size_t len = length;
+
+  if (m_buffer.size() + length > maxBufferLength)
+  {
+    CLog::Log(LOGINFO, "WebSocket: client buffer size {} exceeded", maxBufferLength);
+    return Disconnect();
+  }
+
+  m_buffer.append(buffer, length);
+
+  const char* buf = m_buffer.data();
+  size_t len = m_buffer.size();
+
   do
   {
-    if ((msg = m_websocket->Handle(buffer, len, send)) != NULL && msg->IsComplete())
+    if ((msg = m_websocket->Handle(buf, len, send)) != NULL && msg->IsComplete())
     {
       std::vector<const CWebSocketFrame *> frames = msg->GetFrames();
       if (send)
       {
         for (unsigned int index = 0; index < frames.size(); index++)
-          Send(frames.at(index)->GetFrameData(), (unsigned int)frames.at(index)->GetFrameLength());
+          CTCPClient::Send(frames.at(index)->GetFrameData(),
+                           static_cast<unsigned int>(frames.at(index)->GetFrameLength()));
       }
       else
       {
@@ -679,6 +731,9 @@ void CTCPServer::CWebSocketClient::PushBuffer(CTCPServer *host, const char *buff
     }
   }
   while (len > 0 && msg != NULL);
+
+  if (len < m_buffer.size())
+    m_buffer = m_buffer.substr(m_buffer.size() - len);
 
   if (m_websocket->GetState() == WebSocketStateClosed)
     Disconnect();
@@ -699,4 +754,3 @@ void CTCPServer::CWebSocketClient::Disconnect()
       CTCPClient::Disconnect();
   }
 }
-

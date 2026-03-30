@@ -1,90 +1,96 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <vector>
+#pragma once
 
-#include "addons/PVRClient.h"
 #include "dialogs/GUIDialogContextMenu.h"
 #include "guilib/GUIDialog.h"
 #include "view/GUIViewControl.h"
 
-#include "pvr/channels/PVRChannelGroup.h"
+#include <memory>
+#include <vector>
+
+class CAction;
+class CFileItemList;
+class CGUIMessage;
 
 namespace PVR
 {
-  class CGUIDialogPVRChannelManager : public CGUIDialog
-  {
-  public:
-    CGUIDialogPVRChannelManager(void);
-    ~CGUIDialogPVRChannelManager(void) override;
-    bool OnMessage(CGUIMessage& message) override;
-    bool OnAction(const CAction& action) override;
-    void OnWindowLoaded(void) override;
-    void OnWindowUnload(void) override;
-    bool HasListItems() const override{ return true; }
-    CFileItemPtr GetCurrentListItem(int offset = 0) override;
+class CPVRChannelGroup;
+class CPVRClient;
 
-  protected:
-    void OnInitWindow() override;
-    void OnDeinitWindow(int nextWindowID) override;
+class CGUIDialogPVRChannelManager : public CGUIDialog
+{
+public:
+  CGUIDialogPVRChannelManager();
+  ~CGUIDialogPVRChannelManager() override;
+  bool OnMessage(CGUIMessage& message) override;
+  bool OnAction(const CAction& action) override;
+  void OnWindowLoaded() override;
+  void OnWindowUnload() override;
+  bool HasListItems() const override { return true; }
+  CFileItemPtr GetCurrentListItem(int offset = 0) override;
 
-  private:
-    void Clear(void);
-    void Update(void);
-    void SaveList(void);
-    void Renumber(void);
-    void SetData(int iItem);
-    void RenameChannel(const CFileItemPtr &pItem);
+  void Open(const std::shared_ptr<CFileItem>& initialSelection);
+  void SetRadio(bool bIsRadio);
 
-    bool OnPopupMenu(int iItem);
-    bool OnContextButton(int itemNumber, CONTEXT_BUTTON button);
-    bool OnActionMove(const CAction &action);
-    bool OnMessageClick(CGUIMessage &message);
-    bool OnClickListChannels(CGUIMessage &message);
-    bool OnClickButtonOK(CGUIMessage &message);
-    bool OnClickButtonApply(CGUIMessage &message);
-    bool OnClickButtonCancel(CGUIMessage &message);
-    bool OnClickButtonRadioTV(CGUIMessage &message);
-    bool OnClickButtonRadioActive(CGUIMessage &message);
-    bool OnClickButtonRadioParentalLocked(CGUIMessage &message);
-    bool OnClickButtonEditName(CGUIMessage &message);
-    bool OnClickButtonChannelLogo(CGUIMessage &message);
-    bool OnClickButtonUseEPG(CGUIMessage &message);
-    bool OnClickEPGSourceSpin(CGUIMessage &message);
-    bool OnClickButtonGroupManager(CGUIMessage &message);
-    bool OnClickButtonNewChannel();
+protected:
+  void OnInitWindow() override;
+  void OnDeinitWindow(int nextWindowID) override;
 
-    bool PersistChannel(const CFileItemPtr &pItem, const CPVRChannelGroupPtr &group, unsigned int *iChannelNumber);
-    void SetItemsUnchanged(void);
+private:
+  void Clear();
+  void Update();
+  void PromptAndSaveList();
+  void SaveList();
+  void Renumber();
+  void SetData(int iItem);
+  void RenameChannel(const std::shared_ptr<CFileItem>& pItem) const;
 
-    bool m_bIsRadio;
-    bool m_bMovingMode;
-    bool m_bContainsChanges;
-    bool m_bAllowNewChannel;
+  void ClearChannelOptions();
+  void EnableChannelOptions(bool bEnable);
 
-    int m_iSelected;
-    CFileItemList* m_channelItems;
-    CGUIViewControl m_viewControl;
+  bool OnPopupMenu(int iItem);
+  bool OnContextButton(int itemNumber, CONTEXT_BUTTON button);
+  bool OnActionMove(const CAction& action);
+  bool OnMessageClick(const CGUIMessage& message);
+  bool OnClickListChannels(const CGUIMessage& message);
+  bool OnClickButtonOK();
+  bool OnClickButtonApply();
+  bool OnClickButtonCancel();
+  bool OnClickButtonRadioTV();
+  bool OnClickButtonRadioActive();
+  bool OnClickButtonRadioParentalLocked();
+  bool OnClickButtonEditName();
+  bool OnClickButtonChannelLogo();
+  bool OnClickButtonUseEPG();
+  bool OnClickEPGSourceSpin();
+  bool OnClickButtonGroupManager();
+  bool OnClickButtonNewChannel();
+  bool OnClickButtonRefreshChannelLogos();
 
-    typedef std::vector<PVR_CLIENT>::iterator PVR_CLIENT_ITR;
-    std::vector<PVR_CLIENT> m_clientsWithSettingsList;
-  };
-}
+  bool UpdateChannelData(const std::shared_ptr<CFileItem>& pItem,
+                         const std::shared_ptr<CPVRChannelGroup>& group) const;
+
+  bool HasChangedItems() const;
+  void SetItemChanged(const CFileItemPtr& pItem);
+
+  bool m_bIsRadio = false;
+  bool m_bMovingMode = false;
+  bool m_bAllowNewChannel = false;
+  bool m_bAllowRenumber = false;
+  bool m_bAllowReorder = false;
+
+  std::shared_ptr<CFileItem> m_initialSelection;
+  int m_iSelected = 0;
+  std::unique_ptr<CFileItemList> m_channelItems;
+  CGUIViewControl m_viewControl;
+
+  std::vector<std::shared_ptr<CPVRClient>> m_clientsWithSettingsList;
+};
+} // namespace PVR

@@ -1,41 +1,37 @@
-#pragma once
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "settings/lib/ISettingControl.h"
 #include "settings/lib/ISettingControlCreator.h"
 
-#define SETTING_XML_ELM_CONTROL_FORMATLABEL "formatlabel"
-#define SETTING_XML_ELM_CONTROL_HIDDEN "hidden"
-#define SETTING_XML_ELM_CONTROL_VERIFYNEW "verifynew"
-#define SETTING_XML_ELM_CONTROL_HEADING "heading"
-#define SETTING_XML_ELM_CONTROL_HIDEVALUE "hidevalue"
-#define SETTING_XML_ELM_CONTROL_MULTISELECT "multiselect"
-#define SETTING_XML_ELM_CONTROL_POPUP "popup"
-#define SETTING_XML_ELM_CONTROL_FORMATVALUE "value"
-#define SETTING_XML_ATTR_SHOW_MORE "more"
-#define SETTING_XML_ATTR_SHOW_DETAILS "details"
-#define SETTING_XML_ATTR_SEPARATOR_POSITION "separatorposition"
-#define SETTING_XML_ATTR_HIDE_SEPARATOR "hideseparator"
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+
+constexpr const char* SETTING_XML_ELM_CONTROL_FORMATLABEL = "formatlabel";
+constexpr const char* SETTING_XML_ELM_CONTROL_HIDDEN = "hidden";
+constexpr const char* SETTING_XML_ELM_CONTROL_VERIFYNEW = "verifynew";
+constexpr const char* SETTING_XML_ELM_CONTROL_HEADING = "heading";
+constexpr const char* SETTING_XML_ELM_CONTROL_HIDEVALUE = "hidevalue";
+constexpr const char* SETTING_XML_ELM_CONTROL_MULTISELECT = "multiselect";
+constexpr const char* SETTING_XML_ELM_CONTROL_POPUP = "popup";
+constexpr const char* SETTING_XML_ELM_CONTROL_FORMATVALUE = "value";
+constexpr const char* SETTING_XML_ELM_CONTROL_ADDBUTTONLABEL = "addbuttonlabel";
+constexpr const char* SETTING_XML_ATTR_SHOW_MORE = "more";
+constexpr const char* SETTING_XML_ATTR_SHOW_DETAILS = "details";
+constexpr const char* SETTING_XML_ATTR_SEPARATOR_POSITION = "separatorposition";
+constexpr const char* SETTING_XML_ATTR_HIDE_SEPARATOR = "hideseparator";
 
 class CVariant;
+class TiXmlNode;
 
 class CSettingControlCreator : public ISettingControlCreator
 {
@@ -72,15 +68,16 @@ public:
   int GetFormatLabel() const { return m_formatLabel; }
   void SetFormatLabel(int formatLabel) { m_formatLabel = formatLabel; }
   const std::string& GetFormatString() const { return m_formatString; }
-  void SetFormatString(const std::string &formatString) { m_formatString = formatString; }
+  void SetFormatString(std::string_view formatString) { m_formatString = formatString; }
   int GetMinimumLabel() const { return m_minimumLabel; }
   void SetMinimumLabel(int minimumLabel) { m_minimumLabel = minimumLabel; }
 
 protected:
   CSettingControlFormattedRange() = default;
 
+private:
   int m_formatLabel = -1;
-  std::string m_formatString = "%i";
+  std::string m_formatString = "{}";
   int m_minimumLabel = -1;
 };
 
@@ -118,7 +115,7 @@ public:
   int GetHeading() const { return m_heading; }
   void SetHeading(int heading) { m_heading = heading; }
 
-protected:
+private:
   bool m_hidden = false;
   bool m_verifyNewValue = false;
   int m_heading = -1;
@@ -156,12 +153,12 @@ public:
 
   bool HasActionData() const { return !m_actionData.empty(); }
   const std::string& GetActionData() const { return m_actionData; }
-  void SetActionData(const std::string& actionData) { m_actionData = actionData; }
+  void SetActionData(std::string_view actionData) { m_actionData = actionData; }
 
   bool CloseDialog() const { return m_closeDialog; }
   void SetCloseDialog(bool closeDialog) { m_closeDialog = closeDialog; }
 
-protected:
+private:
   int m_heading = -1;
   bool m_hideValue = false;
 
@@ -178,7 +175,9 @@ protected:
 };
 
 class CSetting;
-using SettingControlListValueFormatter = std::string (*)(std::shared_ptr<const CSetting> setting);
+
+using SettingControlListValueFormatter =
+    std::function<std::string(const std::shared_ptr<const CSetting>& setting)>;
 
 class CSettingControlList : public CSettingControlFormattedRange
 {
@@ -192,26 +191,38 @@ public:
   // specialization of CSettingControlFormattedRange
   bool Deserialize(const TiXmlNode *node, bool update = false) override;
   bool SetFormat(const std::string &format) override;
-  
+
   int GetHeading() const { return m_heading; }
   void SetHeading(int heading) { m_heading = heading; }
   bool CanMultiSelect() const { return m_multiselect; }
   void SetMultiSelect(bool multiselect) { m_multiselect = multiselect; }
   bool HideValue() const { return m_hideValue; }
   void SetHideValue(bool hideValue) { m_hideValue = hideValue; }
+  int GetAddButtonLabel() const { return m_addButtonLabel; }
+  void SetAddButtonLabel(int label) { m_addButtonLabel = label; }
 
-  SettingControlListValueFormatter GetFormatter() const { return m_formatter; }
-  void SetFormatter(SettingControlListValueFormatter formatter) { m_formatter = formatter; }
+  const SettingControlListValueFormatter& GetFormatter() const { return m_formatter; }
+  void SetFormatter(const SettingControlListValueFormatter& formatter) { m_formatter = formatter; }
 
-protected:
+  bool UseDetails() const { return m_useDetails; }
+  void SetUseDetails(bool useDetails) { m_useDetails = useDetails; }
+
+private:
   int m_heading = -1;
   bool m_multiselect = false;
   bool m_hideValue = false;
-  SettingControlListValueFormatter m_formatter = nullptr;
+  int m_addButtonLabel = -1;
+  SettingControlListValueFormatter m_formatter;
+  bool m_useDetails{false};
 };
 
 class CSettingControlSlider;
-using SettingControlSliderFormatter = std::string (*)(std::shared_ptr<const CSettingControlSlider> control, const CVariant &value, const CVariant &minimum, const CVariant &step, const CVariant &maximum);
+using SettingControlSliderFormatter =
+    std::function<std::string(const std::shared_ptr<const CSettingControlSlider>& control,
+                              const CVariant& value,
+                              const CVariant& minimum,
+                              const CVariant& step,
+                              const CVariant& maximum)>;
 
 class CSettingControlSlider : public ISettingControl
 {
@@ -231,16 +242,17 @@ public:
   int GetFormatLabel() const { return m_formatLabel; }
   void SetFormatLabel(int formatLabel) { m_formatLabel = formatLabel; }
   const std::string& GetFormatString() const { return m_formatString; }
-  void SetFormatString(const std::string &formatString) { m_formatString = formatString; }
+  void SetFormatString(std::string_view formatString) { m_formatString = formatString; }
+  std::string GetDefaultFormatString() const;
 
-  SettingControlSliderFormatter GetFormatter() const { return m_formatter; }
-  void SetFormatter(SettingControlSliderFormatter formatter) { m_formatter = formatter; }
+  const SettingControlSliderFormatter& GetFormatter() const { return m_formatter; }
+  void SetFormatter(const SettingControlSliderFormatter& formatter) { m_formatter = formatter; }
 
-protected:
+private:
   int m_heading = -1;
   bool m_popup = false;
   int m_formatLabel = -1;
-  std::string m_formatString = "%i";
+  std::string m_formatString;
   SettingControlSliderFormatter m_formatter = nullptr;
 };
 
@@ -260,12 +272,12 @@ public:
   int GetValueFormatLabel() const { return m_valueFormatLabel; }
   void SetValueFormatLabel(int valueFormatLabel) { m_valueFormatLabel = valueFormatLabel; }
   const std::string& GetValueFormat() const { return m_valueFormat; }
-  void SetValueFormat(const std::string &valueFormat) { m_valueFormat = valueFormat; }
+  void SetValueFormat(std::string_view valueFormat) { m_valueFormat = valueFormat; }
 
-protected:
+private:
   int m_formatLabel = 21469;
   int m_valueFormatLabel = -1;
-  std::string m_valueFormat = "%s";
+  std::string m_valueFormat = "{}";
 };
 
 class CSettingControlTitle : public ISettingControl
@@ -283,7 +295,7 @@ public:
   bool IsSeparatorBelowLabel() const { return m_separatorBelowLabel; }
   void SetSeparatorBelowLabel(bool below) { m_separatorBelowLabel = below; }
 
-protected:
+private:
   bool m_separatorHidden = false;
   bool m_separatorBelowLabel = true;
 };
@@ -296,4 +308,15 @@ public:
 
   // implementation of ISettingControl
   std::string GetType() const override { return "label"; }
+};
+
+class CSettingControlColorButton : public ISettingControl
+{
+public:
+  CSettingControlColorButton() { m_format = "string"; }
+  ~CSettingControlColorButton() override = default;
+
+  // implementation of ISettingControl
+  std::string GetType() const override { return "colorbutton"; }
+  bool SetFormat(const std::string& format) override;
 };

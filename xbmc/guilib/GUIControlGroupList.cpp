@@ -1,29 +1,26 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIControlGroupList.h"
-#include "input/Key.h"
-#include "guiinfo/GUIInfoLabels.h"
+
+#include "GUIAction.h"
 #include "GUIControlProfiler.h"
-#include "utils/StringUtils.h"
 #include "GUIFont.h" // for XBFONT_* definitions
+#include "GUIMessage.h"
+#include "ServiceBroker.h"
+#include "guilib/guiinfo/GUIInfoLabels.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "input/mouse/MouseEvent.h"
+#include "utils/StringUtils.h"
+#include "windowing/WinSystem.h"
+
+using namespace KODI;
 
 CGUIControlGroupList::CGUIControlGroupList(int parentID, int controlID, float posX, float posY, float width, float height, float itemGap, int pageControl, ORIENTATION orientation, bool useControlPositions, uint32_t alignment, const CScroller& scroller)
 : CGUIControlGroup(parentID, controlID, posX, posY, width, height)
@@ -35,10 +32,25 @@ CGUIControlGroupList::CGUIControlGroupList(int parentID, int controlID, float po
   m_totalSize = 0;
   m_orientation = orientation;
   m_alignment = alignment;
-  m_lastScrollerValue = -1;
   m_useControlPositions = useControlPositions;
   ControlType = GUICONTROL_GROUPLIST;
   m_minSize = 0;
+}
+
+CGUIControlGroupList::CGUIControlGroupList(const CGUIControlGroupList& other)
+  : CGUIControlGroup(other),
+    m_itemGap(other.m_itemGap),
+    m_pageControl(other.m_pageControl),
+    m_focusedPosition(other.m_focusedPosition),
+    m_totalSize(other.m_totalSize),
+    m_scroller(other.m_scroller),
+    m_useControlPositions(other.m_useControlPositions),
+    m_orientation(other.m_orientation),
+    m_alignment(other.m_alignment),
+    m_minSize(other.m_minSize)
+{
+  // Note: m_lastScrollerValue, m_lastPageControlSize, m_lastPageControlTotalSize
+  // are intentionally not copied - they are cache values that should be recalculated
 }
 
 CGUIControlGroupList::~CGUIControlGroupList(void) = default;
@@ -58,14 +70,31 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
     GUIPROFILER_VISIBILITY_END(control);
   }
 
-  ValidateOffset();
-  if (m_pageControl && m_lastScrollerValue != m_scroller.GetValue())
+  // visibility status of some of the list items may have changed. Thus, the group list size
+  // may now be different and the scroller needs to be updated
+  ValidateOffset(); // m_totalSize is updated here
+
+  if (m_pageControl)
   {
-    CGUIMessage message(GUI_MSG_LABEL_RESET, GetParentID(), m_pageControl, (int)Size(), (int)m_totalSize);
-    SendWindowMessage(message);
-    CGUIMessage message2(GUI_MSG_ITEM_SELECT, GetParentID(), m_pageControl, (int)m_scroller.GetValue());
-    SendWindowMessage(message2);
-    m_lastScrollerValue = static_cast<int>(m_scroller.GetValue());
+    const int currentSize = static_cast<int>(Size());
+    const int currentTotalSize = static_cast<int>(m_totalSize);
+    const int currentScrollerValue = static_cast<int>(m_scroller.GetValue());
+
+    if (m_lastPageControlSize != currentSize || m_lastPageControlTotalSize != currentTotalSize)
+    {
+      CGUIMessage message(GUI_MSG_LABEL_RESET, GetParentID(), m_pageControl, currentSize,
+                          currentTotalSize);
+      SendWindowMessage(message);
+      m_lastPageControlSize = currentSize;
+      m_lastPageControlTotalSize = currentTotalSize;
+    }
+
+    if (m_lastScrollerValue != currentScrollerValue)
+    {
+      CGUIMessage message(GUI_MSG_ITEM_SELECT, GetParentID(), m_pageControl, currentScrollerValue);
+      SendWindowMessage(message);
+      m_lastScrollerValue = currentScrollerValue;
+    }
   }
   // we run through the controls, rendering as we go
   int index = 0;
@@ -76,9 +105,9 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
     // with respect to animations
     CGUIControl *control = *it;
     if (m_orientation == VERTICAL)
-      g_graphicsContext.SetOrigin(m_posX, m_posY + pos - m_scroller.GetValue());
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX, m_posY + pos - m_scroller.GetValue());
     else
-      g_graphicsContext.SetOrigin(m_posX + pos - m_scroller.GetValue(), m_posY);
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX + pos - m_scroller.GetValue(), m_posY);
     control->DoProcess(currentTime, dirtyregions);
 
     if (control->IsVisible())
@@ -92,7 +121,7 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
 
       pos += Size(control) + m_itemGap;
     }
-    g_graphicsContext.RestoreOrigin();
+    CServiceBroker::GetWinSystem()->GetGfxContext().RestoreOrigin();
   }
   CGUIControl::Process(currentTime, dirtyregions);
 }
@@ -100,7 +129,7 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
 void CGUIControlGroupList::Render()
 {
   // we run through the controls, rendering as we go
-  bool render(g_graphicsContext.SetClipRegion(m_posX, m_posY, m_width, m_height));
+  bool render(CServiceBroker::GetWinSystem()->GetGfxContext().SetClipRegion(m_posX, m_posY, m_width, m_height));
   float pos = GetAlignOffset();
   float focusedPos = 0;
   CGUIControl *focusedControl = NULL;
@@ -117,25 +146,48 @@ void CGUIControlGroupList::Render()
     else
     {
       if (m_orientation == VERTICAL)
-        g_graphicsContext.SetOrigin(m_posX, m_posY + pos - m_scroller.GetValue());
+        CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX, m_posY + pos - m_scroller.GetValue());
       else
-        g_graphicsContext.SetOrigin(m_posX + pos - m_scroller.GetValue(), m_posY);
+        CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX + pos - m_scroller.GetValue(), m_posY);
       control->DoRender();
     }
     if (control->IsVisible())
       pos += Size(control) + m_itemGap;
-    g_graphicsContext.RestoreOrigin();
+    CServiceBroker::GetWinSystem()->GetGfxContext().RestoreOrigin();
   }
   if (focusedControl)
   {
     if (m_orientation == VERTICAL)
-      g_graphicsContext.SetOrigin(m_posX, m_posY + focusedPos - m_scroller.GetValue());
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX, m_posY + focusedPos - m_scroller.GetValue());
     else
-      g_graphicsContext.SetOrigin(m_posX + focusedPos - m_scroller.GetValue(), m_posY);
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX + focusedPos - m_scroller.GetValue(), m_posY);
     focusedControl->DoRender();
   }
-  if (render) g_graphicsContext.RestoreClipRegion();
+  if (render) CServiceBroker::GetWinSystem()->GetGfxContext().RestoreClipRegion();
   CGUIControl::Render();
+}
+
+bool CGUIControlGroupList::OnAction(const CAction& action)
+{
+  switch (action.GetID())
+  {
+    case ACTION_PAGE_UP:
+      ScrollPages(-1.f);
+      return true;
+
+    case ACTION_PAGE_DOWN:
+      ScrollPages(1.f);
+      return true;
+
+    case ACTION_FIRST_PAGE:
+      MoveTo(GetFirstFocusableControl(), 0.f);
+      return true;
+
+    case ACTION_LAST_PAGE:
+      MoveTo(GetLastFocusableControl(), m_totalSize - Size());
+      return true;
+  }
+  return CGUIControlGroup::OnAction(action);
 }
 
 bool CGUIControlGroupList::OnMessage(CGUIMessage& message)
@@ -155,9 +207,9 @@ bool CGUIControlGroupList::OnMessage(CGUIMessage& message)
         if (control->GetControl(message.GetControlId()))
         {
           // find out whether this is the first or last control
-          if (IsFirstFocusableControl(control))
+          if (control == GetFirstFocusableControl())
             ScrollTo(0);
-          else if (IsLastFocusableControl(control))
+          else if (control == GetLastFocusableControl())
             ScrollTo(m_totalSize - Size());
           else if (offset < m_scroller.GetValue())
             ScrollTo(offset);
@@ -242,7 +294,7 @@ void CGUIControlGroupList::AddControl(CGUIControl *control, int position /*= -1*
   { // set the navigation of items so that they form a list
     CGUIAction beforeAction = GetAction((m_orientation == VERTICAL) ? ACTION_MOVE_UP : ACTION_MOVE_LEFT);
     CGUIAction afterAction = GetAction((m_orientation == VERTICAL) ? ACTION_MOVE_DOWN : ACTION_MOVE_RIGHT);
-    if (m_children.size())
+    if (!m_children.empty())
     {
       // we're inserting at the given position, so grab the items above and below and alter
       // their navigation accordingly
@@ -320,6 +372,8 @@ void CGUIControlGroupList::ClearAll()
   m_totalSize = 0;
   CGUIControlGroup::ClearAll();
   m_scroller.SetValue(0);
+  m_lastPageControlSize.reset();
+  m_lastPageControlTotalSize.reset();
 }
 
 #define CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
@@ -360,7 +414,9 @@ void CGUIControlGroupList::SetInvalid()
 {
   CGUIControl::SetInvalid();
   // Force a message to the scrollbar
-  m_lastScrollerValue = -1;
+  m_lastScrollerValue.reset();
+  m_lastPageControlSize.reset();
+  m_lastPageControlTotalSize.reset();
 }
 
 void CGUIControlGroupList::ScrollTo(float offset)
@@ -371,7 +427,8 @@ void CGUIControlGroupList::ScrollTo(float offset)
   MarkDirtyRegion();
 }
 
-EVENT_RESULT CGUIControlGroupList::SendMouseEvent(const CPoint &point, const CMouseEvent &event)
+EVENT_RESULT CGUIControlGroupList::SendMouseEvent(const CPoint& point,
+                                                  const MOUSE::CMouseEvent& event)
 {
   // transform our position into child coordinates
   CPoint childPoint(point);
@@ -449,11 +506,11 @@ std::string CGUIControlGroupList::GetLabel(int info) const
   switch (info)
   {
   case CONTAINER_CURRENT_ITEM:
-    return StringUtils::Format("%i", GetSelectedItem());
+    return std::to_string(GetSelectedItem());
   case CONTAINER_NUM_ITEMS:
-    return StringUtils::Format("%i", GetNumItems());
+    return std::to_string(GetNumItems());
   case CONTAINER_POSITION:
-    return StringUtils::Format("%i", m_focusedPosition);
+    return std::to_string(m_focusedPosition);
   default:
     break;
   }
@@ -485,32 +542,6 @@ int CGUIControlGroupList::GetSelectedItem() const
 bool CGUIControlGroupList::IsControlOnScreen(float pos, const CGUIControl *control) const
 {
   return (pos >= m_scroller.GetValue() && pos + Size(control) <= m_scroller.GetValue() + Size());
-}
-
-bool CGUIControlGroupList::IsFirstFocusableControl(const CGUIControl *control) const
-{
-  for (ciControls it = m_children.begin(); it != m_children.end(); ++it)
-  {
-    CGUIControl *child = *it;
-    if (child->IsVisible() && child->CanFocus())
-    { // found first focusable
-      return child == control;
-    }
-  }
-  return false;
-}
-
-bool CGUIControlGroupList::IsLastFocusableControl(const CGUIControl *control) const
-{
-  for (crControls it = m_children.rbegin(); it != m_children.rend(); ++it)
-  {
-    CGUIControl *child = *it;
-    if (child->IsVisible() && child->CanFocus())
-    { // found first focusable
-      return child == control;
-    }
-  }
-  return false;
 }
 
 void CGUIControlGroupList::CalculateItemGap()
@@ -545,7 +576,8 @@ float CGUIControlGroupList::GetAlignOffset() const
   return 0.0f;
 }
 
-EVENT_RESULT CGUIControlGroupList::OnMouseEvent(const CPoint &point, const CMouseEvent &event)
+EVENT_RESULT CGUIControlGroupList::OnMouseEvent(const CPoint& point,
+                                                const MOUSE::CMouseEvent& event)
 {
   if (event.m_id == ACTION_MOUSE_WHEEL_UP || event.m_id == ACTION_MOUSE_WHEEL_DOWN)
   {
@@ -602,4 +634,138 @@ float CGUIControlGroupList::GetTotalSize() const
   }
   if (totalSize > 0) totalSize -= m_itemGap;
   return totalSize;
+}
+
+float CGUIControlGroupList::GetControlOffset(const CGUIControl* control) const
+{
+  bool found{false};
+  float offset{0.f};
+  for (CGUIControl* child : m_children)
+  {
+    if (child->IsVisible())
+    {
+      if (child == control)
+      {
+        found = true;
+        break;
+      }
+      offset += Size(child) + m_itemGap;
+    }
+  }
+  return (found ? offset : -1.f);
+}
+
+SGUIControlAndOffset CGUIControlGroupList::GetFocusableControlAt(float target, int direction) const
+{
+  float offset{0.f};
+  CGUIControl* lastFocusable{nullptr};
+  float lastFocusableOffset{0.f};
+
+  for (CGUIControl* child : m_children)
+  {
+    if (child->IsVisible())
+    {
+      if (child->CanFocus())
+      {
+        // The target is at the beginning or inside a focusable control > perfect match
+        if (offset <= target && offset + Size(child) > target)
+          return SGUIControlAndOffset{child, offset};
+        // The control at the target position was not focusable
+        // or the target was before the first focusable control.
+        // Since the children are always iterated from first to last and their positions increase,
+        // this control is the next best match when moving down (position increasing).
+        // When moving up, the next best match is the focusable control before this one.
+        else if (offset >= target)
+        {
+          if (direction > 0.f || !lastFocusable)
+            return SGUIControlAndOffset{child, offset};
+          else
+            return SGUIControlAndOffset{lastFocusable, lastFocusableOffset};
+        }
+        lastFocusable = child;
+        lastFocusableOffset = offset;
+      }
+      offset += Size(child) + m_itemGap;
+    }
+  }
+  // No visible focusable controls or the target is beyond the last focusable control
+  return SGUIControlAndOffset{lastFocusable, lastFocusableOffset};
+}
+
+void CGUIControlGroupList::ScrollPages(float pages)
+{
+  ValidateOffset();
+
+  float currOffset = m_scroller.GetValue();
+  float newOffset = currOffset + pages * Size();
+
+  if (newOffset < 0.f)
+    newOffset = 0.f;
+  else if (newOffset > m_totalSize - Size())
+    newOffset = m_totalSize - Size();
+
+  CGUIControl* focusedControl = GetFocusedControl();
+  if (focusedControl)
+  {
+    // Using the middle of the focused control as origin helps deal with the alignment thrown off
+    // by controls of different sizes. The expected target control can be missed by a few pixels otherwise.
+    float origin = GetControlOffset(focusedControl) + Size(focusedControl) / 2;
+    SGUIControlAndOffset newFocusedControl = GetFocusableControlAt(origin + pages * Size(), pages);
+
+    if (newFocusedControl.control)
+    {
+      CGUIMessage message(GUI_MSG_LOSTFOCUS, GetID(), focusedControl->GetID(),
+                          newFocusedControl.control->GetID());
+      focusedControl->OnMessage(message);
+
+      CGUIMessage message2(GUI_MSG_SETFOCUS, GetID(), newFocusedControl.control->GetID());
+      newFocusedControl.control->OnMessage(message2);
+
+      // Adjust the new view offset so that the new focused control is fully visible
+      if (newOffset > newFocusedControl.offset)
+        newOffset = newFocusedControl.offset;
+      else if (newOffset + Size() < newFocusedControl.offset + Size(newFocusedControl.control))
+        newOffset = newFocusedControl.offset + Size(newFocusedControl.control) - Size();
+    }
+  }
+  // The GUI_MSG_SETFOCUS message only makes the selection visible
+  // Restore the relative position of the selection in the view
+  ScrollTo(newOffset);
+}
+
+void CGUIControlGroupList::MoveTo(CGUIControl* control, float offset)
+{
+  CGUIControl* focusedControl = GetFocusedControl();
+
+  if (focusedControl && control)
+  {
+    CGUIMessage message(GUI_MSG_LOSTFOCUS, GetID(), focusedControl->GetID(), control->GetID());
+    focusedControl->OnMessage(message);
+
+    CGUIMessage message2(GUI_MSG_SETFOCUS, GetID(), control->GetID());
+    control->OnMessage(message2);
+  }
+  ScrollTo(offset);
+}
+
+CGUIControl* CGUIControlGroupList::GetFirstFocusableControl() const
+{
+  for (ciControls it = m_children.begin(); it != m_children.end(); ++it)
+  {
+    CGUIControl* child = *it;
+    if (child->CanFocus())
+      return child;
+  }
+  return nullptr;
+}
+
+CGUIControl* CGUIControlGroupList::GetLastFocusableControl() const
+{
+  for (crControls it = m_children.rbegin(); it != m_children.rend(); ++it)
+  {
+    CGUIControl* child = *it;
+    if (child->CanFocus())
+      return child;
+  }
+  return nullptr;
 }

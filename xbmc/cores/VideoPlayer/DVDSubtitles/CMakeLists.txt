@@ -9,7 +9,9 @@ set(SOURCES DVDFactorySubtitle.cpp
             DVDSubtitlesLibass.cpp
             DVDSubtitleParserSSA.cpp
             DVDSubtitleTagMicroDVD.cpp
-            DVDSubtitleTagSami.cpp)
+            DVDSubtitleTagSami.cpp
+            SubtitleParserWebVTT.cpp
+            SubtitlesAdapter.cpp)
 
 set(HEADERS DVDFactorySubtitle.h
             DVDSubtitleLineCollection.h
@@ -24,6 +26,8 @@ set(HEADERS DVDFactorySubtitle.h
             DVDSubtitleTagMicroDVD.h
             DVDSubtitleTagSami.h
             DVDSubtitlesLibass.h
-            DllLibass.h)
+            SubtitleParserWebVTT.h
+            SubtitlesAdapter.h
+            SubtitlesStyle.h)
 
 core_add_library(dvdsubtitles)

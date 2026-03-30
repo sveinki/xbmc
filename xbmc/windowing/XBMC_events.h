@@ -1,51 +1,39 @@
-#pragma once
-
 /*
- *      SDL - Simple DirectMedia Layer
- *      Copyright (C) 1997-2009 Sam Lantinga
- *      Sam Lantinga
- *      slouken@libsdl.org
- *  
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2023 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-/* Include file for SDL event handling */
+#pragma once
 
-#include "input/XBMC_keyboard.h"
+#include "Resolution.h"
+#include "input/keyboard/XBMC_keyboard.h"
 
 /* Event enumerations */
-typedef enum {
-       XBMC_NOEVENT = 0,        /* Unused (do not remove) */
-       XBMC_KEYDOWN,            /* Keys pressed */
-       XBMC_KEYUP,              /* Keys released */
-       XBMC_MOUSEMOTION,        /* Mouse moved */
-       XBMC_MOUSEBUTTONDOWN,    /* Mouse button pressed */
-       XBMC_MOUSEBUTTONUP,      /* Mouse button released */
-       XBMC_QUIT,               /* User-requested quit */
-       XBMC_VIDEORESIZE,        /* User resized video mode */
-       XBMC_VIDEOMOVE,          /* User moved the window */
-       XBMC_APPCOMMAND,         /* Media commands, such as WM_APPCOMMAND on Windows for media keys. */
-       XBMC_TOUCH,
-       XBMC_SETFOCUS,
-       XBMC_USEREVENT,
+typedef enum
+{
+  XBMC_NOEVENT = 0, /* Unused (do not remove) */
+  XBMC_KEYDOWN, /* Keys pressed */
+  XBMC_KEYUP, /* Keys released */
+  XBMC_KEYCOMPOSING_COMPOSING, /* A composed key (sequence) is under processing */
+  XBMC_KEYCOMPOSING_FINISHED, /* A composed key is finished */
+  XBMC_KEYCOMPOSING_CANCELLED, /* A composed key is cancelled */
+  XBMC_MOUSEMOTION, /* Mouse moved */
+  XBMC_MOUSEBUTTONDOWN, /* Mouse button pressed */
+  XBMC_MOUSEBUTTONUP, /* Mouse button released */
+  XBMC_QUIT, /* User-requested quit */
+  XBMC_VIDEORESIZE, /* User resized video mode */
+  XBMC_SCREENCHANGE, /* Window moved to a different screen */
+  XBMC_VIDEOMOVE, /* User moved the window */
+  XBMC_MODECHANGE, /* Video mode must be changed */
+  XBMC_TOUCH,
+  XBMC_BUTTON, /* Button (remote) pressed */
+  XBMC_SETFOCUS,
+  XBMC_USEREVENT,
 
-       XBMC_MAXEVENT = 256      /* XBMC_EventType is represented as uchar */
+  XBMC_MAXEVENT = 256 /* XBMC_EventType is represented as uchar */
 } XBMC_EventType;
 
 /* Keyboard event structure */
@@ -69,14 +57,25 @@ typedef struct XBMC_MouseButtonEvent {
    mode with the new width and height.
  */
 typedef struct XBMC_ResizeEvent {
-	int w;		/* New width */
-	int h;		/* New height */
+  int width; /* New width */
+  int height; /* New height */
+  double scale; /* Scaling factor */
 } XBMC_ResizeEvent;
 
 typedef struct XBMC_MoveEvent {
 	int x;		/* New x position */
 	int y;		/* New y position */
 } XBMC_MoveEvent;
+
+typedef struct XBMC_ScreenChangeEvent
+{
+  unsigned int screenIdx; /* The screen index */
+} XBMC_ScreenChangeEvent;
+
+struct XBMC_ModeChangeEvent
+{
+  RESOLUTION res;
+};
 
 /* The "quit requested" event */
 typedef struct XBMC_QuitEvent {
@@ -108,6 +107,13 @@ typedef struct XBMC_SetFocusEvent {
 	int y;		/* y position */
 } XBMC_SetFocusEvent;
 
+/* Button event structure */
+typedef struct XBMC_ButtonEvent
+{
+  uint32_t button;
+  uint32_t holdtime;
+} XBMC_ButtonEvent;
+
 /* General event structure */
 typedef struct XBMC_Event {
   uint8_t type;
@@ -118,11 +124,14 @@ typedef struct XBMC_Event {
     XBMC_MouseButtonEvent button;
     XBMC_ResizeEvent resize;
     XBMC_MoveEvent move;
+    XBMC_ModeChangeEvent mode;
     XBMC_QuitEvent quit;
     XBMC_UserEvent user;
     XBMC_AppCommandEvent appcommand;
     XBMC_TouchEvent touch;
+    XBMC_ButtonEvent keybutton;
     XBMC_SetFocusEvent focus;
+    XBMC_ScreenChangeEvent screen;
   };
 } XBMC_Event;
 

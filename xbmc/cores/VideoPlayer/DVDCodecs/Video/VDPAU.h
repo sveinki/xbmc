@@ -1,22 +1,12 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 /**
  * design goals:
@@ -36,28 +26,30 @@
  *   of locks needed.
  */
 
-#pragma once
-
+#include "cores/VideoPlayer/Buffers/VideoBuffer.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodec.h"
-#include "cores/VideoPlayer/Process/VideoBuffer.h"
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include "threads/CriticalSection.h"
-#include "threads/SharedSection.h"
-#include "settings/VideoSettings.h"
+#include "cores/VideoSettings.h"
 #include "guilib/DispResource.h"
+#include "threads/CriticalSection.h"
 #include "threads/Event.h"
+#include "threads/SharedSection.h"
 #include "threads/Thread.h"
 #include "utils/ActorProtocol.h"
-#include "guilib/Geometry.h"
+#include "utils/Geometry.h"
+
 #include <deque>
 #include <list>
 #include <map>
+#include <mutex>
+#include <utility>
 #include <vector>
 
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
 extern "C" {
-#include "libavutil/avutil.h"
-#include "libavcodec/vdpau.h"
+#include <libavutil/avutil.h>
+#include <libavcodec/vdpau.h>
 }
 
 class CProcessInfo;
@@ -128,20 +120,88 @@ public:
   bool canSkipDeint;
   bool draining;
 
-  void IncDecoded() { CSingleLock l(m_sec); decodedPics++;}
-  void DecDecoded() { CSingleLock l(m_sec); decodedPics--;}
-  void IncProcessed() { CSingleLock l(m_sec); processedPics++;}
-  void DecProcessed() { CSingleLock l(m_sec); processedPics--;}
-  void IncRender() { CSingleLock l(m_sec); renderPics++;}
-  void DecRender() { CSingleLock l(m_sec); renderPics--;}
-  void Reset() { CSingleLock l(m_sec); decodedPics=0; processedPics=0;renderPics=0;latency=0;}
-  void Get(uint16_t &decoded, uint16_t &processed, uint16_t &render) {CSingleLock l(m_sec); decoded = decodedPics, processed=processedPics, render=renderPics;}
-  void SetParams(uint64_t time, int flags) { CSingleLock l(m_sec); latency = time; codecFlags = flags; }
-  void GetParams(uint64_t &lat, int &flags) { CSingleLock l(m_sec); lat = latency; flags = codecFlags; }
-  void SetCanSkipDeint(bool canSkip) { CSingleLock l(m_sec); canSkipDeint = canSkip; }
-  bool CanSkipDeint() { CSingleLock l(m_sec); if (canSkipDeint) return true; else return false;}
-  void SetDraining(bool drain) { CSingleLock l(m_sec); draining = drain; }
-  bool IsDraining() { CSingleLock l(m_sec); if (draining) return true; else return false;}
+  void IncDecoded()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics++;
+  }
+  void DecDecoded()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics--;
+  }
+  void IncProcessed()
+  {
+    std::unique_lock l(m_sec);
+    processedPics++;
+  }
+  void DecProcessed()
+  {
+    std::unique_lock l(m_sec);
+    processedPics--;
+  }
+  void IncRender()
+  {
+    std::unique_lock l(m_sec);
+    renderPics++;
+  }
+  void DecRender()
+  {
+    std::unique_lock l(m_sec);
+    renderPics--;
+  }
+  void Reset()
+  {
+    std::unique_lock l(m_sec);
+    decodedPics = 0;
+    processedPics = 0;
+    renderPics = 0;
+    latency = 0;
+  }
+  void Get(uint16_t& decoded, uint16_t& processed, uint16_t& render)
+  {
+    std::unique_lock l(m_sec);
+    decoded = decodedPics, processed = processedPics, render = renderPics;
+  }
+  void SetParams(uint64_t time, int flags)
+  {
+    std::unique_lock l(m_sec);
+    latency = time;
+    codecFlags = flags;
+  }
+  void GetParams(uint64_t& lat, int& flags)
+  {
+    std::unique_lock l(m_sec);
+    lat = latency;
+    flags = codecFlags;
+  }
+  void SetCanSkipDeint(bool canSkip)
+  {
+    std::unique_lock l(m_sec);
+    canSkipDeint = canSkip;
+  }
+  bool CanSkipDeint()
+  {
+    std::unique_lock l(m_sec);
+    if (canSkipDeint)
+      return true;
+    else
+      return false;
+  }
+  void SetDraining(bool drain)
+  {
+    std::unique_lock l(m_sec);
+    draining = drain;
+  }
+  bool IsDraining()
+  {
+    std::unique_lock l(m_sec);
+    if (draining)
+      return true;
+    else
+      return false;
+  }
+
 private:
   CCriticalSection m_sec;
 };
@@ -174,6 +234,8 @@ struct CVdpauConfig
   bool useInteropYuv;
   CVDPAUContext *context;
   CProcessInfo *processInfo;
+  int resetCounter;
+  uint64_t timeOpened;
 };
 
 /**
@@ -231,7 +293,7 @@ struct CVdpauProcessedPicture
 class CVdpauRenderPicture : public CVideoBuffer
 {
 public:
-  CVdpauRenderPicture(int id) : CVideoBuffer(id) { }
+  explicit CVdpauRenderPicture(int id) : CVideoBuffer(id) { }
   VideoPicture DVDPic;
   CVdpauProcessedPicture procPic;
   int width;
@@ -239,7 +301,7 @@ public:
   CRect crop;
   void *device;
   void *procFunc;
-  void *decoder;
+  int64_t ident;
 };
 
 //-----------------------------------------------------------------------------
@@ -249,7 +311,10 @@ public:
 class CMixerControlProtocol : public Actor::Protocol
 {
 public:
-  CMixerControlProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Protocol(name, inEvent, outEvent) {};
+  CMixerControlProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     INIT = 0,
@@ -266,7 +331,10 @@ public:
 class CMixerDataProtocol : public Actor::Protocol
 {
 public:
-  CMixerDataProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Protocol(name, inEvent, outEvent) {};
+  CMixerDataProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     FRAME,
@@ -286,7 +354,7 @@ public:
 class CMixer : private CThread
 {
 public:
-  CMixer(CEvent *inMsgEvent);
+  explicit CMixer(CEvent *inMsgEvent);
   ~CMixer() override;
   void Start();
   void Dispose();
@@ -356,7 +424,10 @@ protected:
 class COutputControlProtocol : public Actor::Protocol
 {
 public:
-  COutputControlProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Actor::Protocol(name, inEvent, outEvent) {};
+  COutputControlProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Actor::Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     INIT,
@@ -375,7 +446,10 @@ public:
 class COutputDataProtocol : public Actor::Protocol
 {
 public:
-  COutputDataProtocol(std::string name, CEvent* inEvent, CEvent *outEvent) : Actor::Protocol(name, inEvent, outEvent) {};
+  COutputDataProtocol(std::string name, CEvent* inEvent, CEvent* outEvent)
+    : Actor::Protocol(std::move(name), inEvent, outEvent)
+  {
+  }
   enum OutSignal
   {
     NEWFRAME = 0,
@@ -452,7 +526,6 @@ public:
   VdpVideoSurface RemoveNext(bool skiprender = false);
   void Reset();
   int Size();
-  bool HasRefs();
 protected:
   std::map<VdpVideoSurface, int> m_state;
   std::list<VdpVideoSurface> m_freeSurfaces;
@@ -511,7 +584,7 @@ public:
     uint32_t aux; /* optional extra parameter... */
   };
 
-  CDecoder(CProcessInfo& processInfo);
+  explicit CDecoder(CProcessInfo& processInfo);
   ~CDecoder() override;
 
   bool Open (AVCodecContext* avctx, AVCodecContext* mainctx, const enum AVPixelFormat) override;
@@ -567,12 +640,10 @@ protected:
   CEvent m_DisplayEvent;
   int m_ErrorCount;
 
-  ThreadIdentifier m_decoderThread;
   bool m_vdpauConfigured;
   CVdpauConfig m_vdpauConfig;
   CVideoSurfaces m_videoSurfaces;
   AVVDPAUContext m_hwContext;
-  AVCodecContext* m_avctx = nullptr;
 
   COutput m_vdpauOutput;
   CVdpauBufferStats m_bufferStats;

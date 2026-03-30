@@ -1,31 +1,24 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "FileItemHandler.h"
+#include "JSONRPC.h"
+
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "JSONRPC.h"
-#include "FileItemHandler.h"
-
+class CAlbum;
+class CFileitem;
+class CFileitemList;
 class CMusicDatabase;
 class CVariant;
 
@@ -43,6 +36,9 @@ namespace JSONRPC
     static JSONRPC_STATUS GetSongDetails(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
     static JSONRPC_STATUS GetGenres(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
     static JSONRPC_STATUS GetRoles(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
+    static JSONRPC_STATUS GetSources(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
+    static JSONRPC_STATUS GetAvailableArtTypes(const std::string& method, ITransportLayer* transport, IClient* client, const CVariant& parameterObject, CVariant& result);
+    static JSONRPC_STATUS GetAvailableArt(const std::string& method, ITransportLayer* transport, IClient* client, const CVariant& parameterObject, CVariant& result);
 
     static JSONRPC_STATUS GetRecentlyAddedAlbums(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
     static JSONRPC_STATUS GetRecentlyAddedSongs(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
@@ -57,18 +53,40 @@ namespace JSONRPC
     static JSONRPC_STATUS Export(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
     static JSONRPC_STATUS Clean(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result);
 
-    static bool FillFileItem(const std::string &strFilename, CFileItemPtr &item, const CVariant &parameterObject = CVariant(CVariant::VariantTypeArray));
+    static bool FillFileItem(
+        const std::string& strFilename,
+        std::shared_ptr<CFileItem>& item,
+        const CVariant& parameterObject = CVariant(CVariant::VariantTypeArray));
     static bool FillFileItemList(const CVariant &parameterObject, CFileItemList &list);
 
     static JSONRPC_STATUS GetAdditionalDetails(const CVariant &parameterObject, CFileItemList &items);
-    static JSONRPC_STATUS GetAdditionalArtistDetails(const CVariant &parameterObject, CFileItemList &items, CMusicDatabase &musicdatabase);
-    static JSONRPC_STATUS GetAdditionalAlbumDetails(const CVariant &parameterObject, CFileItemList &items, CMusicDatabase &musicdatabase);
-    static JSONRPC_STATUS GetAdditionalSongDetails(const CVariant &parameterObject, CFileItemList &items, CMusicDatabase &musicdatabase);
+    static JSONRPC_STATUS GetAdditionalArtistDetails(const CVariant& parameterObject,
+                                                     const CFileItemList& items,
+                                                     CMusicDatabase& musicdatabase);
+    static JSONRPC_STATUS GetAdditionalAlbumDetails(const CVariant& parameterObject,
+                                                    const CFileItemList& items,
+                                                    CMusicDatabase& musicdatabase);
+    static JSONRPC_STATUS GetAdditionalSongDetails(const CVariant& parameterObject,
+                                                   const CFileItemList& items,
+                                                   CMusicDatabase& musicdatabase);
+    static JSONRPC_STATUS RefreshArtist(const std::string& method,
+                                        ITransportLayer* transport,
+                                        IClient* client,
+                                        const CVariant& parameterObject,
+                                        CVariant& result);
+    static JSONRPC_STATUS RefreshAlbum(const std::string& method,
+                                       ITransportLayer* transport,
+                                       IClient* client,
+                                       const CVariant& parameterObject,
+                                       CVariant& result);
 
   private:
-    static void FillAlbumItem(const CAlbum &album, const std::string &path, CFileItemPtr &item);
-    static void FillItemArtistIDs(const std::vector<int> artistids, CFileItemPtr &item);
-    
+    static void FillAlbumItem(const CAlbum& album,
+                              const std::string& path,
+                              std::shared_ptr<CFileItem>& item);
+    static void FillItemArtistIDs(const std::vector<int>& artistids,
+                                  std::shared_ptr<CFileItem>& item);
+
     static bool CheckForAdditionalProperties(const CVariant &properties, const std::set<std::string> &checkProperties, std::set<std::string> &foundProperties);
   };
 }

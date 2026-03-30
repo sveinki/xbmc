@@ -1,33 +1,34 @@
 /*
- *      Copyright (C) 2015-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2024 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PeripheralBusApplication.h"
-#include "ServiceBroker.h"
-#include "guilib/LocalizeStrings.h"
-#include "settings/Settings.h"
-#include "utils/StringUtils.h"
 
+#include "FileItem.h"
+#include "FileItemList.h"
+#include "ServiceBroker.h"
+#include "XBDateTime.h"
+#include "games/controllers/Controller.h"
+#include "games/controllers/ControllerIDs.h"
+#include "games/controllers/ControllerLayout.h"
+#include "games/controllers/ControllerManager.h"
+#include "peripherals/Peripherals.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/StringUtils.h"
+#include "utils/Variant.h"
+
+using namespace KODI;
 using namespace PERIPHERALS;
 
-CPeripheralBusApplication::CPeripheralBusApplication(CPeripherals& manager) :
-    CPeripheralBus("PeripBusApplication", manager, PERIPHERAL_BUS_APPLICATION)
+CPeripheralBusApplication::CPeripheralBusApplication(CPeripherals& manager)
+  : CPeripheralBus("PeripBusApplication", manager, PERIPHERAL_BUS_APPLICATION)
 {
   // Initialize CPeripheralBus
   m_bNeedsPolling = false;
@@ -41,19 +42,41 @@ void CPeripheralBusApplication::Initialise(void)
 
 bool CPeripheralBusApplication::PerformDeviceScan(PeripheralScanResults& results)
 {
-  const unsigned int controllerCount = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_GAMES_KEYBOARD_PLAYERS);
-
-  for (unsigned int i = 1; i <= controllerCount; i++)
   {
     PeripheralScanResult result(Type());
-    result.m_type          = PERIPHERAL_JOYSTICK_EMULATION;
-    result.m_strDeviceName = g_localizeStrings.Get(35165); // "Keyboard player"
-    result.m_strLocation   = MakeLocation(i);
-    result.m_iVendorId     = 0;
-    result.m_iProductId    = 0;
-    result.m_mappedType    = PERIPHERAL_JOYSTICK_EMULATION;
+    result.m_type = PERIPHERAL_KEYBOARD;
+    result.m_strDeviceName =
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(35150); // "Keyboard"
+    result.m_strLocation = PeripheralTypeTranslator::TypeToString(PERIPHERAL_KEYBOARD);
+    result.m_iVendorId = 0;
+    result.m_iProductId = 0;
+    result.m_mappedType = PERIPHERAL_KEYBOARD;
     result.m_mappedBusType = Type();
-    result.m_iSequence     = 0;
+    result.m_iSequence = 0;
+
+    if (!results.ContainsResult(result))
+      results.m_results.push_back(result);
+  }
+
+  bool bHasMouse = CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+      CSettings::SETTING_INPUT_ENABLEMOUSE);
+
+  //! @todo Fix game clients to handle mouse disconnecting
+  //! For now mouse is always connected
+  bHasMouse = true;
+
+  if (bHasMouse)
+  {
+    PeripheralScanResult result(Type());
+    result.m_type = PERIPHERAL_MOUSE;
+    result.m_strDeviceName =
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(35171); // "Mouse"
+    result.m_strLocation = PeripheralTypeTranslator::TypeToString(PERIPHERAL_MOUSE);
+    result.m_iVendorId = 0;
+    result.m_iProductId = 0;
+    result.m_mappedType = PERIPHERAL_MOUSE;
+    result.m_mappedBusType = Type();
+    result.m_iSequence = 0;
 
     if (!results.ContainsResult(result))
       results.m_results.push_back(result);
@@ -62,12 +85,52 @@ bool CPeripheralBusApplication::PerformDeviceScan(PeripheralScanResults& results
   return true;
 }
 
-void CPeripheralBusApplication::GetDirectory(const std::string &strPath, CFileItemList &items) const
+void CPeripheralBusApplication::GetDirectory(const std::string& strPath, CFileItemList& items) const
 {
-  // Don't list emulated joysticks in the GUI
+  {
+    PeripheralPtr peripheral =
+        m_manager.GetByPath(MakeLocation(PeripheralType::PERIPHERAL_KEYBOARD));
+    if (peripheral && peripheral->LastActive().IsValid())
+    {
+      GAME::ControllerPtr controller = peripheral->ControllerProfile();
+      if (!controller)
+        controller = CServiceBroker::GetGameControllerManager().GetDefaultKeyboard();
+
+      std::shared_ptr<CFileItem> item = std::make_shared<CFileItem>(peripheral->DeviceName());
+      item->SetPath(peripheral->FileLocation());
+      item->SetProperty("bus", PeripheralTypeTranslator::BusTypeToString(m_type));
+      item->SetProperty("location", peripheral->Location());
+      item->SetProperty("class", PeripheralTypeTranslator::TypeToString(peripheral->Type()));
+      if (controller)
+        item->SetArt("icon", controller->Layout().ImagePath());
+      items.Add(item);
+    }
+  }
+
+  {
+    PeripheralPtr peripheral = m_manager.GetByPath(MakeLocation(PeripheralType::PERIPHERAL_MOUSE));
+    if (peripheral && peripheral->LastActive().IsValid())
+    {
+      GAME::ControllerPtr controller = peripheral->ControllerProfile();
+      if (!controller)
+        controller = CServiceBroker::GetGameControllerManager().GetDefaultMouse();
+
+      std::shared_ptr<CFileItem> item = std::make_shared<CFileItem>(peripheral->DeviceName());
+      item->SetPath(peripheral->FileLocation());
+      item->SetProperty("bus", PeripheralTypeTranslator::BusTypeToString(m_type));
+      item->SetProperty("location", peripheral->Location());
+      item->SetProperty("class", PeripheralTypeTranslator::TypeToString(peripheral->Type()));
+      if (controller)
+        item->SetArt("icon", controller->Layout().ImagePath());
+      items.Add(item);
+    }
+  }
 }
 
-std::string CPeripheralBusApplication::MakeLocation(unsigned int controllerIndex) const
+std::string CPeripheralBusApplication::MakeLocation(PeripheralType peripheralType)
 {
-  return StringUtils::Format("%u", controllerIndex);
+  return StringUtils::Format(
+      "peripherals://{}/{}.dev",
+      PeripheralTypeTranslator::BusTypeToString(PeripheralBusType::PERIPHERAL_BUS_APPLICATION),
+      PeripheralTypeTranslator::TypeToString(peripheralType));
 }

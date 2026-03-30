@@ -1,28 +1,20 @@
 /*
- *      Copyright (C) 2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <chrono>
-
 #include "BaseEvent.h"
-#include "guilib/LocalizeStrings.h"
+
+#include "ServiceBroker.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "utils/StringUtils.h"
+
+#include <chrono>
+#include <inttypes.h>
 
 CBaseEvent::CBaseEvent(const std::string& identifier, const CVariant& label, const CVariant& description, EventLevel level /* = EventLevel::Information */)
   : m_level(level),
@@ -103,15 +95,17 @@ std::string CBaseEvent::VariantToLocalizedString(const CVariant& variant)
     return variant.asString();
 
   if (variant.isInteger() && variant.asInteger() > 0)
-    return g_localizeStrings.Get(static_cast<uint32_t>(variant.asInteger()));
+    return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+        static_cast<uint32_t>(variant.asInteger()));
   if (variant.isUnsignedInteger() && variant.asUnsignedInteger() > 0)
-    return g_localizeStrings.Get(static_cast<uint32_t>(variant.asUnsignedInteger()));
+    return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+        static_cast<uint32_t>(variant.asUnsignedInteger()));
 
   return "";
 }
 
 void CBaseEvent::ToSortable(SortItem& sortable, Field field) const
 {
-  if (field == FieldDate)
-    sortable[FieldDate] = StringUtils::Format("%020" PRIu64, m_timestamp);
+  if (field == Field::DATE)
+    sortable[Field::DATE] = StringUtils::Format("{:020}", m_timestamp);
 }

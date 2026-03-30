@@ -1,35 +1,23 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "Archive.h"
 
-#include <cstdint>
-#include <cstring>
+#include "IArchivable.h"
+#include "filesystem/File.h"
+#include "utils/Variant.h"
+#include "utils/XTimeUtils.h"
+#include "utils/log.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <stdexcept>
-
-#include "filesystem/File.h"
-#include "IArchivable.h"
-#include "utils/Variant.h"
-#include "utils/log.h"
 
 #ifdef __GNUC__
 #pragma GCC diagnostic ignored "-Wlong-long"
@@ -43,11 +31,11 @@ using namespace XFILE;
 #define MAX_STRING_SIZE 100*1024*1024
 
 CArchive::CArchive(CFile* pFile, int mode)
+  : m_pBuffer(std::unique_ptr<uint8_t[]>(new uint8_t[CARCHIVE_BUFFER_MAX]))
 {
   m_pFile = pFile;
   m_iMode = mode;
 
-  m_pBuffer = std::unique_ptr<uint8_t[]>(new uint8_t[CARCHIVE_BUFFER_MAX]);
   memset(m_pBuffer.get(), 0, CARCHIVE_BUFFER_MAX);
   if (mode == load)
   {
@@ -164,9 +152,9 @@ CArchive& CArchive::operator<<(const std::wstring& wstr)
   return streamout(wstr.data(), size * sizeof(wchar_t));
 }
 
-CArchive& CArchive::operator<<(const SYSTEMTIME& time)
+CArchive& CArchive::operator<<(const KODI::TIME::SystemTime& time)
 {
-  return streamout(&time, sizeof(SYSTEMTIME));
+  return streamout(&time, sizeof(KODI::TIME::SystemTime));
 }
 
 CArchive& CArchive::operator<<(IArchivable& obj)
@@ -277,9 +265,9 @@ CArchive& CArchive::operator>>(std::wstring& wstr)
   return *this;
 }
 
-CArchive& CArchive::operator>>(SYSTEMTIME& time)
+CArchive& CArchive::operator>>(KODI::TIME::SystemTime& time)
 {
-  return streamin(&time, sizeof(SYSTEMTIME));
+  return streamin(&time, sizeof(KODI::TIME::SystemTime));
 }
 
 CArchive& CArchive::operator>>(IArchivable& obj)
@@ -409,7 +397,7 @@ void CArchive::FlushBuffer()
   if (m_iMode == store && m_BufferPos != m_pBuffer.get())
   {
     if (m_pFile->Write(m_pBuffer.get(), m_BufferPos - m_pBuffer.get()) != m_BufferPos - m_pBuffer.get())
-      CLog::Log(LOGERROR, "%s: Error flushing buffer", __FUNCTION__);
+      CLog::Log(LOGERROR, "{}: Error flushing buffer", __FUNCTION__);
     else
     {
       m_BufferPos = m_pBuffer.get();
@@ -423,7 +411,7 @@ CArchive &CArchive::streamout_bufferwrap(const uint8_t *ptr, size_t size)
   do
   {
     auto chunkSize = std::min(size, m_BufferRemain);
-    m_BufferPos = std::copy(ptr, ptr + chunkSize, m_BufferPos);
+    m_BufferPos = std::copy_n(ptr, chunkSize, m_BufferPos);
     ptr += chunkSize;
     size -= chunkSize;
     m_BufferRemain -= chunkSize;
@@ -457,15 +445,16 @@ CArchive &CArchive::streamin_bufferwrap(uint8_t *ptr, size_t size)
       FillBuffer();
       if (m_BufferRemain < CARCHIVE_BUFFER_MAX && m_BufferRemain < size)
       {
-        CLog::Log(LOGERROR, "%s: can't stream in: requested %lu bytes, was read %lu bytes", __FUNCTION__,
-            static_cast<unsigned long>(orig_size), static_cast<unsigned long>(ptr - orig_ptr + m_BufferRemain));
+        CLog::Log(LOGERROR, "{}: can't stream in: requested {} bytes, was read {} bytes",
+                  __FUNCTION__, static_cast<unsigned long>(orig_size),
+                  static_cast<unsigned long>(ptr - orig_ptr + m_BufferRemain));
 
         memset(orig_ptr, 0, orig_size);
         return *this;
       }
     }
     auto chunkSize = std::min(size, m_BufferRemain);
-    ptr = std::copy(m_BufferPos, m_BufferPos + chunkSize, ptr);
+    ptr = std::copy_n(m_BufferPos, chunkSize, ptr);
     m_BufferPos += chunkSize;
     m_BufferRemain -= chunkSize;
     size -= chunkSize;

@@ -1,56 +1,39 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ZipFile.h"
+
 #include "URL.h"
 #include "utils/URIUtils.h"
-#include "utils/auto_buffer.h"
 #include "utils/log.h"
+
+#include <cstdint>
 
 #include <sys/stat.h>
 
-#if defined (TARGET_WINDOWS)
-#pragma comment(lib, "zlib.lib")
-#endif
-#define ZIP_CACHE_LIMIT 4*1024*1024
+static constexpr uint64_t ZIP_CACHE_LIMIT = 4ull * 1024 * 1024;
 
 using namespace XFILE;
 
-CZipFile::CZipFile()
+CZipFile::CZipFile() : m_szStringBuffer(nullptr), m_szStartOfStringBuffer(nullptr)
 {
-  m_szStringBuffer = NULL;
-  m_szStartOfStringBuffer = NULL;
-  m_iDataInStringBuffer = 0;
-  m_bCached = false;
-  m_iRead = -1;
+  memset(m_szBuffer, 0, sizeof(m_szBuffer));
 }
 
 CZipFile::~CZipFile()
 {
   delete[] m_szStringBuffer;
-  Close();
+  CZipFile::Close();
 }
 
 bool CZipFile::Open(const CURL&url)
 {
-  std::string strOpts = url.GetOptions();
+  const std::string& strOpts = url.GetOptions();
   CURL url2(url);
   url2.SetOptions("");
   if (!g_ZipManager.GetZipEntry(url2,mZipItem))
@@ -64,7 +47,12 @@ bool CZipFile::Open(const CURL&url)
 
   if ((mZipItem.method != 8) && (mZipItem.method != 0))
   {
-    CLog::Log(LOGERROR,"FileZip: unsupported compression method!");
+    std::string method = std::to_string(mZipItem.method);
+
+    if (mZipItem.method == 9)
+      method.append(" (PKWARE proprietary DEFLATE64)");
+
+    CLog::Log(LOGERROR, "FileZip: unsupported compression method {}", method);
     return false;
   }
 
@@ -83,7 +71,7 @@ bool CZipFile::Open(const CURL&url)
 
   if (!mFile.Open(url.GetHostName())) // this is the zip-file, always open binary
   {
-    CLog::Log(LOGERROR,"FileZip: unable to open zip file %s!",url.GetHostName().c_str());
+    CLog::Log(LOGERROR, "FileZip: unable to open zip file {}!", url.GetHostName());
     return false;
   }
   mFile.Seek(mZipItem.offset,SEEK_SET);
@@ -108,7 +96,7 @@ bool CZipFile::InitDecompress()
       return false;
     }
   }
-  m_ZStream.next_in = (Bytef*)m_szBuffer;
+  m_ZStream.next_in = reinterpret_cast<Bytef*>(m_szBuffer);
   m_ZStream.avail_in = 0;
   m_ZStream.total_out = 0;
 
@@ -117,7 +105,7 @@ bool CZipFile::InitDecompress()
 
 int64_t CZipFile::GetLength()
 {
-  return mZipItem.usize;
+  return static_cast<int64_t>(mZipItem.usize);
 }
 
 int64_t CZipFile::GetPosition()
@@ -134,51 +122,45 @@ int64_t CZipFile::Seek(int64_t iFilePosition, int iWhence)
     return mFile.Seek(iFilePosition,iWhence);
   if (mZipItem.method == 0) // this is easy
   {
-    int64_t iResult;
     switch (iWhence)
     {
-    case SEEK_SET:
-      if (iFilePosition > mZipItem.usize)
-        return -1;
-      m_iFilePos = iFilePosition;
-      m_iZipFilePos = m_iFilePos;
-      iResult = mFile.Seek(iFilePosition+mZipItem.offset,SEEK_SET)-mZipItem.offset;
-      return iResult;
-      break;
+      case SEEK_SET:
+        if (iFilePosition > static_cast<int64_t>(mZipItem.usize))
+          return -1;
+        m_iFilePos = iFilePosition;
+        m_iZipFilePos = m_iFilePos;
+        return mFile.Seek(iFilePosition + mZipItem.offset, SEEK_SET) - mZipItem.offset;
 
-    case SEEK_CUR:
-      if (m_iFilePos+iFilePosition > mZipItem.usize)
-        return -1;
-      m_iFilePos += iFilePosition;
-      m_iZipFilePos = m_iFilePos;
-      iResult = mFile.Seek(iFilePosition,SEEK_CUR)-mZipItem.offset;
-      return iResult;
-      break;
+      case SEEK_CUR:
+        if (m_iFilePos + iFilePosition > static_cast<int64_t>(mZipItem.usize))
+          return -1;
+        m_iFilePos += iFilePosition;
+        m_iZipFilePos = m_iFilePos;
+        return mFile.Seek(iFilePosition, SEEK_CUR) - mZipItem.offset;
 
-    case SEEK_END:
-      if (iFilePosition > mZipItem.usize)
+      case SEEK_END:
+        if (iFilePosition > static_cast<int64_t>(mZipItem.usize))
+          return -1;
+        m_iFilePos = static_cast<int64_t>(mZipItem.usize) + iFilePosition;
+        m_iZipFilePos = m_iFilePos;
+        return mFile.Seek(mZipItem.offset + static_cast<int64_t>(mZipItem.usize) + iFilePosition,
+                          SEEK_SET) -
+               mZipItem.offset;
+      default:
         return -1;
-      m_iFilePos = mZipItem.usize+iFilePosition;
-      m_iZipFilePos = m_iFilePos;
-      iResult = mFile.Seek(mZipItem.offset+mZipItem.usize+iFilePosition,SEEK_SET)-mZipItem.offset;
-      return iResult;
-      break;
-    default:
-      return -1;
-
     }
   }
   // here goes the stupid part..
   if (mZipItem.method == 8)
   {
-    static const int blockSize = 128 * 1024;
-    XUTILS::auto_buffer buf(blockSize);
+    constexpr int blockSize = 128 * 1024;
+    std::vector<char> buf(blockSize);
     switch (iWhence)
     {
     case SEEK_SET:
       if (iFilePosition == m_iFilePos)
         return m_iFilePos; // mp3reader does this lots-of-times
-      if (iFilePosition > mZipItem.usize || iFilePosition < 0)
+      if (iFilePosition > static_cast<int64_t>(mZipItem.usize) || iFilePosition < 0)
         return -1;
       // read until position in 128k blocks.. only way to do it due to format.
       // can't start in the middle of data since then we'd have no clue where
@@ -190,49 +172,52 @@ int64_t CZipFile::Seek(int64_t iFilePosition, int iWhence)
         inflateEnd(&m_ZStream);
         inflateInit2(&m_ZStream,-MAX_WBITS); // simply restart zlib
         mFile.Seek(mZipItem.offset,SEEK_SET);
-        m_ZStream.next_in = (Bytef*)m_szBuffer;
+        m_ZStream.next_in = reinterpret_cast<Bytef*>(m_szBuffer);
         m_ZStream.avail_in = 0;
         m_ZStream.total_out = 0;
         while (m_iFilePos < iFilePosition)
         {
-          unsigned int iToRead = (iFilePosition - m_iFilePos)>blockSize ? blockSize : (int)(iFilePosition - m_iFilePos);
-          if (Read(buf.get(),iToRead) != iToRead)
+          const ssize_t iToRead =
+              (iFilePosition - m_iFilePos) > blockSize ? blockSize : iFilePosition - m_iFilePos;
+          if (Read(buf.data(), iToRead) != iToRead)
             return -1;
         }
         return m_iFilePos;
       }
       else // seek forward
-        return Seek(iFilePosition-m_iFilePos,SEEK_CUR);
-      break;
+        return Seek(iFilePosition - m_iFilePos, SEEK_CUR);
 
     case SEEK_CUR:
       if (iFilePosition < 0)
         return Seek(m_iFilePos+iFilePosition,SEEK_SET); // can't rewind stream
       // read until requested position, drop data
-      if (m_iFilePos+iFilePosition > mZipItem.usize)
+      if (m_iFilePos + iFilePosition > static_cast<int64_t>(mZipItem.usize))
         return -1;
       iFilePosition += m_iFilePos;
       while (m_iFilePos < iFilePosition)
       {
-        unsigned int iToRead = (iFilePosition - m_iFilePos)>blockSize ? blockSize : (int)(iFilePosition - m_iFilePos);
-        if (Read(buf.get(), iToRead) != iToRead)
+        ssize_t iToRead = (iFilePosition - m_iFilePos)>blockSize ? blockSize : iFilePosition - m_iFilePos;
+        if (Read(buf.data(), iToRead) != iToRead)
           return -1;
       }
       return m_iFilePos;
-      break;
 
     case SEEK_END:
       // now this is a nasty bastard, possibly takes lotsoftime
       // uncompress, minding m_ZStream.total_out
 
-      while( (int)m_ZStream.total_out < mZipItem.usize+iFilePosition)
+      while (static_cast<ssize_t>(m_ZStream.total_out) <
+             static_cast<int64_t>(mZipItem.usize) + iFilePosition)
       {
-        unsigned int iToRead = (mZipItem.usize + iFilePosition - m_ZStream.total_out > blockSize) ? blockSize : (int)(mZipItem.usize + iFilePosition - m_ZStream.total_out);
-        if (Read(buf.get(), iToRead) != iToRead)
+        ssize_t iToRead =
+            (mZipItem.usize + iFilePosition - m_ZStream.total_out > blockSize)
+                ? blockSize
+                : static_cast<ssize_t>(mZipItem.usize + iFilePosition - m_ZStream.total_out);
+        if (Read(buf.data(), iToRead) != iToRead)
           return -1;
       }
       return m_iFilePos;
-      break;
+
     default:
       return -1;
     }
@@ -250,10 +235,9 @@ bool CZipFile::Exists(const CURL& url)
 
 int CZipFile::Stat(struct __stat64 *buffer)
 {
-  int ret;
   struct tm tm = {};
 
-  ret = mFile.Stat(buffer);
+  const int ret = mFile.Stat(buffer);
   tm.tm_sec = (mZipItem.mod_time & 0x1F) << 1;
   tm.tm_min = (mZipItem.mod_time & 0x7E0) >> 5;
   tm.tm_hour = (mZipItem.mod_time & 0xF800) >> 11;
@@ -262,7 +246,7 @@ int CZipFile::Stat(struct __stat64 *buffer)
   tm.tm_year = (mZipItem.mod_date & 0xFE00) >> 9;
   buffer->st_atime = buffer->st_ctime = buffer->st_mtime = mktime(&tm);
 
-  buffer->st_size = mZipItem.usize;
+  buffer->st_size = static_cast<int64_t>(mZipItem.usize);
   buffer->st_dev = (buffer->st_dev << 16) ^ (buffer->st_ino << 16);
   buffer->st_ino ^= mZipItem.crc32;
   return ret;
@@ -270,10 +254,14 @@ int CZipFile::Stat(struct __stat64 *buffer)
 
 int CZipFile::Stat(const CURL& url, struct __stat64* buffer)
 {
+  if (!buffer)
+    return -1;
+
   if (!g_ZipManager.GetZipEntry(url, mZipItem))
   {
     if (url.GetFileName().empty() && CFile::Exists(url.GetHostName()))
     { // when accessing the zip "root" recognize it as a directory
+      *buffer = {};
       buffer->st_mode = _S_IFDIR;
       return 0;
     }
@@ -281,10 +269,10 @@ int CZipFile::Stat(const CURL& url, struct __stat64* buffer)
       return -1;
   }
 
-  memset(buffer, 0, sizeof(struct __stat64));
+  *buffer = {};
   buffer->st_gid = 0;
   buffer->st_atime = buffer->st_ctime = mZipItem.mod_time;
-  buffer->st_size = mZipItem.usize;
+  buffer->st_size = static_cast<int64_t>(mZipItem.usize);
   return 0;
 }
 
@@ -299,23 +287,27 @@ ssize_t CZipFile::Read(void* lpBuf, size_t uiBufSize)
   // flush what might be left in the string buffer
   if (m_iDataInStringBuffer > 0)
   {
-    size_t iMax = static_cast<size_t>((uiBufSize>m_iDataInStringBuffer?m_iDataInStringBuffer:uiBufSize));
+    size_t iMax = uiBufSize>m_iDataInStringBuffer?m_iDataInStringBuffer:uiBufSize;
     memcpy(lpBuf,m_szStartOfStringBuffer,iMax);
     uiBufSize -= iMax;
     m_iDataInStringBuffer -= iMax;
   }
   if (mZipItem.method == 8) // deflated
   {
-    uLong iDecompressed = 0;
-    uLong prevOut = m_ZStream.total_out;
-    while ((iDecompressed < uiBufSize) && ((m_iZipFilePos < mZipItem.csize) || (m_bFlush)))
+    uint64_t iDecompressed = 0;
+    uint64_t prevOut = m_ZStream.total_out;
+    while ((iDecompressed < uiBufSize) &&
+           ((m_iZipFilePos < static_cast<int64_t>(mZipItem.csize)) || (m_bFlush)))
     {
-      m_ZStream.next_out = (Bytef*)(lpBuf)+iDecompressed;
-      m_ZStream.avail_out = static_cast<uInt>(uiBufSize-iDecompressed);
+      m_ZStream.next_out = static_cast<Bytef*>(lpBuf) + iDecompressed;
+      const uInt avail = (uiBufSize - iDecompressed) > UINT_MAX
+                             ? UINT_MAX
+                             : static_cast<uInt>(uiBufSize - iDecompressed);
+      m_ZStream.avail_out = avail;
       if (m_bFlush) // need to flush buffer !
       {
         int iMessage = inflate(&m_ZStream,Z_SYNC_FLUSH);
-        m_bFlush = ((iMessage == Z_OK) && (m_ZStream.avail_out == 0))?true:false;
+        m_bFlush = ((iMessage == Z_OK) && (m_ZStream.avail_out == 0));
         if (!m_ZStream.avail_out) // flush filled buffer, get out of here
         {
           iDecompressed = m_ZStream.total_out-prevOut;
@@ -339,17 +331,19 @@ ssize_t CZipFile::Read(void* lpBuf, size_t uiBufSize)
         return -1; // READ ERROR
       }
 
-      m_bFlush = ((iMessage == Z_OK) && (m_ZStream.avail_out == 0))?true:false; // more info in input buffer
+      m_bFlush = ((iMessage == Z_OK) && (m_ZStream.avail_out == 0)); // more info in input buffer
 
       iDecompressed = m_ZStream.total_out-prevOut;
     }
-    m_iFilePos += iDecompressed;
+    m_iFilePos += static_cast<int64_t>(iDecompressed);
     return static_cast<unsigned int>(iDecompressed);
   }
   else if (mZipItem.method == 0) // uncompressed. just read from file, but mind our boundaries.
   {
-    if (uiBufSize+m_iFilePos > mZipItem.csize)
-      uiBufSize = mZipItem.csize-m_iFilePos;
+    if (m_iFilePos < 0 || static_cast<uint64_t>(m_iFilePos) >= mZipItem.csize)
+      return 0;
+    if (uiBufSize + static_cast<uint64_t>(m_iFilePos) > mZipItem.csize)
+      uiBufSize = mZipItem.csize - m_iFilePos;
 
     if (uiBufSize == 0)
       return 0; // we are past eof, this shouldn't happen but test anyway
@@ -372,90 +366,20 @@ void CZipFile::Close()
 
   mFile.Close();
 }
-/* CHANGED: JM - moved to CFile
-bool CZipFile::ReadString(char* szLine, int iLineLength)
-{
-  if (!m_szStringBuffer)
-  {
-    m_szStringBuffer = new char[1024]; // 1024 byte long strings per read
-    m_szStartOfStringBuffer = m_szStringBuffer;
-    m_iDataInStringBuffer = 0;
-    m_iRead = 0;
-  }
-
-  bool bEof = m_iDataInStringBuffer==0;
-  while ((iLineLength > 1) && (m_iRead > -1))
-  {
-    if (m_iDataInStringBuffer > 0)
-    {
-      bEof = false;
-      m_iRead = 1;
-      int iMax = (iLineLength<m_iDataInStringBuffer?iLineLength-1:m_iDataInStringBuffer-1);
-      for( int i=0;i<iMax;++i )
-      {
-        if (m_szStartOfStringBuffer[i] == '\r') // mac or win32 endings
-        {
-          strncpy(szLine,m_szStartOfStringBuffer,i);
-          szLine[i] = '\0';
-          m_iDataInStringBuffer -= i+1;
-          m_szStartOfStringBuffer += i+1;
-          if( m_szStartOfStringBuffer[0] == '\n') // win32 endings
-          {
-            m_szStartOfStringBuffer++;
-            m_iDataInStringBuffer--;
-          }
-          return true;
-        }
-        else if (m_szStartOfStringBuffer[i] == '\n') // unix or fucked up win32 endings
-        {
-          strncpy(szLine,m_szStartOfStringBuffer,i);
-          szLine[i] = '\0';
-          m_iDataInStringBuffer -= i+1;
-          m_szStartOfStringBuffer += i+1;
-          if (m_szStartOfStringBuffer[0] == '\r')
-          {
-            m_szStartOfStringBuffer++;
-            m_iDataInStringBuffer--;
-          }
-          return true;
-        }
-      }
-      strncpy(szLine,m_szStartOfStringBuffer,iMax);
-      szLine += iMax;
-      iLineLength -= iMax;
-      m_iDataInStringBuffer -= iMax;
-    }
-
-    if (m_iRead == 1 && (m_iDataInStringBuffer == 1))
-    {
-      m_szStringBuffer[0] = m_szStringBuffer[1023]; // need to make sure we don't loose any '\r\n' between buffers
-      m_iDataInStringBuffer = Read(m_szStringBuffer+1,1023);
-    }
-    else
-      m_iDataInStringBuffer = Read(m_szStringBuffer,1024);
-    m_szStartOfStringBuffer = m_szStringBuffer;
-    if (m_iDataInStringBuffer)
-      m_iRead = 1;
-    else
-      m_iRead = -1;
-  }
-  szLine[0] = '\0';
-  return !bEof;
-}*/
 
 bool CZipFile::FillBuffer()
 {
   ssize_t sToRead = 65535;
-  if (m_iZipFilePos+65535 > mZipItem.csize)
-    sToRead = mZipItem.csize-m_iZipFilePos;
+  if (m_iZipFilePos + 65535 > static_cast<int64_t>(mZipItem.csize))
+    sToRead = static_cast<ssize_t>(mZipItem.csize - m_iZipFilePos);
 
   if (sToRead <= 0)
     return false; // eof!
 
   if (mFile.Read(m_szBuffer,sToRead) != sToRead)
     return false;
-  m_ZStream.avail_in = sToRead;
-  m_ZStream.next_in = (Bytef*)m_szBuffer;
+  m_ZStream.avail_in = static_cast<unsigned int>(sToRead);
+  m_ZStream.next_in = reinterpret_cast<Byte*>(m_szBuffer);
   m_iZipFilePos += sToRead;
   return true;
 }
@@ -467,7 +391,7 @@ void CZipFile::DestroyBuffer(void* lpBuffer, int iBufSize)
   int iMessage = Z_OK;
   while ((iMessage == Z_OK) && (m_ZStream.avail_out == 0))
   {
-    m_ZStream.next_out = (Bytef*)lpBuffer;
+    m_ZStream.next_out = static_cast<Bytef*>(lpBuffer);
     m_ZStream.avail_out = iBufSize;
     iMessage = inflate(&m_ZStream,Z_SYNC_FLUSH);
   }
@@ -483,37 +407,73 @@ int CZipFile::UnpackFromMemory(std::string& strDest, const std::string& strInput
     if (!isGZ)
     {
       CZipManager::readHeader(strInput.data()+iPos,mZipItem);
-      if( mZipItem.header != ZIP_LOCAL_HEADER )
+      if (mZipItem.header == ZIP_DATA_RECORD_HEADER)
+      {
+        // this header concerns a file we already processed, so we can just skip it
+        iPos += DREC_SIZE;
+        continue;
+      }
+      if (mZipItem.header != ZIP_LOCAL_HEADER)
         return iResult;
       if( (mZipItem.flags & 8) == 8 )
       {
-        CLog::Log(LOGERROR,"FileZip: extended local header, not supported!");
-        return iResult;
+        // if an extended local header (=data record header) is present,
+        // the following fields are 0 in the local header and we need to read
+        // them from the extended local header
+
+        // search for the extended local header
+        unsigned int i = iPos + LHDR_SIZE + mZipItem.flength + mZipItem.elength;
+        while (true)
+        {
+          if (i + DREC_SIZE > strInput.size())
+          {
+            CLog::Log(LOGERROR, "FileZip: extended local header expected, but not present!");
+            return iResult;
+          }
+          if ((strInput[i] == 0x50) && (strInput[i + 1] == 0x4b) &&
+            (strInput[i + 2] == 0x07) && (strInput[i + 3] == 0x08))
+            break; // header found
+          i++;
+        }
+        // ZIP is little endian:
+        mZipItem.crc32 = static_cast<uint8_t>(strInput[i + 4]) |
+                         static_cast<uint8_t>(strInput[i + 5]) << 8 |
+                         static_cast<uint8_t>(strInput[i + 6]) << 16 |
+                         static_cast<uint8_t>(strInput[i + 7]) << 24;
+        mZipItem.csize = static_cast<uint8_t>(strInput[i + 8]) |
+                         static_cast<uint8_t>(strInput[i + 9]) << 8 |
+                         static_cast<uint8_t>(strInput[i + 10]) << 16 |
+                         static_cast<uint8_t>(strInput[i + 11]) << 24;
+        mZipItem.usize = static_cast<uint8_t>(strInput[i + 12]) |
+                         static_cast<uint8_t>(strInput[i + 13]) << 8 |
+                         static_cast<uint8_t>(strInput[i + 14]) << 16 |
+                         static_cast<uint8_t>(strInput[i + 15]) << 24;
       }
     }
     if (!InitDecompress())
       return iResult;
     // we have a file - fill the buffer
     char* temp;
-    int toRead=0;
+    ssize_t toRead;
     if (isGZ)
     {
-      m_ZStream.avail_in = strInput.size();
-      m_ZStream.next_in = (Bytef*)strInput.data();
+      m_ZStream.avail_in = static_cast<unsigned int>(strInput.size());
+      m_ZStream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(strInput.data()));
       temp = new char[8192];
       toRead = 8191;
     }
     else
     {
       m_ZStream.avail_in = mZipItem.csize;
-      m_ZStream.next_in = (Bytef*)strInput.data()+iPos+LHDR_SIZE+mZipItem.flength+mZipItem.elength;
+      m_ZStream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(strInput.data())) +
+                          iPos + LHDR_SIZE + mZipItem.flength + mZipItem.elength;
       // init m_zipitem
       strDest.reserve(mZipItem.usize);
       temp = new char[mZipItem.usize+1];
-      toRead = mZipItem.usize;
+      toRead = static_cast<ssize_t>(mZipItem.usize);
     }
     int iCurrResult;
-    while( (iCurrResult=Read(temp,toRead)) > 0)
+    while((iCurrResult = static_cast<int>(Read(temp, toRead))) > 0)
     {
       strDest.append(temp,temp+iCurrResult);
       iResult += iCurrResult;
@@ -530,9 +490,9 @@ int CZipFile::UnpackFromMemory(std::string& strDest, const std::string& strInput
 
 bool CZipFile::DecompressGzip(const std::string& in, std::string& out)
 {
-  const int windowBits = MAX_WBITS + 16;
+  constexpr int windowBits = MAX_WBITS + 16;
 
-  z_stream strm;
+  z_stream strm{};
   strm.zalloc = Z_NULL;
   strm.zfree = Z_NULL;
   strm.opaque = Z_NULL;
@@ -540,34 +500,35 @@ bool CZipFile::DecompressGzip(const std::string& in, std::string& out)
   int err = inflateInit2(&strm, windowBits);
   if (err != Z_OK)
   {
-    CLog::Log(LOGERROR, "FileZip: zlib error %d", err);
+    CLog::Log(LOGERROR, "FileZip: zlib error {}", err);
     return false;
   }
 
-  const int bufferSize = 16384;
+  constexpr int bufferSize = 16384;
   unsigned char buffer[bufferSize];
 
-  strm.avail_in = in.size();
-  strm.next_in = (unsigned char*)in.c_str();
+  strm.avail_in = static_cast<unsigned int>(in.size());
+  strm.next_in = reinterpret_cast<unsigned char*>(const_cast<char*>(in.c_str()));
 
   do
   {
     strm.avail_out = bufferSize;
     strm.next_out = buffer;
-    int err = inflate(&strm, Z_NO_FLUSH);
-    switch (err)
+    switch (int err2 = inflate(&strm, Z_NO_FLUSH); err2)
     {
       case Z_NEED_DICT:
-        err = Z_DATA_ERROR;
+        err2 = Z_DATA_ERROR;
+        [[fallthrough]];
       case Z_DATA_ERROR:
       case Z_MEM_ERROR:
       case Z_STREAM_ERROR:
-        CLog::Log(LOGERROR, "FileZip: failed to decompress. zlib error %d", err);
+        CLog::Log(LOGERROR, "FileZip: failed to decompress. zlib error {}", err2);
         inflateEnd(&strm);
         return false;
+      default:
+        break;
     }
-    int read = bufferSize - strm.avail_out;
-    out.append((char*)buffer, read);
+    out.append(reinterpret_cast<char*>(buffer), bufferSize - static_cast<int>(strm.avail_out));
   }
   while (strm.avail_out == 0);
 

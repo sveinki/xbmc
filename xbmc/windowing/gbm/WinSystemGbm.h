@@ -1,65 +1,101 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
-#include <gbm.h>
-#include <EGL/egl.h>
-
+#include "VideoLayerBridge.h"
+#include "drm/DRMUtils.h"
 #include "threads/CriticalSection.h"
+#include "threads/SystemClock.h"
 #include "windowing/WinSystem.h"
-#include "GBMUtils.h"
+
+#include "platform/linux/input/LibInputHandler.h"
+
+#include <utility>
+
+#include <gbm.h>
 
 class IDispResource;
+
+namespace KODI
+{
+namespace UTILS
+{
+class CDisplayInfo;
+}
+namespace WINDOWING
+{
+namespace GBM
+{
 
 class CWinSystemGbm : public CWinSystemBase
 {
 public:
   CWinSystemGbm();
-  virtual ~CWinSystemGbm() = default;
+  ~CWinSystemGbm() override;
+
+  const std::string GetName() override { return "gbm"; }
 
   bool InitWindowSystem() override;
   bool DestroyWindowSystem() override;
 
-  bool CreateNewWindow(const std::string& name,
-                       bool fullScreen,
-                       RESOLUTION_INFO& res) override;
-
-  bool DestroyWindow() override;
-
   bool ResizeWindow(int newWidth, int newHeight, int newLeft, int newTop) override;
   bool SetFullScreen(bool fullScreen, RESOLUTION_INFO& res, bool blankOtherDisplays) override;
 
+  void FlipPage(bool rendered, bool videoLayer, bool async);
+
+  bool CanDoWindowed() override { return false; }
   void UpdateResolutions() override;
 
-  void* GetVaDisplay();
+  bool UseLimitedColor() override;
 
   bool Hide() override;
   bool Show(bool raise = true) override;
-  virtual void Register(IDispResource *resource);
-  virtual void Unregister(IDispResource *resource);
+  void Register(IDispResource* resource) override;
+  void Unregister(IDispResource* resource) override;
+
+  bool SetHDR(const VideoPicture* videoPicture) override;
+  bool IsHDRDisplay() override;
+  CHDRCapabilities GetDisplayHDRCapabilities() const override;
+
+  std::shared_ptr<CVideoLayerBridge> GetVideoLayerBridge() const { return m_videoLayerBridge; }
+  void RegisterVideoLayerBridge(std::shared_ptr<CVideoLayerBridge> bridge)
+  {
+    m_videoLayerBridge = std::move(bridge);
+  };
+
+  CGBMUtils::CGBMDevice& GetGBMDevice() const { return m_GBM->GetDevice(); }
+  std::shared_ptr<CDRMUtils> GetDrm() const { return m_DRM; }
+
+  std::vector<std::string> GetConnectedOutputs() override;
 
 protected:
-  gbm* m_gbm;
-  drm* m_drm;
+  void OnLostDevice();
 
-  EGLDisplay m_nativeDisplay;
-  EGLNativeWindowType m_nativeWindow;
+  std::unique_ptr<CVideoSync> GetVideoSync(CVideoReferenceClock* clock) override;
+
+  std::shared_ptr<CDRMUtils> m_DRM;
+  std::unique_ptr<CGBMUtils> m_GBM;
+  std::shared_ptr<CVideoLayerBridge> m_videoLayerBridge;
+
+  CCriticalSection m_resourceSection;
+  std::vector<IDispResource*> m_resources;
+
+  bool m_dispReset = false;
+  XbmcThreads::EndTime<> m_dispResetTimer;
+  std::unique_ptr<CLibInputHandler> m_libinput;
+
+private:
+  uint32_t m_hdr_blob_id = 0;
+
+  std::unique_ptr<UTILS::CDisplayInfo> m_info;
 };
+
+} // namespace GBM
+} // namespace WINDOWING
+} // namespace KODI

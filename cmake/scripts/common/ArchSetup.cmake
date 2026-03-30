@@ -8,31 +8,16 @@
 # ARCH - the system architecture
 # ARCH_DEFINES - list of compiler definitions for this architecture
 # SYSTEM_DEFINES - list of compiler definitions for this system
-# DEP_DEFINES - compiler definitions for system dependencies (e.g. LIRC)
 # + the results of compiler tests etc.
+
+# workaround a bug in older cmake, where binutils wouldn't be set after deleting CMakeCache.txt
+include(CMakeFindBinUtils)
 
 include(CheckCXXSourceCompiles)
 include(CheckSymbolExists)
 include(CheckFunctionExists)
 include(CheckIncludeFile)
-
-# Macro to check if a given type exists in a given header
-# Arguments:
-#   header the header to check
-#   type   the type to check for existence
-#   var    the compiler definition to set if type exists
-# On return:
-#   If type was found, the definition is added to SYSTEM_DEFINES
-macro(check_type header type var)
-  check_cxx_source_compiles("#include <${header}>
-                             int main()
-                             {
-                               ${type} s;
-                             }" ${var})
-  if(${var})
-    list(APPEND SYSTEM_DEFINES -D${var}=1)
-  endif()
-endmacro()
+include(CheckTypeSize)
 
 # Macro to check if a given builtin function exists
 # Arguments:
@@ -52,7 +37,7 @@ macro(check_builtin func var)
 endmacro()
 
 
-# -------- Main script --------- 
+# -------- Main script ---------
 message(STATUS "System type: ${CMAKE_SYSTEM_NAME}")
 
 if(WITH_CPU)
@@ -73,13 +58,14 @@ endif()
 # this variable is set if we can execute build artefacts on the host system (for example unit tests).
 if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL CMAKE_SYSTEM_PROCESSOR AND
    CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME)
-  set(CORE_HOST_IS_TARGET TRUE)
+  if(NOT DEFINED HOST_CAN_EXECUTE_TARGET)
+    set(HOST_CAN_EXECUTE_TARGET TRUE)
+  endif()
 else()
-  set(CORE_HOST_IS_TARGET FALSE)
+  if(NOT HOST_CAN_EXECUTE_TARGET)
+    set(HOST_CAN_EXECUTE_TARGET FALSE)
+  endif()
 endif()
-
-# Main cpp
-set(CORE_MAIN_SOURCE ${CMAKE_SOURCE_DIR}/xbmc/platform/posix/main.cpp)
 
 # system specific arch setup
 if(NOT EXISTS ${CMAKE_SOURCE_DIR}/cmake/scripts/${CORE_SYSTEM_NAME}/ArchSetup.cmake)
@@ -91,18 +77,18 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/cmake/scripts/${CORE_SYSTEM_NAME}/ArchSetup.cm
 endif()
 include(${CMAKE_SOURCE_DIR}/cmake/scripts/${CORE_SYSTEM_NAME}/ArchSetup.cmake)
 
+# No TARBALL_DIR given, or no arch specific default set
+if(NOT TARBALL_DIR)
+  set(TARBALL_DIR ${CMAKE_BINARY_DIR}/${CORE_BUILD_DIR}/download)
+endif()
+
 message(STATUS "Core system type: ${CORE_SYSTEM_NAME}")
-message(STATUS "Platform: ${PLATFORM}")
+message(STATUS "Platform: ${CORE_PLATFORM_NAME}")
 message(STATUS "CPU: ${CPU}, ARCH: ${ARCH}")
 message(STATUS "Cross-Compiling: ${CMAKE_CROSSCOMPILING}")
 message(STATUS "Execute build artefacts on host: ${CORE_HOST_IS_TARGET}")
 message(STATUS "Depends based build: ${KODI_DEPENDSBUILD}")
 
-check_type(string std::u16string HAVE_STD__U16_STRING)
-check_type(string std::u32string HAVE_STD__U32_STRING)
-check_type(string char16_t HAVE_CHAR16_T)
-check_type(string char32_t HAVE_CHAR32_T)
-check_type(stdint.h uint_least16_t HAVE_STDINT_H)
 check_symbol_exists(posix_fadvise fcntl.h HAVE_POSIX_FADVISE)
 check_symbol_exists(PRIdMAX inttypes.h HAVE_INTTYPES_H)
 check_builtin("long* temp=0; long ret=__sync_add_and_fetch(temp, 1)" HAS_BUILTIN_SYNC_ADD_AND_FETCH)
@@ -119,9 +105,28 @@ check_function_exists(localtime_r HAVE_LOCALTIME_R)
 if(HAVE_LOCALTIME_R)
   list(APPEND SYSTEM_DEFINES -DHAVE_LOCALTIME_R=1)
 endif()
+check_function_exists(gmtime_r HAVE_GMTIME_R)
+if(HAVE_GMTIME_R)
+list(APPEND SYSTEM_DEFINES -DHAVE_GMTIME_R=1)
+endif()
 if(HAVE_INTTYPES_H)
   list(APPEND SYSTEM_DEFINES -DHAVE_INTTYPES_H=1)
 endif()
+
+set(CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
+check_symbol_exists("STATX_BTIME" "linux/stat.h" HAVE_STATX)
+if(HAVE_STATX)
+  check_function_exists("statx" FOUND_STATX_FUNCTION)
+  if(FOUND_STATX_FUNCTION)
+    message(STATUS "statx is available")
+    list(APPEND ARCH_DEFINES "-DHAVE_STATX=1")
+  else()
+    message(STATUS "statx flags found but no linkable function : C library too old ?")
+  endif()
+else()
+  message(STATUS "statx() not found")
+endif()
+set(CMAKE_REQUIRED_DEFINITIONS "")
 
 find_package(SSE)
 foreach(_sse SSE SSE2 SSE3 SSSE3 SSE4_1 SSE4_2 AVX AVX2)
@@ -150,7 +155,35 @@ if(NOT DEFINED NEON OR NEON)
   endif()
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_options (ALL_LANGUAGES DEBUG "-g" "-D_DEBUG" "-Wall")
+if(NOT MSVC)
+  # these options affect all code built by cmake including external projects.
+  add_options(ALL_LANGUAGES ALL_BUILDS
+    -Wall
+    -Wdouble-promotion
+    -Wmissing-field-initializers
+    -Wsign-compare
+    -Wextra
+    -Wno-unused-parameter # from -Wextra
+  )
+
+  add_options(CXX ALL_BUILDS
+    -Wnon-virtual-dtor
+  )
+
+  add_options(ALL_LANGUAGES DEBUG
+    -g
+    -D_DEBUG
+  )
+
+  # these options affect only core code
+  if(NOT CORE_COMPILE_OPTIONS)
+    set(CORE_COMPILE_OPTIONS
+      -Werror=double-promotion
+      -Werror=missing-field-initializers
+      -Werror=sign-compare
+    )
+  endif()
 endif()
 
+# set for compile info to help detect binary addons
+set(APP_SHARED_LIBRARY_SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}")

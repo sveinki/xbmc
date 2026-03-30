@@ -1,30 +1,25 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2024 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "games/controllers/ControllerTypes.h"
 #include "settings/dialogs/GUIDialogSettingsManualBase.h"
 
 class CFileItem;
 
 namespace PERIPHERALS
 {
+class CPeripherals;
+
+/*!
+ * \ingroup peripherals
+ */
 class CGUIDialogPeripheralSettings : public CGUIDialogSettingsManualBase
 {
 public:
@@ -32,25 +27,35 @@ public:
   ~CGUIDialogPeripheralSettings() override;
 
   // specializations of CGUIControl
-  bool OnMessage(CGUIMessage &message) override;
+  bool OnMessage(CGUIMessage& message) override;
 
-  virtual void SetFileItem(const CFileItem *item);
+  // Implementation of CGUIWindow
+  void OnDeinitWindow(int nextWindowID) override;
+
+  void RegisterPeripheralManager(CPeripherals& manager);
+  void UnregisterPeripheralManager();
+
+  virtual void SetFileItem(const CFileItem* item);
 
 protected:
   // implementations of ISettingCallback
-  void OnSettingChanged(std::shared_ptr<const CSetting> setting) override;
+  void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
 
   // specialization of CGUIDialogSettingsBase
   bool AllowResettingSettings() const override { return false; }
-  void Save() override;
+  bool Save() override;
   void OnResetSettings() override;
   void SetupView() override;
 
   // specialization of CGUIDialogSettingsManualBase
   void InitializeSettings() override;
 
-  CFileItem *m_item;
-  bool m_initialising;
+  void UpdateIcon(const KODI::GAME::ControllerPtr& controller);
+
+  // Dialog state
+  CPeripherals* m_manager{nullptr};
+  CFileItem* m_item;
+  bool m_initialising = false;
   std::map<std::string, std::shared_ptr<CSetting>> m_settingsMap;
 };
-}
+} // namespace PERIPHERALS

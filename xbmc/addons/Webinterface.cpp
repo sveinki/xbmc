@@ -1,57 +1,47 @@
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "Webinterface.h"
-#include "addons/AddonManager.h"
-#include "utils/log.h"
+
+#include "addons/addoninfo/AddonType.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
+#include "utils/log.h"
 
 using namespace ADDON;
 
-std::unique_ptr<CWebinterface> CWebinterface::FromExtension(CAddonInfo addonInfo, const cp_extension_t* ext)
+namespace
+{
+constexpr const char* WEBINTERFACE_DEFAULT_ENTRY_POINT = "index.html";
+
+} // unnamed namespace
+
+CWebinterface::CWebinterface(const AddonInfoPtr& addonInfo)
+  : CAddon(addonInfo, AddonType::WEB_INTERFACE), m_entryPoint(WEBINTERFACE_DEFAULT_ENTRY_POINT)
+
 {
   // determine the type of the webinterface
-  WebinterfaceType type(WebinterfaceTypeStatic);
-  std::string webinterfaceType = CAddonMgr::GetInstance().GetExtValue(ext->configuration, "@type");
-  if (StringUtils::EqualsNoCase(webinterfaceType.c_str(), "wsgi"))
-    type = WebinterfaceTypeWsgi;
-  else if (!webinterfaceType.empty() && !StringUtils::EqualsNoCase(webinterfaceType.c_str(), "static") && !StringUtils::EqualsNoCase(webinterfaceType.c_str(), "html"))
-    CLog::Log(LOGWARNING, "Webinterface addon \"%s\" has specified an unsupported type \"%s\"", addonInfo.ID().c_str(), webinterfaceType.c_str());
+  std::string webinterfaceType = Type(AddonType::WEB_INTERFACE)->GetValue("@type").asString();
+  if (StringUtils::EqualsNoCase(webinterfaceType, "wsgi"))
+    m_type = WebinterfaceType::TYPE_WSGI;
+  else if (!webinterfaceType.empty() && !StringUtils::EqualsNoCase(webinterfaceType, "static") && !StringUtils::EqualsNoCase(webinterfaceType, "html"))
+    CLog::LogF(LOGWARNING, R"(Addon "{}" has specified an unsupported type "{}")", ID(),
+               webinterfaceType);
 
   // determine the entry point of the webinterface
-  std::string entryPoint(WEBINTERFACE_DEFAULT_ENTRY_POINT);
-  std::string entry = CAddonMgr::GetInstance().GetExtValue(ext->configuration, "@entry");
+  std::string entry = Type(AddonType::WEB_INTERFACE)->GetValue("@entry").asString();
   if (!entry.empty())
-    entryPoint = entry;
-
-  return std::unique_ptr<CWebinterface>(new CWebinterface(std::move(addonInfo), type, entryPoint));
+    m_entryPoint = entry;
 }
-
-CWebinterface::CWebinterface(ADDON::CAddonInfo addonInfo, WebinterfaceType type,
-    const std::string &entryPoint) : CAddon(std::move(addonInfo)), m_type(type), m_entryPoint(entryPoint)
-{ }
 
 std::string CWebinterface::GetEntryPoint(const std::string &path) const
 {
-  if (m_type == WebinterfaceTypeWsgi)
+  if (m_type == WebinterfaceType::TYPE_WSGI)
     return LibPath();
 
   return URIUtils::AddFileToFolder(path, m_entryPoint);
@@ -59,7 +49,7 @@ std::string CWebinterface::GetEntryPoint(const std::string &path) const
 
 std::string CWebinterface::GetBaseLocation() const
 {
-  if (m_type == WebinterfaceTypeWsgi)
+  if (m_type == WebinterfaceType::TYPE_WSGI)
     return "/addons/" + ID();
 
   return "";

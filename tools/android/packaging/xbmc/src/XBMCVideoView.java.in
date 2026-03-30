@@ -1,36 +1,34 @@
 package @APP_PACKAGE@;
 
-import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.graphics.Rect;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.view.View;
 import android.widget.RelativeLayout;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 
 public class XBMCVideoView extends SurfaceView implements
-    SurfaceHolder.Callback
+        SurfaceHolder.Callback
 {
   native void _surfaceChanged(SurfaceHolder holder, int format, int width, int height);
+
   native void _surfaceCreated(SurfaceHolder holder);
+
   native void _surfaceDestroyed(SurfaceHolder holder);
 
-  private static final String TAG = "XBMCVideoPlayView";
+  private static final String TAG = "@APP_NAME@";
 
   public boolean mIsCreated = false;
   private RelativeLayout mVideoLayout = null;
 
   public static XBMCVideoView createVideoView()
   {
-    FutureTask<XBMCVideoView> futureResult = new FutureTask<XBMCVideoView>(new Callable<XBMCVideoView>() {
+    FutureTask<XBMCVideoView> futureResult = new FutureTask<XBMCVideoView>(new Callable<XBMCVideoView>()
+    {
       @Override
       public XBMCVideoView call() throws Exception
       {
@@ -54,9 +52,10 @@ public class XBMCVideoView extends SurfaceView implements
   public XBMCVideoView(Context context)
   {
     super(context);
+    setZOrderMediaOverlay(true);
     getHolder().addCallback(this);
     getHolder().setFormat(PixelFormat.TRANSPARENT);
-    setZOrderMediaOverlay(true);
+
     mVideoLayout = (RelativeLayout) Main.MainActivity.findViewById(R.id.VideoLayout);
   }
 
@@ -67,11 +66,8 @@ public class XBMCVideoView extends SurfaceView implements
       @Override
       public void run()
       {
-        mVideoLayout.addView(XBMCVideoView.this);
-
         RelativeLayout.LayoutParams layoutParams = new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT);
-        setLayoutParams(layoutParams);
-        setBackgroundColor(Color.TRANSPARENT);
+        mVideoLayout.addView(XBMCVideoView.this, layoutParams);
       }
     });
   }
@@ -93,9 +89,10 @@ public class XBMCVideoView extends SurfaceView implements
     if (!mIsCreated)
     {
       return null;
-    } else
+    }
+    else
     {
-      Log.d(TAG, "getSurface() = " + getHolder().getSurface());
+      Log.d(TAG, "XBMCVideoView.getSurface() = " + getHolder().getSurface());
       return getHolder().getSurface();
     }
   }
@@ -130,28 +127,28 @@ public class XBMCVideoView extends SurfaceView implements
   @Override
   public void surfaceCreated(SurfaceHolder holder)
   {
-    Log.d(TAG, "Created");
+    Log.d(TAG, "XBMCVideoView: Created");
     mIsCreated = true;
     _surfaceCreated(holder);
   }
 
   @Override
   public void surfaceChanged(SurfaceHolder holder, int format, int width,
-      int height)
+                             int height)
   {
     if (holder != getHolder())
       return;
 
     _surfaceChanged(holder, format, width, height);
 
-    Log.d(TAG, "Changed, format:" + format + ", width:" + width
-        + ", height:" + height);
+    Log.d(TAG, "XBMCVideoView: Changed, format:" + format + ", width:" + width
+            + ", height:" + height);
   }
 
   @Override
   public void surfaceDestroyed(SurfaceHolder holder)
   {
-    Log.d(TAG, "Destroyed");
+    Log.d(TAG, "XBMCVideoView: Destroyed");
     mIsCreated = false;
     _surfaceDestroyed(holder);
   }

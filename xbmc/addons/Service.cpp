@@ -1,44 +1,25 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 #include "Service.h"
-#include "AddonManager.h"
+
+#include "addons/AddonManager.h"
+#include "addons/addoninfo/AddonType.h"
 #include "interfaces/generic/ScriptInvocationManager.h"
-#include "system.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
+#include "utils/log.h"
+
+#include <mutex>
 
 
 namespace ADDON
 {
 
-std::unique_ptr<CService> CService::FromExtension(CAddonInfo addonInfo, const cp_extension_t* ext)
-{
-  START_OPTION startOption(START_OPTION::LOGIN);
-  std::string start = CAddonMgr::GetInstance().GetExtValue(ext->configuration, "@start");
-  if (start == "startup")
-    startOption = START_OPTION::STARTUP;
-  return std::unique_ptr<CService>(new CService(std::move(addonInfo), startOption));
-}
-
-CService::CService(CAddonInfo addonInfo, START_OPTION startOption)
-  : CAddon(std::move(addonInfo)), m_startOption(startOption)
+CService::CService(const AddonInfoPtr& addonInfo) : CAddon(addonInfo, AddonType::SERVICE)
 {
 }
 
@@ -50,50 +31,34 @@ CServiceAddonManager::CServiceAddonManager(CAddonMgr& addonMgr) :
 CServiceAddonManager::~CServiceAddonManager()
 {
   m_addonMgr.Events().Unsubscribe(this);
+  m_addonMgr.UnloadEvents().Unsubscribe(this);
 }
 
 void CServiceAddonManager::OnEvent(const ADDON::AddonEvent& event)
 {
-  if (auto enableEvent = dynamic_cast<const AddonEvents::Enabled*>(&event))
+  if (typeid(event) == typeid(ADDON::AddonEvents::Enabled))
   {
-    Start(enableEvent->id);
+    Start(event.addonId);
   }
-  else if (auto disableEvent = dynamic_cast<const AddonEvents::Disabled*>(&event))
+  else if (typeid(event) == typeid(ADDON::AddonEvents::ReInstalled))
   {
-    Stop(disableEvent->id);
+    Stop(event.addonId);
+    Start(event.addonId);
   }
-  else if (auto uninstallEvent = dynamic_cast<const AddonEvents::UnInstalled*>(&event))
+  else if (typeid(event) == typeid(ADDON::AddonEvents::Disabled) ||
+           typeid(event) == typeid(ADDON::AddonEvents::Unload))
   {
-    Stop(uninstallEvent->id);
-  }
-  else if (auto reinstallEvent = dynamic_cast<const AddonEvents::ReInstalled*>(&event))
-  {
-    Stop(reinstallEvent->id);
-    Start(reinstallEvent->id);
-  }
-}
-
-void CServiceAddonManager::StartBeforeLogin()
-{
-  VECADDONS addons;
-  if (m_addonMgr.GetAddons(addons, ADDON_SERVICE))
-  {
-    for (const auto& addon : addons)
-    {
-      auto service = std::static_pointer_cast<CService>(addon);
-      if (service->GetStartOption() == START_OPTION::STARTUP)
-      {
-        Start(addon);
-      }
-    }
+    Stop(event.addonId);
   }
 }
 
 void CServiceAddonManager::Start()
 {
-  m_addonMgr.Events().Subscribe(this, &CServiceAddonManager::OnEvent);
+  m_addonMgr.Events().Subscribe(this, [this](const ADDON::AddonEvent& event) { OnEvent(event); });
+  m_addonMgr.UnloadEvents().Subscribe(this,
+                                      [this](const ADDON::AddonEvent& event) { OnEvent(event); });
   VECADDONS addons;
-  if (m_addonMgr.GetAddons(addons, ADDON_SERVICE))
+  if (m_addonMgr.GetAddons(addons, AddonType::SERVICE))
   {
     for (const auto& addon : addons)
     {
@@ -105,7 +70,7 @@ void CServiceAddonManager::Start()
 void CServiceAddonManager::Start(const std::string& addonId)
 {
   AddonPtr addon;
-  if (m_addonMgr.GetAddon(addonId, addon, ADDON_SERVICE))
+  if (m_addonMgr.GetAddon(addonId, addon, AddonType::SERVICE, OnlyEnabled::CHOICE_YES))
   {
     Start(addon);
   }
@@ -113,20 +78,20 @@ void CServiceAddonManager::Start(const std::string& addonId)
 
 void CServiceAddonManager::Start(const AddonPtr& addon)
 {
-  CSingleLock lock(m_criticalSection);
-  if (m_services.find(addon->ID()) != m_services.end())
+  std::unique_lock lock(m_criticalSection);
+  if (m_services.contains(addon->ID()))
   {
-    CLog::Log(LOGDEBUG, "CServiceAddonManager: %s already started.", addon->ID().c_str());
+    CLog::Log(LOGDEBUG, "CServiceAddonManager: {} already started.", addon->ID());
     return;
   }
 
   if (StringUtils::EndsWith(addon->LibPath(), ".py"))
   {
-    CLog::Log(LOGDEBUG, "CServiceAddonManager: starting %s", addon->ID().c_str());
+    CLog::Log(LOGDEBUG, "CServiceAddonManager: starting {}", addon->ID());
     auto handle = CScriptInvocationManager::GetInstance().ExecuteAsync(addon->LibPath(), addon);
     if (handle == -1)
     {
-      CLog::Log(LOGERROR, "CServiceAddonManager: %s failed to start", addon->ID().c_str());
+      CLog::Log(LOGERROR, "CServiceAddonManager: {} failed to start", addon->ID());
       return;
     }
     m_services[addon->ID()] = handle;
@@ -135,7 +100,9 @@ void CServiceAddonManager::Start(const AddonPtr& addon)
 
 void CServiceAddonManager::Stop()
 {
-  CSingleLock lock(m_criticalSection);
+  m_addonMgr.Events().Unsubscribe(this);
+  m_addonMgr.UnloadEvents().Unsubscribe(this);
+  std::unique_lock lock(m_criticalSection);
   for (const auto& service : m_services)
   {
     Stop(service);
@@ -145,7 +112,7 @@ void CServiceAddonManager::Stop()
 
 void CServiceAddonManager::Stop(const std::string& addonId)
 {
-  CSingleLock lock(m_criticalSection);
+  std::unique_lock lock(m_criticalSection);
   auto it = m_services.find(addonId);
   if (it != m_services.end())
   {
@@ -154,12 +121,13 @@ void CServiceAddonManager::Stop(const std::string& addonId)
   }
 }
 
-void CServiceAddonManager::Stop(std::map<std::string, int>::value_type service)
+void CServiceAddonManager::Stop(
+    const std::map<std::string, int, std::less<>>::value_type& service) const
 {
-  CLog::Log(LOGDEBUG, "CServiceAddonManager: stopping %s.", service.first.c_str());
+  CLog::Log(LOGDEBUG, "CServiceAddonManager: stopping {}.", service.first);
   if (!CScriptInvocationManager::GetInstance().Stop(service.second))
   {
-    CLog::Log(LOGINFO, "CServiceAddonManager: failed to stop %s (may have ended)", service.first.c_str());
+    CLog::Log(LOGINFO, "CServiceAddonManager: failed to stop {} (may have ended)", service.first);
   }
 }
 }

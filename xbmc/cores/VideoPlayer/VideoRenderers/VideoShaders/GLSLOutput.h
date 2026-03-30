@@ -1,27 +1,17 @@
 /*
- *      Copyright (C) 2007-2015 Team XBMC
- *      Copyright (C) 2015 Lauri Mylläri
- *      http://xbmc.org
+ *  Copyright (C) 2007-2018 Team Kodi
+ *  Copyright (C) 2015 Lauri Mylläri
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
-#include "system.h"
 #include "utils/GLUtils.h"
+
+#include <string>
 
 namespace Shaders
 {
@@ -58,14 +48,14 @@ namespace Shaders
     // defines
 
     // attribute locations
-    GLint m_hDither;
-    GLint m_hDitherQuant;
-    GLint m_hDitherSize;
-    GLint m_hCLUT;
-    GLint m_hCLUTSize;
+    GLint m_hDither = -1;
+    GLint m_hDitherQuant = -1;
+    GLint m_hDitherSize = -1;
+    GLint m_hCLUT = -1;
+    GLint m_hCLUTSize = -1;
 
     // textures
-    GLuint m_tDitherTex;
+    GLuint m_tDitherTex = 0;
     GLuint m_tCLUTTex;
   };
 }

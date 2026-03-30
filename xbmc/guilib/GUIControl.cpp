@@ -1,38 +1,33 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIControl.h"
 
-#include "GUIInfoManager.h"
-#include "utils/log.h"
-#include "GUIWindowManager.h"
+#include "GUIAction.h"
+#include "GUIComponent.h"
 #include "GUIControlProfiler.h"
+#include "GUIInfoManager.h"
+#include "GUIMessage.h"
 #include "GUITexture.h"
-#include "input/MouseStat.h"
-#include "input/InputManager.h"
-#include "input/Key.h"
+#include "GUIWindowManager.h"
 #include "ServiceBroker.h"
+#include "input/InputManager.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "input/mouse/MouseEvent.h"
+#include "input/mouse/MouseStat.h"
+#include "utils/log.h"
+#include "windowing/WinSystem.h"
 
-CGUIControl::CGUIControl() :
-  m_hitColor(0xffffffff),
-  m_diffuseColor(0xffffffff)
+using namespace KODI;
+using namespace GUILIB;
+
+CGUIControl::CGUIControl()
 {
   m_hasProcessed = false;
   m_bHasFocus = false;
@@ -60,7 +55,6 @@ CGUIControl::CGUIControl() :
 
 CGUIControl::CGUIControl(int parentID, int controlID, float posX, float posY, float width, float height)
 : m_hitRect(posX, posY, posX + width, posY + height),
-  m_hitColor(0xffffffff),
   m_diffuseColor(0xffffffff)
 {
   m_posX = posX;
@@ -87,6 +81,7 @@ CGUIControl::CGUIControl(int parentID, int controlID, float posX, float posY, fl
   m_controlStats = nullptr;
 }
 
+CGUIControl::CGUIControl(const CGUIControl &) = default;
 
 CGUIControl::~CGUIControl(void) = default;
 
@@ -131,14 +126,27 @@ void CGUIControl::DoProcess(unsigned int currentTime, CDirtyRegionList &dirtyreg
   bool changed = (m_controlDirtyState & DIRTY_STATE_CONTROL) != 0 || (m_bInvalidated && IsVisible());
   m_controlDirtyState = 0;
 
-  if (Animate(currentTime))
+  // If the control has an active animation, mark it as dirty even if culled because the
+  // animation might change the alpha at a later time so processing needs to continue
+  const bool animated = Animate(currentTime);
+
+  const bool culled = m_transform.alpha <= 0.01f;
+
+  // if the control changed culling state from true to false, mark it.
+  const bool cullingChanged = m_isCulled != culled;
+
+  if (cullingChanged || animated)
+  {
+    m_isCulled = false; // set to false so MarkDirtyRegion() isn't a no-op
     MarkDirtyRegion();
+  }
+  m_isCulled = culled;
 
   if (IsVisible())
   {
-    m_cachedTransform = g_graphicsContext.AddTransform(m_transform);
+    m_cachedTransform = CServiceBroker::GetWinSystem()->GetGfxContext().AddTransform(m_transform);
     if (m_hasCamera)
-      g_graphicsContext.SetCameraPosition(m_camera);
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetCameraPosition(m_camera);
 
     Process(currentTime, dirtyregions);
     m_bInvalidated = false;
@@ -150,8 +158,8 @@ void CGUIControl::DoProcess(unsigned int currentTime, CDirtyRegionList &dirtyreg
     }
 
     if (m_hasCamera)
-      g_graphicsContext.RestoreCameraPosition();
-    g_graphicsContext.RemoveTransform();
+      CServiceBroker::GetWinSystem()->GetGfxContext().RestoreCameraPosition();
+    CServiceBroker::GetWinSystem()->GetGfxContext().RemoveTransform();
   }
 
   UpdateControlStats();
@@ -160,14 +168,14 @@ void CGUIControl::DoProcess(unsigned int currentTime, CDirtyRegionList &dirtyreg
 
   if (changed)
   {
-    dirtyregions.push_back(CDirtyRegion(dirtyRegion));
+    dirtyregions.emplace_back(dirtyRegion);
   }
 }
 
 void CGUIControl::Process(unsigned int currentTime, CDirtyRegionList &dirtyregions)
 {
   // update our render region
-  m_renderRegion = g_graphicsContext.generateAABB(CalcRenderRegion());
+  m_renderRegion = CServiceBroker::GetWinSystem()->GetGfxContext().GenerateAABB(CalcRenderRegion());
   m_hasProcessed = true;
 }
 
@@ -177,24 +185,30 @@ void CGUIControl::Process(unsigned int currentTime, CDirtyRegionList &dirtyregio
 // 3. reset the animation transform
 void CGUIControl::DoRender()
 {
-  if (IsVisible())
-  {
-    bool hasStereo = m_stereo != 0.0
-                  && g_graphicsContext.GetStereoMode() != RENDER_STEREO_MODE_MONO
-                  && g_graphicsContext.GetStereoMode() != RENDER_STEREO_MODE_OFF;
+  if (IsControlRenderable() &&
+      !m_renderRegion.Intersects(CServiceBroker::GetWinSystem()->GetGfxContext().GetScissors()))
+    return;
 
-    g_graphicsContext.SetTransform(m_cachedTransform);
+  if (IsVisible() && !m_isCulled)
+  {
+    bool hasStereo =
+        m_stereo != 0.0f &&
+        CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoMode() != RenderStereoMode::MONO &&
+        CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoMode() != RenderStereoMode::OFF;
+
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetTransform(m_cachedTransform);
     if (m_hasCamera)
-      g_graphicsContext.SetCameraPosition(m_camera);
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetCameraPosition(m_camera);
     if (hasStereo)
-      g_graphicsContext.SetStereoFactor(m_stereo);
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetStereoFactor(m_stereo);
 
     GUIPROFILER_RENDER_BEGIN(this);
 
     if (m_hitColor != 0xffffffff)
     {
-      color_t color = g_graphicsContext.MergeAlpha(m_hitColor);
-      CGUITexture::DrawQuad(g_graphicsContext.generateAABB(m_hitRect), color);
+      KODI::UTILS::COLOR::Color color =
+          CServiceBroker::GetWinSystem()->GetGfxContext().MergeAlpha(m_hitColor);
+      CGUITexture::DrawQuad(CServiceBroker::GetWinSystem()->GetGfxContext().GenerateAABB(m_hitRect), color);
     }
 
     Render();
@@ -202,10 +216,10 @@ void CGUIControl::DoRender()
     GUIPROFILER_RENDER_END(this);
 
     if (hasStereo)
-      g_graphicsContext.RestoreStereoFactor();
+      CServiceBroker::GetWinSystem()->GetGfxContext().RestoreStereoFactor();
     if (m_hasCamera)
-      g_graphicsContext.RestoreCameraPosition();
-    g_graphicsContext.RemoveTransform();
+      CServiceBroker::GetWinSystem()->GetGfxContext().RestoreCameraPosition();
+    CServiceBroker::GetWinSystem()->GetGfxContext().RemoveTransform();
   }
 }
 
@@ -305,10 +319,10 @@ void CGUIControl::OnPrevControl()
 
 bool CGUIControl::SendWindowMessage(CGUIMessage &message) const
 {
-  CGUIWindow *pWindow = g_windowManager.GetWindow(GetParentID());
+  CGUIWindow *pWindow = CServiceBroker::GetGUI()->GetWindowManager().GetWindow(GetParentID());
   if (pWindow)
     return pWindow->OnMessage(message);
-  return g_windowManager.SendMessage(message);
+  return CServiceBroker::GetGUI()->GetWindowManager().SendMessage(message);
 }
 
 int CGUIControl::GetID(void) const
@@ -346,8 +360,9 @@ bool CGUIControl::OnMessage(CGUIMessage& message)
       // if control is disabled then move 2 the next control
       if ( !CanFocus() )
       {
-        CLog::Log(LOGERROR, "Control %u in window %u has been asked to focus, "
-                            "but it can't",
+        CLog::Log(LOGERROR,
+                  "Control {} in window {} has been asked to focus, "
+                  "but it can't",
                   GetID(), GetParentID());
         return false;
       }
@@ -407,7 +422,8 @@ bool CGUIControl::CanFocus() const
 
 bool CGUIControl::IsVisible() const
 {
-  if (m_forceHidden) return false;
+  if (m_forceHidden)
+    return false;
   return m_visible == VISIBLE;
 }
 
@@ -432,7 +448,7 @@ void CGUIControl::SetEnableCondition(const std::string &expression)
   else if (expression == "false")
     m_enabled = false;
   else
-    m_enableCondition = g_infoManager.Register(expression, GetParentID());
+    m_enableCondition = CServiceBroker::GetGUI()->GetInfoManager().Register(expression, GetParentID());
 }
 
 void CGUIControl::SetPosition(float posX, float posY)
@@ -449,7 +465,7 @@ void CGUIControl::SetPosition(float posX, float posY)
   }
 }
 
-bool CGUIControl::SetColorDiffuse(const CGUIInfoColor &color)
+bool CGUIControl::SetColorDiffuse(const GUIINFO::CGUIInfoColor &color)
 {
   bool changed = m_diffuseColor != color;
   m_diffuseColor = color;
@@ -476,8 +492,16 @@ float CGUIControl::GetHeight() const
   return m_height;
 }
 
+void CGUIControl::AssignDepth()
+{
+  m_cachedTransform.depth = CServiceBroker::GetWinSystem()->GetGfxContext().GetDepth();
+}
+
 void CGUIControl::MarkDirtyRegion(const unsigned int dirtyState)
 {
+  // if the control is culled, bail
+  if (dirtyState == DIRTY_STATE_CONTROL && m_isCulled)
+    return;
   if (!m_controlDirtyState && m_parentControl)
     m_parentControl->MarkDirtyRegion(DIRTY_STATE_CHILD);
 
@@ -533,7 +557,7 @@ void CGUIControl::SetVisible(bool bVisible, bool setVisState)
      //!       otherwise we just set m_forceHidden
     GUIVISIBLE visible;
     if (m_visibleCondition)
-      visible = m_visibleCondition->Get() ? VISIBLE : HIDDEN;
+      visible = m_visibleCondition->Get(INFO::DEFAULT_CONTEXT) ? VISIBLE : HIDDEN;
     else
       visible = VISIBLE;
     if (visible != m_visible)
@@ -553,7 +577,7 @@ void CGUIControl::SetVisible(bool bVisible, bool setVisState)
   { // reset any visible animations that are in process
     if (IsAnimating(ANIM_TYPE_VISIBLE))
     {
-//        CLog::Log(LOGDEBUG, "Resetting visible animation on control %i (we are %s)", m_controlID, m_visible ? "visible" : "hidden");
+      //        CLog::Log(LOGDEBUG, "Resetting visible animation on control {} (we are {})", m_controlID, m_visible ? "visible" : "hidden");
       CAnimation *visibleAnim = GetAnimation(ANIM_TYPE_VISIBLE);
       if (visibleAnim) visibleAnim->ResetAnimation();
     }
@@ -565,14 +589,14 @@ bool CGUIControl::HitTest(const CPoint &point) const
   return m_hitRect.PtInRect(point);
 }
 
-EVENT_RESULT CGUIControl::SendMouseEvent(const CPoint &point, const CMouseEvent &event)
+EVENT_RESULT CGUIControl::SendMouseEvent(const CPoint& point, const MOUSE::CMouseEvent& event)
 {
   CPoint childPoint(point);
   m_transform.InverseTransformPosition(childPoint.x, childPoint.y);
   if (!CanFocusFromPoint(childPoint))
     return EVENT_RESULT_UNHANDLED;
 
-  bool handled = OnMouseOver(childPoint);
+  bool handled = event.m_id != ACTION_MOUSE_MOVE || OnMouseOver(childPoint);
   EVENT_RESULT ret = OnMouseEvent(childPoint, event);
   if (ret)
     return ret;
@@ -598,15 +622,15 @@ void CGUIControl::UpdateVisibility(const CGUIListItem *item)
   if (m_visibleCondition)
   {
     bool bWasVisible = m_visibleFromSkinCondition;
-    m_visibleFromSkinCondition = m_visibleCondition->Get(item);
+    m_visibleFromSkinCondition = m_visibleCondition->Get(INFO::DEFAULT_CONTEXT, item);
     if (!bWasVisible && m_visibleFromSkinCondition)
     { // automatic change of visibility - queue the in effect
-  //    CLog::Log(LOGDEBUG, "Visibility changed to visible for control id %i", m_controlID);
+      //    CLog::Log(LOGDEBUG, "Visibility changed to visible for control id {}", m_controlID);
       QueueAnimation(ANIM_TYPE_VISIBLE);
     }
     else if (bWasVisible && !m_visibleFromSkinCondition)
     { // automatic change of visibility - do the out effect
-  //    CLog::Log(LOGDEBUG, "Visibility changed to hidden for control id %i", m_controlID);
+      //    CLog::Log(LOGDEBUG, "Visibility changed to hidden for control id {}", m_controlID);
       QueueAnimation(ANIM_TYPE_HIDDEN);
     }
   }
@@ -621,31 +645,31 @@ void CGUIControl::UpdateVisibility(const CGUIListItem *item)
   // this may need to be reviewed at a later date
   bool enabled = m_enabled;
   if (m_enableCondition)
-    m_enabled = m_enableCondition->Get(item);
+    m_enabled = m_enableCondition->Get(INFO::DEFAULT_CONTEXT, item);
 
   if (m_enabled != enabled)
     MarkDirtyRegion();
 
-  m_allowHiddenFocus.Update(item);
-  if (UpdateColors())
+  m_allowHiddenFocus.Update(INFO::DEFAULT_CONTEXT, item);
+  if (UpdateColors(item))
     MarkDirtyRegion();
   // and finally, update our control information (if not pushed)
   if (!m_pushedUpdates)
     UpdateInfo(item);
 }
 
-bool CGUIControl::UpdateColors()
+bool CGUIControl::UpdateColors(const CGUIListItem* item)
 {
-  return m_diffuseColor.Update();
+  return m_diffuseColor.Update(item);
 }
 
 void CGUIControl::SetInitialVisibility()
 {
   if (m_visibleCondition)
   {
-    m_visibleFromSkinCondition = m_visibleCondition->Get();
+    m_visibleFromSkinCondition = m_visibleCondition->Get(INFO::DEFAULT_CONTEXT);
     m_visible = m_visibleFromSkinCondition ? VISIBLE : HIDDEN;
-  //  CLog::Log(LOGDEBUG, "Set initial visibility for control %i: %s", m_controlID, m_visible == VISIBLE ? "visible" : "hidden");
+    //  CLog::Log(LOGDEBUG, "Set initial visibility for control {}: {}", m_controlID, m_visible == VISIBLE ? "visible" : "hidden");
   }
   else if (m_visible == DELAYED)
     m_visible = VISIBLE;
@@ -659,9 +683,9 @@ void CGUIControl::SetInitialVisibility()
   // and check for conditional enabling - note this overrides SetEnabled() from the code currently
   // this may need to be reviewed at a later date
   if (m_enableCondition)
-    m_enabled = m_enableCondition->Get();
-  m_allowHiddenFocus.Update();
-  UpdateColors();
+    m_enabled = m_enableCondition->Get(INFO::DEFAULT_CONTEXT);
+  m_allowHiddenFocus.Update(INFO::DEFAULT_CONTEXT);
+  UpdateColors(nullptr);
 
   MarkDirtyRegion();
 }
@@ -673,7 +697,7 @@ void CGUIControl::SetVisibleCondition(const std::string &expression, const std::
   else if (expression == "false")
     m_visible = HIDDEN;
   else  // register with the infomanager for updates
-    m_visibleCondition = g_infoManager.Register(expression, GetParentID());
+    m_visibleCondition = CServiceBroker::GetGUI()->GetInfoManager().Register(expression, GetParentID());
   m_allowHiddenFocus.Parse(allowHiddenFocus, GetParentID());
 }
 
@@ -859,7 +883,7 @@ bool CGUIControl::Animate(unsigned int currentTime)
     // debug stuff
     //if (anim.GetProcess() != ANIM_PROCESS_NONE && IsVisible())
     //{
-    //  CLog::Log(LOGDEBUG, "Animating control %d", m_controlID);
+    //  CLog::Log(LOGDEBUG, "Animating control {}", m_controlID);
     //}
   }
 
@@ -943,7 +967,25 @@ void CGUIControl::UpdateControlStats()
   }
 }
 
-void CGUIControl::SetHitRect(const CRect &rect, const color_t &color)
+bool CGUIControl::IsControlRenderable()
+{
+  switch (ControlType)
+  {
+    case GUICONTAINER_EPGGRID:
+    case GUICONTAINER_FIXEDLIST:
+    case GUICONTAINER_LIST:
+    case GUICONTAINER_PANEL:
+    case GUICONTAINER_WRAPLIST:
+    case GUICONTROL_GROUP:
+    case GUICONTROL_GROUPLIST:
+    case GUICONTROL_LISTGROUP:
+      return false;
+    default:
+      return true;
+  }
+}
+
+void CGUIControl::SetHitRect(const CRect& rect, const KODI::UTILS::COLOR::Color& color)
 {
   m_hitRect = rect;
   m_hitColor = color;

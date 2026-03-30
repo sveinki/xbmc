@@ -1,36 +1,27 @@
-#pragma once
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
+
+#include "settings/ISubSettings.h"
+#include "settings/lib/ISettingCallback.h"
+#include "threads/CriticalSection.h"
+#include "utils/Observer.h"
+#include "windowing/Resolution.h"
 
 #include <map>
 #include <set>
 #include <utility>
 #include <vector>
 
-#include "guilib/Resolution.h"
-#include "settings/lib/ISettingCallback.h"
-#include "settings/lib/ISubSettings.h"
-#include "threads/CriticalSection.h"
-#include "utils/Observer.h"
-
 class TiXmlNode;
+struct IntegerSettingOption;
+struct StringSettingOption;
 
 class CDisplaySettings : public ISettingCallback, public ISubSettings,
                          public Observable
@@ -42,9 +33,12 @@ public:
   bool Save(TiXmlNode *settings) const override;
   void Clear() override;
 
-  void OnSettingAction(std::shared_ptr<const CSetting> setting) override;
-  bool OnSettingChanging(std::shared_ptr<const CSetting> setting) override;
-  bool OnSettingUpdate(std::shared_ptr<CSetting> setting, const char *oldSettingId, const TiXmlNode *oldSettingNode) override;
+  void OnSettingAction(const std::shared_ptr<const CSetting>& setting) override;
+  bool OnSettingChanging(const std::shared_ptr<const CSetting>& setting) override;
+  bool OnSettingUpdate(const std::shared_ptr<CSetting>& setting,
+                       const char* oldSettingId,
+                       const TiXmlNode* oldSettingNode) override;
+  void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
 
   /*!
    \brief Returns the currently active resolution
@@ -77,9 +71,18 @@ public:
 
   const RESOLUTION_INFO& GetCurrentResolutionInfo() const { return GetResolutionInfo(m_currentResolution); }
   RESOLUTION_INFO& GetCurrentResolutionInfo() { return GetResolutionInfo(m_currentResolution); }
+  RESOLUTION GetResFromString(const std::string& strResolution) const
+  {
+    return GetResolutionFromString(strResolution);
+  }
+  std::string GetStringFromRes(const RESOLUTION resolution, float refreshrate = 0.0f) const
+  {
+    return GetStringFromResolution(resolution, refreshrate);
+  }
 
   void ApplyCalibrations();
   void UpdateCalibrations();
+  void ClearCalibrations();
   void ClearCustomResolutions();
 
   float GetZoomAmount() const { return m_zoomAmount; }
@@ -90,24 +93,51 @@ public:
   void SetVerticalShift(float verticalShift) { m_verticalShift = verticalShift; }
   bool IsNonLinearStretched() const { return m_nonLinearStretched; }
   void SetNonLinearStretched(bool nonLinearStretch) { m_nonLinearStretched = nonLinearStretch; }
+  void SetMonitor(const std::string& monitor);
 
-  static void SettingOptionsRefreshChangeDelaysFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsRefreshRatesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, std::string> > &list, std::string &current, void *data);
-  static void SettingOptionsResolutionsFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsScreensFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsStereoscopicModesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsPreferredStereoscopicViewModesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsMonitorsFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, std::string> > &list, std::string &current, void *data);
-  static void SettingOptionsCmsModesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsCmsWhitepointsFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsCmsPrimariesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  static void SettingOptionsCmsGammaModesFiller(std::shared_ptr<const CSetting> setting, std::vector< std::pair<std::string, int> > &list, int &current, void *data);
-  
+  static void SettingOptionsModesFiller(const std::shared_ptr<const CSetting>& setting,
+                                        std::vector<StringSettingOption>& list,
+                                        std::string& current);
+  static void SettingOptionsRefreshChangeDelaysFiller(
+      const std::shared_ptr<const CSetting>& setting,
+      std::vector<IntegerSettingOption>& list,
+      int& current);
+  static void SettingOptionsRefreshRatesFiller(const std::shared_ptr<const CSetting>& setting,
+                                               std::vector<StringSettingOption>& list,
+                                               std::string& current);
+  static void SettingOptionsResolutionsFiller(const std::shared_ptr<const CSetting>& setting,
+                                              std::vector<IntegerSettingOption>& list,
+                                              int& current);
+  static void SettingOptionsDispModeFiller(const std::shared_ptr<const CSetting>& setting,
+                                           std::vector<IntegerSettingOption>& list,
+                                           int& current);
+  static void SettingOptionsStereoscopicModesFiller(const std::shared_ptr<const CSetting>& setting,
+                                                    std::vector<IntegerSettingOption>& list,
+                                                    int& current);
+  static void SettingOptionsPreferredStereoscopicViewModesFiller(
+      const std::shared_ptr<const CSetting>& setting,
+      std::vector<IntegerSettingOption>& list,
+      int& current);
+  static void SettingOptionsMonitorsFiller(const std::shared_ptr<const CSetting>& setting,
+                                           std::vector<StringSettingOption>& list,
+                                           std::string& current);
+  static void SettingOptionsCmsModesFiller(const std::shared_ptr<const CSetting>& setting,
+                                           std::vector<IntegerSettingOption>& list,
+                                           int& current);
+  static void SettingOptionsCmsWhitepointsFiller(const std::shared_ptr<const CSetting>& setting,
+                                                 std::vector<IntegerSettingOption>& list,
+                                                 int& current);
+  static void SettingOptionsCmsPrimariesFiller(const std::shared_ptr<const CSetting>& setting,
+                                               std::vector<IntegerSettingOption>& list,
+                                               int& current);
+  static void SettingOptionsCmsGammaModesFiller(const std::shared_ptr<const CSetting>& setting,
+                                                std::vector<IntegerSettingOption>& list,
+                                                int& current);
 
 protected:
   CDisplaySettings();
-  CDisplaySettings(const CDisplaySettings&);
-  CDisplaySettings& operator=(CDisplaySettings const&);
+  CDisplaySettings(const CDisplaySettings&) = delete;
+  CDisplaySettings& operator=(CDisplaySettings const&) = delete;
   ~CDisplaySettings() override;
 
   DisplayMode GetCurrentDisplayMode() const;
@@ -116,21 +146,21 @@ protected:
   static std::string GetStringFromResolution(RESOLUTION resolution, float refreshrate = 0.0f);
   static RESOLUTION GetResolutionForScreen();
 
-  static RESOLUTION FindBestMatchingResolution(const std::map<RESOLUTION, RESOLUTION_INFO> &resolutionInfos, int screen, int width, int height, float refreshrate, unsigned int flags);
+  static RESOLUTION FindBestMatchingResolution(const std::map<RESOLUTION, RESOLUTION_INFO> &resolutionInfos, int width, int height, float refreshrate, unsigned int flags);
 
 private:
   // holds the real gui resolution
   RESOLUTION m_currentResolution;
 
-  typedef std::vector<RESOLUTION_INFO> ResolutionInfos;
+  using ResolutionInfos = std::vector<RESOLUTION_INFO>;
   ResolutionInfos m_resolutions;
   ResolutionInfos m_calibrations;
 
-  float m_zoomAmount;         // current zoom amount
-  float m_pixelRatio;         // current pixel ratio
-  float m_verticalShift;      // current vertical shift
-  bool  m_nonLinearStretched;   // current non-linear stretch
+  float m_zoomAmount{1.0f}; // current zoom amount
+  float m_pixelRatio{1.0f}; // current pixel ratio
+  float m_verticalShift{0.0f}; // current vertical shift
+  bool m_nonLinearStretched{false}; // current non-linear stretch
 
-  bool m_resolutionChangeAborted;
-  CCriticalSection m_critical;
+  bool m_resolutionChangeAborted{false};
+  mutable CCriticalSection m_critical;
 };

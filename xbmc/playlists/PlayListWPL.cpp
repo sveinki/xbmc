@@ -1,37 +1,26 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#include "PlayListWPL.h"
+
+#include "FileItem.h"
+#include "Util.h"
+#include "filesystem/File.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+#include "utils/XBMCTinyXML2.h"
+#include "utils/XMLUtils.h"
+#include "utils/log.h"
 
 #include <iostream>
 #include <string>
 
-#include "PlayListWPL.h"
-#include "Util.h"
-#include "utils/XBMCTinyXML.h"
-#include "filesystem/File.h"
-#include "utils/log.h"
-#include "utils/StringUtils.h"
-#include "utils/URIUtils.h"
-#include "utils/XMLUtils.h"
-
 using namespace XFILE;
-using namespace PLAYLIST;
 
 /* ------------------------ example wpl playlist file ---------------------------------
   <?wpl version="1.0"?>
@@ -52,6 +41,9 @@ using namespace PLAYLIST;
 ------------------------ end of example wpl playlist file ---------------------------------*/
 //Note: File is utf-8 encoded by default
 
+namespace KODI::PLAYLIST
+{
+
 CPlayListWPL::CPlayListWPL(void) = default;
 
 CPlayListWPL::~CPlayListWPL(void) = default;
@@ -59,35 +51,42 @@ CPlayListWPL::~CPlayListWPL(void) = default;
 
 bool CPlayListWPL::LoadData(std::istream& stream)
 {
-  CXBMCTinyXML xmlDoc;
+  CXBMCTinyXML2 xmlDoc;
 
-  stream >> xmlDoc;
+  std::string wplStream(std::istreambuf_iterator<char>(stream), {});
+  xmlDoc.Parse(wplStream);
+
   if (xmlDoc.Error())
   {
-    CLog::Log(LOGERROR, "Unable to parse B4S info Error: %s", xmlDoc.ErrorDesc());
+    CLog::Log(LOGERROR, "Unable to parse WPL info Error: {}", xmlDoc.ErrorStr());
     return false;
   }
 
-  TiXmlElement* pRootElement = xmlDoc.RootElement();
-  if (!pRootElement ) return false;
+  auto* pRootElement = xmlDoc.RootElement();
+  if (!pRootElement)
+    return false;
 
-  TiXmlElement* pHeadElement = pRootElement->FirstChildElement("head");
+  auto* pHeadElement = pRootElement->FirstChildElement("head");
   if (pHeadElement )
   {
-    TiXmlElement* pTitelElement = pHeadElement->FirstChildElement("title");
+    auto* pTitelElement = pHeadElement->FirstChildElement("title");
     if (pTitelElement )
       m_strPlayListName = pTitelElement->Value();
   }
 
-  TiXmlElement* pBodyElement = pRootElement->FirstChildElement("body");
-  if (!pBodyElement ) return false;
+  auto* pBodyElement = pRootElement->FirstChildElement("body");
+  if (!pBodyElement)
+    return false;
 
-  TiXmlElement* pSeqElement = pBodyElement->FirstChildElement("seq");
-  if (!pSeqElement ) return false;
+  auto* pSeqElement = pBodyElement->FirstChildElement("seq");
+  if (!pSeqElement)
+    return false;
 
-  TiXmlElement* pMediaElement = pSeqElement->FirstChildElement("media");
+  auto* pMediaElement = pSeqElement->FirstChildElement("media");
 
-  if (!pMediaElement) return false;
+  if (!pMediaElement)
+    return false;
+
   while (pMediaElement)
   {
     std::string strFileName = XMLUtils::GetAttribute(pMediaElement, "src");
@@ -107,28 +106,31 @@ bool CPlayListWPL::LoadData(std::istream& stream)
 
 void CPlayListWPL::Save(const std::string& strFileName) const
 {
-  if (!m_vecItems.size()) return ;
+  if (m_vecItems.empty())
+    return;
   std::string strPlaylist = CUtil::MakeLegalPath(strFileName);
   CFile file;
   if (!file.OpenForWrite(strPlaylist, true))
   {
-    CLog::Log(LOGERROR, "Could not save WPL playlist: [%s]", strPlaylist.c_str());
+    CLog::Log(LOGERROR, "Could not save WPL playlist: [{}]", strPlaylist);
     return ;
   }
   std::string write;
-  write += StringUtils::Format("<?wpl version=%c1.0%c>\n", 34, 34);
+  write += StringUtils::Format("<?wpl version={}1.0{}>\n", 34, 34);
   write += StringUtils::Format("<smil>\n");
   write += StringUtils::Format("    <head>\n");
-  write += StringUtils::Format("        <meta name=%cGenerator%c content=%cMicrosoft Windows Media Player -- 10.0.0.3646%c/>\n", 34, 34, 34, 34);
+  write += StringUtils::Format("        <meta name={}Generator{} content={}Microsoft Windows Media "
+                               "Player -- 10.0.0.3646{}/>\n",
+                               34, 34, 34, 34);
   write += StringUtils::Format("        <author/>\n");
-  write += StringUtils::Format("        <title>%s</title>\n", m_strPlayListName.c_str());
+  write += StringUtils::Format("        <title>{}</title>\n", m_strPlayListName.c_str());
   write += StringUtils::Format("    </head>\n");
   write += StringUtils::Format("    <body>\n");
   write += StringUtils::Format("        <seq>\n");
   for (int i = 0; i < (int)m_vecItems.size(); ++i)
   {
     CFileItemPtr item = m_vecItems[i];
-    write += StringUtils::Format("            <media src=%c%s%c/>", 34, item->GetPath().c_str(), 34);
+    write += StringUtils::Format("            <media src={}{}{}/>", 34, item->GetPath(), 34);
   }
   write += StringUtils::Format("        </seq>\n");
   write += StringUtils::Format("    </body>\n");
@@ -136,3 +138,5 @@ void CPlayListWPL::Save(const std::string& strFileName) const
   file.Write(write.c_str(), write.size());
   file.Close();
 }
+
+} // namespace KODI::PLAYLIST

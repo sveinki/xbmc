@@ -1,76 +1,169 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDDemux.h"
 
-std::string CDemuxStreamAudio::GetStreamType()
+#include "ServiceBroker.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
+#include "utils/StreamUtils.h"
+#include "utils/StringUtils.h"
+
+std::string CDemuxStreamAudio::GetStreamType() const
 {
-  char sInfo[64] = {0};
-
-  if (codec == AV_CODEC_ID_AC3) strcpy(sInfo, "AC3 ");
-  else if (codec == AV_CODEC_ID_DTS)
+  std::string strInfo;
+  switch (codec)
   {
-#ifdef FF_PROFILE_DTS_HD_MA
-    if (profile == FF_PROFILE_DTS_HD_MA)
-      strcpy(sInfo, "DTS-HD MA ");
-    else if (profile == FF_PROFILE_DTS_HD_HRA)
-      strcpy(sInfo, "DTS-HD HRA ");
-    else
-#endif
-      strcpy(sInfo, "DTS ");
+    case AV_CODEC_ID_AC3:
+      strInfo = "AC3";
+      break;
+    case AV_CODEC_ID_AC4:
+      strInfo = "AC4";
+      break;
+    case AV_CODEC_ID_EAC3:
+    {
+      if (profile == AV_PROFILE_EAC3_DDP_ATMOS)
+        strInfo = "DD+ ATMOS";
+      else
+        strInfo = "DD+";
+      break;
+    }
+    case AV_CODEC_ID_DTS:
+    {
+      switch (profile)
+      {
+        case AV_PROFILE_DTS_96_24:
+          strInfo = "DTS 96/24";
+          break;
+        case AV_PROFILE_DTS_ES:
+          strInfo = "DTS ES";
+          break;
+        case AV_PROFILE_DTS_EXPRESS:
+          strInfo = "DTS EXPRESS";
+          break;
+        case AV_PROFILE_DTS_HD_MA:
+          strInfo = "DTS-HD MA";
+          break;
+        case AV_PROFILE_DTS_HD_HRA:
+          strInfo = "DTS-HD HRA";
+          break;
+        case AV_PROFILE_DTS_HD_MA_X:
+          strInfo = "DTS-HD MA X";
+          break;
+        case AV_PROFILE_DTS_HD_MA_X_IMAX:
+          strInfo = "DTS-HD MA X (IMAX)";
+          break;
+        default:
+          strInfo = "DTS";
+          break;
+      }
+      break;
+    }
+    case AV_CODEC_ID_MP2:
+      strInfo = "MP2";
+      break;
+    case AV_CODEC_ID_MP3:
+      strInfo = "MP3";
+      break;
+    case AV_CODEC_ID_TRUEHD:
+      if (profile == AV_PROFILE_TRUEHD_ATMOS)
+        strInfo = "TrueHD ATMOS";
+      else
+        strInfo = "TrueHD";
+      break;
+    case AV_CODEC_ID_AAC:
+    {
+      switch (profile)
+      {
+        case AV_PROFILE_AAC_LOW:
+        case AV_PROFILE_MPEG2_AAC_LOW:
+          strInfo = "AAC-LC";
+          break;
+        case AV_PROFILE_AAC_HE:
+        case AV_PROFILE_MPEG2_AAC_HE:
+          strInfo = "HE-AAC";
+          break;
+        case AV_PROFILE_AAC_HE_V2:
+          strInfo = "HE-AACv2";
+          break;
+        case AV_PROFILE_AAC_SSR:
+          strInfo = "AAC-SSR";
+          break;
+        case AV_PROFILE_AAC_LTP:
+          strInfo = "AAC-LTP";
+          break;
+        default:
+        {
+          // Try check by codec full string according to RFC 6381
+          if (codecName == "mp4a.40.2" || codecName == "mp4a.40.17")
+            strInfo = "AAC-LC";
+          else if (codecName == "mp4a.40.3")
+            strInfo = "AAC-SSR";
+          else if (codecName == "mp4a.40.4" || codecName == "mp4a.40.19")
+            strInfo = "AAC-LTP";
+          else if (codecName == "mp4a.40.5")
+            strInfo = "HE-AAC";
+          else if (codecName == "mp4a.40.29")
+            strInfo = "HE-AACv2";
+          else
+            strInfo = "AAC";
+          break;
+        }
+      }
+      break;
+    }
+    case AV_CODEC_ID_ALAC:
+      strInfo = "ALAC";
+      break;
+    case AV_CODEC_ID_FLAC:
+      strInfo = "FLAC";
+      break;
+    case AV_CODEC_ID_OPUS:
+      strInfo = "Opus";
+      break;
+    case AV_CODEC_ID_VORBIS:
+      strInfo = "Vorbis";
+      break;
+    default:
+      break;
   }
-  else if (codec == AV_CODEC_ID_MP2) strcpy(sInfo, "MP2 ");
-  else if (codec == AV_CODEC_ID_TRUEHD) strcpy(sInfo, "Dolby TrueHD ");
-  else strcpy(sInfo, "");
 
-  if (iChannels == 1) strcat(sInfo, "Mono");
-  else if (iChannels == 2) strcat(sInfo, "Stereo");
-  else if (iChannels == 6) strcat(sInfo, "5.1");
-  else if (iChannels == 8) strcat(sInfo, "7.1");
-  else if (iChannels != 0)
-  {
-    char temp[32];
-    sprintf(temp, " %d%s", iChannels, "-chs");
-    strcat(sInfo, temp);
-  }
-  return sInfo;
+  if (codec >= AV_CODEC_ID_PCM_S16LE && codec <= AV_CODEC_ID_PCM_SGA)
+    strInfo = "PCM";
+
+  if (strInfo.empty())
+    strInfo = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(13205); // "Unknown"
+
+  strInfo.append(" ");
+  strInfo.append(StreamUtils::GetLayout(iChannels));
+
+  return strInfo;
 }
 
-int CDVDDemux::GetNrOfStreams(StreamType streamType)
+int CDVDDemux::GetNrOfStreams(StreamType streamType) const
 {
   int iCounter = 0;
 
   for (auto pStream : GetStreams())
   {
-    if (pStream && pStream->type == streamType) iCounter++;
+    if (pStream && pStream->type == streamType)
+      iCounter++;
   }
 
   return iCounter;
 }
 
-int CDVDDemux::GetNrOfSubtitleStreams()
+int CDVDDemux::GetNrOfSubtitleStreams() const
 {
-  return GetNrOfStreams(STREAM_SUBTITLE);
+  return GetNrOfStreams(StreamType::SUBTITLE);
 }
 
 std::string CDemuxStream::GetStreamName()
 {
-  return "";
+  return name;
 }

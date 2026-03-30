@@ -1,34 +1,23 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialog.h"
-#include "GUIWindowManager.h"
+
+#include "GUIComponent.h"
 #include "GUIControlFactory.h"
 #include "GUILabelControl.h"
+#include "GUIWindowManager.h"
+#include "ServiceBroker.h"
+#include "input/actions/Action.h"
+#include "messaging/ApplicationMessenger.h"
 #include "threads/SingleLock.h"
 #include "utils/TimeUtils.h"
-#include "Application.h"
-#include "messaging/ApplicationMessenger.h"
-#include "input/Key.h"
-
-using namespace KODI::MESSAGING;
+#include "windowing/WinSystem.h"
 
 CGUIDialog::CGUIDialog(int id, const std::string &xmlFile, DialogModalityType modalityType /* = DialogModalityType::MODAL */)
     : CGUIWindow(id, xmlFile)
@@ -47,16 +36,7 @@ CGUIDialog::~CGUIDialog(void) = default;
 
 bool CGUIDialog::Load(TiXmlElement* pRootElement)
 {
-  bool retVal = CGUIWindow::Load(pRootElement);
-
-  if (retVal && IsCustom())
-  {
-    // custom dialog's modality type is modeless if visible condition is specified.
-    if (m_visibleCondition)
-      m_modalityType = DialogModalityType::MODELESS;
-  }
-
-  return retVal;
+  return CGUIWindow::Load(pRootElement);
 }
 
 void CGUIDialog::OnWindowLoaded()
@@ -64,7 +44,7 @@ void CGUIDialog::OnWindowLoaded()
   CGUIWindow::OnWindowLoaded();
 
   // Clip labels to extents
-  if (m_children.size())
+  if (!m_children.empty())
   {
     CGUIControl* pBase = m_children[0];
 
@@ -123,7 +103,7 @@ void CGUIDialog::OnDeinitWindow(int nextWindowID)
 {
   if (m_active)
   {
-    g_windowManager.RemoveDialog(GetID());
+    CServiceBroker::GetGUI()->GetWindowManager().RemoveDialog(GetID());
     m_autoClosing = false;
   }
   CGUIWindow::OnDeinitWindow(nextWindowID);
@@ -135,7 +115,7 @@ void CGUIDialog::DoProcess(unsigned int currentTime, CDirtyRegionList &dirtyregi
 
   // if we were running but now we're not, mark us dirty
   if (!m_active && m_wasRunning)
-    dirtyregions.push_back(CDirtyRegion(m_renderRegion));
+    dirtyregions.emplace_back(m_renderRegion);
 
   if (m_active)
     CGUIWindow::DoProcess(currentTime, dirtyregions);
@@ -147,12 +127,12 @@ void CGUIDialog::UpdateVisibility()
 {
   if (m_visibleCondition)
   {
-    if (m_visibleCondition->Get())
+    if (m_visibleCondition->Get(INFO::DEFAULT_CONTEXT))
       Open();
     else
       Close();
   }
-  
+
   if (m_autoClosing)
   { // check if our timer is running
     if (!m_showStartTime)
@@ -171,18 +151,9 @@ void CGUIDialog::UpdateVisibility()
   }
 }
 
-void CGUIDialog::Open_Internal(const std::string &param /* = "" */)
-{
-  CGUIDialog::Open_Internal(m_modalityType != DialogModalityType::MODELESS, param);
-}
-
 void CGUIDialog::Open_Internal(bool bProcessRenderLoop, const std::string &param /* = "" */)
 {
-  // Lock graphic context here as it is sometimes called from non rendering threads
-  // maybe we should have a critical section per window instead??
-  CSingleLock lock(g_graphicsContext);
-
-  if (!g_windowManager.Initialized() ||
+  if (!CServiceBroker::GetGUI()->GetWindowManager().Initialized() ||
       (m_active && !m_closing && !IsAnimating(ANIM_TYPE_WINDOW_CLOSE)))
     return;
 
@@ -191,7 +162,7 @@ void CGUIDialog::Open_Internal(bool bProcessRenderLoop, const std::string &param
   // thread (this should really be handled via a thread message though IMO)
   m_active = true;
   m_closing = false;
-  g_windowManager.RegisterDialog(this);
+  CServiceBroker::GetGUI()->GetWindowManager().RegisterDialog(this);
 
   // active this window
   CGUIMessage msg(GUI_MSG_WINDOW_INIT, 0, 0);
@@ -204,25 +175,31 @@ void CGUIDialog::Open_Internal(bool bProcessRenderLoop, const std::string &param
     if (!m_windowLoaded)
       Close(true);
 
-    lock.Leave();
-
-    while (m_active && !g_application.m_bStop)
+    while (m_active)
     {
-      g_windowManager.ProcessRenderLoop();
+      if (!CServiceBroker::GetGUI()->GetWindowManager().ProcessRenderLoop(false))
+        break;
     }
   }
 }
 
 void CGUIDialog::Open(const std::string &param /* = "" */)
 {
-  if (!g_application.IsCurrentThread())
+  CGUIDialog::Open(m_modalityType != DialogModalityType::MODELESS, param);
+}
+
+
+void CGUIDialog::Open(bool bProcessRenderLoop, const std::string& param /* = "" */)
+{
+  if (!CServiceBroker::GetAppMessenger()->IsProcessThread())
   {
     // make sure graphics lock is not held
-    CSingleExit leaveIt(g_graphicsContext);
-    CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_DIALOG_OPEN, -1, -1, static_cast<void*>(this), param);
+    CSingleExit leaveIt(CServiceBroker::GetWinSystem()->GetGfxContext());
+    CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_DIALOG_OPEN, -1, bProcessRenderLoop,
+                                               static_cast<void*>(this), param);
   }
   else
-    Open_Internal(param);
+    Open_Internal(bProcessRenderLoop, param);
 }
 
 void CGUIDialog::Render()
@@ -259,5 +236,5 @@ void CGUIDialog::CancelAutoClose(void)
 
 void CGUIDialog::ProcessRenderLoop(bool renderOnly)
 {
-  g_windowManager.ProcessRenderLoop(renderOnly);
+  CServiceBroker::GetGUI()->GetWindowManager().ProcessRenderLoop(renderOnly);
 }

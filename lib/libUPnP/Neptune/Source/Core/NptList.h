@@ -109,9 +109,9 @@ public:
     };
 
     // methods
-                 NPT_List<T>();
-                 NPT_List<T>(const NPT_List<T>& list);
-                ~NPT_List<T>();
+    NPT_List();
+    NPT_List(const NPT_List<T>& list);
+    ~NPT_List();
     NPT_Result   Add(const T& data);
     NPT_Result   Insert(const Iterator where, const T& data);
     NPT_Result   Remove(const T& data, bool all=false);
@@ -195,7 +195,7 @@ public:
         NPT_List<T> right;
         NPT_CHECK(Cut(GetItemCount() >> 1, right));
         
-        // Sort ourselves again
+        // sort the left side
         Sort(function);
         
         // sort the right side
@@ -207,8 +207,7 @@ public:
         } else {
             // append right
             right.m_Head->m_Prev = m_Tail;
-            if (m_Tail) m_Tail->m_Next = right.m_Head;
-            if (!m_Head) m_Head = right.m_Head;
+            m_Tail->m_Next = right.m_Head;
             m_Tail = right.m_Tail;
             m_ItemCount += right.m_ItemCount;
             

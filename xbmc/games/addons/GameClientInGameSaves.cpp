@@ -1,30 +1,19 @@
 /*
- *      Copyright (C) 2016-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GameClientInGameSaves.h"
 
 #include "GameClient.h"
 #include "GameClientTranslator.h"
-#include "filesystem/File.h"
+#include "ServiceBroker.h"
 #include "filesystem/Directory.h"
-#include "profiles/ProfilesManager.h"
+#include "filesystem/File.h"
+#include "games/GameServices.h"
 #include "utils/URIUtils.h"
 #include "utils/log.h"
 
@@ -33,13 +22,14 @@
 using namespace KODI;
 using namespace GAME;
 
-#define INGAME_SAVES_DIRECTORY          "InGameSaves"
+#define INGAME_SAVES_DIRECTORY "InGameSaves"
 #define INGAME_SAVES_EXTENSION_SAVE_RAM ".sav"
-#define INGAME_SAVES_EXTENSION_RTC      ".rtc"
+#define INGAME_SAVES_EXTENSION_RTC ".rtc"
 
-CGameClientInGameSaves::CGameClientInGameSaves(CGameClient* addon, const KodiToAddonFuncTable_Game* dllStruct) :
-  m_gameClient(addon),
-  m_dllStruct(dllStruct)
+CGameClientInGameSaves::CGameClientInGameSaves(CGameClient* addon,
+                                               const AddonInstance_Game* dllStruct)
+  : m_gameClient(addon),
+    m_dllStruct(dllStruct)
 {
   assert(m_gameClient != nullptr);
   assert(m_dllStruct != nullptr);
@@ -59,7 +49,9 @@ void CGameClientInGameSaves::Save()
 
 std::string CGameClientInGameSaves::GetPath(GAME_MEMORY memoryType)
 {
-  std::string path = URIUtils::AddFileToFolder(CProfilesManager::GetInstance().GetSavestatesFolder(), INGAME_SAVES_DIRECTORY);
+  const CGameServices& gameServices = CServiceBroker::GetGameServices();
+  std::string path =
+      URIUtils::AddFileToFolder(gameServices.GetSavestatesFolder(), INGAME_SAVES_DIRECTORY);
   if (!XFILE::CDirectory::Exists(path))
     XFILE::CDirectory::Create(path);
 
@@ -70,26 +62,28 @@ std::string CGameClientInGameSaves::GetPath(GAME_MEMORY memoryType)
   // Append file extension
   switch (memoryType)
   {
-  case GAME_MEMORY_SAVE_RAM: return path + INGAME_SAVES_EXTENSION_SAVE_RAM;
-  case GAME_MEMORY_RTC:      return path + INGAME_SAVES_EXTENSION_RTC;
-  default:
-    break;
+    case GAME_MEMORY_SAVE_RAM:
+      return path + INGAME_SAVES_EXTENSION_SAVE_RAM;
+    case GAME_MEMORY_RTC:
+      return path + INGAME_SAVES_EXTENSION_RTC;
+    default:
+      break;
   }
   return std::string();
 }
 
 void CGameClientInGameSaves::Load(GAME_MEMORY memoryType)
 {
-  uint8_t *gameMemory = nullptr;
+  uint8_t* gameMemory = nullptr;
   size_t size = 0;
 
   try
   {
-    m_dllStruct->GetMemory(memoryType, &gameMemory, &size);
+    m_dllStruct->toAddon->GetMemory(m_dllStruct, memoryType, &gameMemory, &size);
   }
   catch (...)
   {
-    CLog::Log(LOGERROR, "GAME: %s: Exception caught in GetMemory()", m_gameClient->ID().c_str());
+    CLog::Log(LOGERROR, "GAME: {}: Exception caught in GetMemory()", m_gameClient->ID());
   }
 
   const std::string path = GetPath(memoryType);
@@ -101,36 +95,40 @@ void CGameClientInGameSaves::Load(GAME_MEMORY memoryType)
       ssize_t read = file.Read(gameMemory, size);
       if (read == static_cast<ssize_t>(size))
       {
-        CLog::Log(LOGINFO, "GAME: In-game saves (%s) loaded from %s", CGameClientTranslator::ToString(memoryType), path.c_str());
+        CLog::Log(LOGINFO, "GAME: In-game saves ({}) loaded from {}",
+                  CGameClientTranslator::ToString(memoryType), path);
       }
       else
       {
-        CLog::Log(LOGERROR, "GAME: Failed to read in-game saves (%s): %ld/%ld bytes read", CGameClientTranslator::ToString(memoryType), read, size);
+        CLog::Log(LOGERROR, "GAME: Failed to read in-game saves ({}): {}/{} bytes read",
+                  CGameClientTranslator::ToString(memoryType), read, size);
       }
     }
     else
     {
-      CLog::Log(LOGERROR, "GAME: Unable to open in-game saves (%s) from file %s", CGameClientTranslator::ToString(memoryType), path.c_str());
+      CLog::Log(LOGERROR, "GAME: Unable to open in-game saves ({}) from file {}",
+                CGameClientTranslator::ToString(memoryType), path);
     }
   }
   else
   {
-    CLog::Log(LOGDEBUG, "GAME: No in-game saves (%s) to load", CGameClientTranslator::ToString(memoryType));
+    CLog::Log(LOGDEBUG, "GAME: No in-game saves ({}) to load",
+              CGameClientTranslator::ToString(memoryType));
   }
 }
 
 void CGameClientInGameSaves::Save(GAME_MEMORY memoryType)
 {
-  uint8_t *gameMemory = nullptr;
+  uint8_t* gameMemory = nullptr;
   size_t size = 0;
 
   try
   {
-    m_dllStruct->GetMemory(memoryType, &gameMemory, &size);
+    m_dllStruct->toAddon->GetMemory(m_dllStruct, memoryType, &gameMemory, &size);
   }
   catch (...)
   {
-    CLog::Log(LOGERROR, "GAME: %s: Exception caught in GetMemory()", m_gameClient->ID().c_str());
+    CLog::Log(LOGERROR, "GAME: {}: Exception caught in GetMemory()", m_gameClient->ID());
   }
 
   if (size > 0)
@@ -144,20 +142,24 @@ void CGameClientInGameSaves::Save(GAME_MEMORY memoryType)
       file.Close();
       if (written == static_cast<ssize_t>(size))
       {
-        CLog::Log(LOGINFO, "GAME: In-game saves (%s) written to %s", CGameClientTranslator::ToString(memoryType), path.c_str());
+        CLog::Log(LOGINFO, "GAME: In-game saves ({}) written to {}",
+                  CGameClientTranslator::ToString(memoryType), path);
       }
       else
       {
-        CLog::Log(LOGERROR, "GAME: Failed to write in-game saves (%s): %ld/%ld bytes written", CGameClientTranslator::ToString(memoryType), written, size);
+        CLog::Log(LOGERROR, "GAME: Failed to write in-game saves ({}): {}/{} bytes written",
+                  CGameClientTranslator::ToString(memoryType), written, size);
       }
     }
     else
     {
-      CLog::Log(LOGERROR, "GAME: Unable to open in-game saves (%s) from file %s", CGameClientTranslator::ToString(memoryType), path.c_str());
+      CLog::Log(LOGERROR, "GAME: Unable to open in-game saves ({}) from file {}",
+                CGameClientTranslator::ToString(memoryType), path);
     }
   }
   else
   {
-    CLog::Log(LOGDEBUG, "GAME: No in-game saves (%s) to save", CGameClientTranslator::ToString(memoryType));
+    CLog::Log(LOGDEBUG, "GAME: No in-game saves ({}) to save",
+              CGameClientTranslator::ToString(memoryType));
   }
 }

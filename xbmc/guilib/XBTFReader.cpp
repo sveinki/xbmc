@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include <inttypes.h>
@@ -39,6 +27,17 @@ static bool ReadString(FILE* file, char* str, size_t max_length)
     return false;
 
   return (fread(str, max_length, 1, file) == 1);
+}
+
+static bool ReadChar(FILE* file, char& value)
+{
+  if (file == nullptr)
+    return false;
+
+  if (fread(&value, sizeof(char), 1, file) != 1)
+    return false;
+
+  return true;
 }
 
 static bool ReadUInt32(FILE* file, uint32_t& value)
@@ -67,8 +66,7 @@ static bool ReadUInt64(FILE* file, uint64_t& value)
 
 CXBTFReader::CXBTFReader()
   : CXBTFBase(),
-    m_path(),
-    m_file(nullptr)
+    m_path()
 { }
 
 CXBTFReader::~CXBTFReader()
@@ -102,11 +100,11 @@ bool CXBTFReader::Open(const std::string& path)
     return false;
 
   // read the version
-  char version[1];
-  if (!ReadString(m_file, version, sizeof(version)))
+  char version;
+  if (!ReadChar(m_file, version))
     return false;
 
-  if (strncmp(XBTF_VERSION.c_str(), version, sizeof(version)) != 0)
+  if (version < XBTF_VERSION_MIN)
     return false;
 
   unsigned int nofFiles;
@@ -119,9 +117,8 @@ bool CXBTFReader::Open(const std::string& path)
     uint32_t u32;
     uint64_t u64;
 
-    // one extra char to null terminate the string with the following memset
-    char path[CXBTFFile::MaximumPathLength + 1];
-    memset(path, 0, sizeof(path));
+    // one extra char to null terminate the string
+    char path[CXBTFFile::MaximumPathLength + 1] = {};
     if (!ReadString(m_file, path, sizeof(path) - 1))
       return false;
     xbtfFile.SetPath(path);
@@ -148,7 +145,7 @@ bool CXBTFReader::Open(const std::string& path)
 
       if (!ReadUInt32(m_file, u32))
         return false;
-      frame.SetFormat(u32);
+      frame.SetFormat(static_cast<XB_FMT>(u32));
 
       if (!ReadUInt64(m_file, u64))
         return false;
@@ -214,8 +211,10 @@ bool CXBTFReader::Load(const CXBTFFrame& frame, unsigned char* buffer) const
   if (m_file == nullptr)
     return false;
 
-#if defined(TARGET_DARWIN) || defined(TARGET_FREEBSD) || defined(TARGET_ANDROID)
+#if defined(TARGET_DARWIN) || defined(TARGET_FREEBSD)
   if (fseeko(m_file, static_cast<off_t>(frame.GetOffset()), SEEK_SET) == -1)
+#elif defined(TARGET_ANDROID)
+  if (fseek(m_file, static_cast<long>(frame.GetOffset()), SEEK_SET) == -1)  // No fseeko64 before N
 #else
   if (fseeko64(m_file, static_cast<off_t>(frame.GetOffset()), SEEK_SET) == -1)
 #endif

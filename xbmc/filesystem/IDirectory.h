@@ -1,53 +1,52 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <string>
+#pragma once
+
 #include "utils/Variant.h"
 
+#include <string>
+
 class CFileItemList;
+class CProfileManager;
 class CURL;
+class CFileItem;
 
 namespace XFILE
 {
-  enum DIR_CACHE_TYPE
-  {
-    DIR_CACHE_NEVER = 0, ///< Never cache this directory to memory
-    DIR_CACHE_ONCE,      ///< Cache this directory to memory for each fetch (so that FileExists() checks are fast)
-    DIR_CACHE_ALWAYS     ///< Always cache this directory to memory, so that each additional fetch of this folder will utilize the cache (until it's cleared)
-  };
+/*!
+ \brief max attempts to resolve an item.
+ \sa Resolve
+ */
+static constexpr size_t MAX_ITEM_RESOLVE_ATTEMPTS{5};
 
-  /*! \brief Available directory flags
+enum class CacheType
+{
+  NEVER = 0, ///< Never cache this directory to memory
+  ONCE, ///< Cache this directory to memory for each fetch (so that FileExists() checks are fast)
+  ALWAYS ///< Always cache this directory to memory, so that each additional fetch of this folder will utilize the cache (until it's cleared)
+};
+
+/*! \brief Available directory flags
    The defaults are to allow file directories, no prompting, retrieve file information, hide hidden files, and utilise the directory cache
    based on the implementation's wishes.
    */
-  enum DIR_FLAG
-  {
-    DIR_FLAG_DEFAULTS      = 0,
-    DIR_FLAG_NO_FILE_DIRS  = (2 << 0), ///< Don't convert files (zip, rar etc.) to directories
-    DIR_FLAG_ALLOW_PROMPT  = (2 << 1), ///< Allow prompting for further info (passwords etc.)
-    DIR_FLAG_NO_FILE_INFO  = (2 << 2), ///< Don't read additional file info (stat for example)
-    DIR_FLAG_GET_HIDDEN    = (2 << 3), ///< Get hidden files
-    DIR_FLAG_READ_CACHE    = (2 << 4), ///< Force reading from the directory cache (if available)
-    DIR_FLAG_BYPASS_CACHE  = (2 << 5)  ///< Completely bypass the directory cache (no reading, no writing)
-  };
+enum DIR_FLAG
+{
+  DIR_FLAG_DEFAULTS = 0,
+  DIR_FLAG_NO_FILE_DIRS = (2 << 0), ///< Don't convert files (zip, rar etc.) to directories
+  DIR_FLAG_ALLOW_PROMPT = (2 << 1), ///< Allow prompting for further info (passwords etc.)
+  DIR_FLAG_NO_FILE_INFO = (2 << 2), ///< Don't read additional file info (stat for example)
+  DIR_FLAG_GET_HIDDEN = (2 << 3), ///< Get hidden files
+  DIR_FLAG_READ_CACHE = (2 << 4), ///< Force reading from the directory cache (if available)
+  DIR_FLAG_BYPASS_CACHE =
+      (2 << 5) ///< Completely bypass the directory cache (no reading, no writing)
+};
 /*!
  \ingroup filesystem
  \brief Interface to the directory on a file system.
@@ -59,7 +58,10 @@ namespace XFILE
 class IDirectory
 {
 public:
-  IDirectory(void);
+  static void RegisterProfileManager(const CProfileManager &profileManager);
+  static void UnregisterProfileManager();
+
+  IDirectory();
   virtual ~IDirectory(void);
   /*!
    \brief Get the \e items of the directory \e strPath.
@@ -74,12 +76,12 @@ public:
    \return the progress as a float in the range 0..100.
    \sa GetDirectory, CancelDirectory
    */
-  virtual float GetProgress() const { return 0.0f; };
+  virtual float GetProgress() const { return 0.0f; }
   /*!
    \brief Cancel the current directory fetch (if possible).
    \sa GetDirectory
    */
-  virtual void CancelDirectory() { };
+  virtual void CancelDirectory() {}
   /*!
   \brief Create the directory
   \param url Directory to create.
@@ -102,9 +104,16 @@ public:
   virtual bool Remove(const CURL& url) { return false; }
 
   /*!
+  \brief Provided a path, attempts to resolve to a mount point
+  \param path Path to resolve
+  \return Returns the mountpoint if found, else the provided path
+  */
+  virtual std::string ResolveMountPoint(const std::string& path) const { return path; }
+
+  /*!
   \brief Recursively removes the directory
   \param url Directory to remove.
-  \return Returns \e false if not succesful
+  \return Returns \e false if not successful
   */
   virtual bool RemoveRecursive(const CURL& url) { return false; }
 
@@ -125,19 +134,27 @@ public:
   \param url Directory at hand.
   \return Returns the cache type.
   */
-  virtual DIR_CACHE_TYPE GetCacheType(const CURL& url) const { return DIR_CACHE_ONCE; };
+  virtual CacheType GetCacheType(const CURL& url) const { return CacheType::ONCE; }
 
   void SetMask(const std::string& strMask);
   void SetFlags(int flags);
 
   /*! \brief Process additional requirements before the directory fetch is performed.
    Some directory fetches may require authentication, keyboard input etc.  The IDirectory subclass
-   should call GetKeyboardInput, SetErrorDialog or RequireAuthentication and then return false 
+   should call GetKeyboardInput, SetErrorDialog or RequireAuthentication and then return false
    from the GetDirectory method. CDirectory will then prompt for input from the user, before
    re-calling the GetDirectory method.
    \sa GetKeyboardInput, SetErrorDialog, RequireAuthentication
    */
   bool ProcessRequirements();
+
+  /*!
+  \brief Resolves a given item to a playable item
+  \note Some directories (e.g. dvd, bluray, plugins etc) need to be translated/resolved to the actual playback url
+  \param item The item being manipulated (which the path points to a vfs protocol implementation)
+  \return true if the item was resolved, false if it failed to resolve
+  */
+  virtual bool Resolve(CFileItem& item) const { return true; }
 
 protected:
   /*! \brief Prompt the user for some keyboard input
@@ -169,6 +186,8 @@ protected:
    \sa ProcessRequirements
    */
   void RequireAuthentication(const CURL& url);
+
+  static const CProfileManager *m_profileManager;
 
   std::string m_strFileMask;  ///< Holds the file mask specified by SetMask()
 

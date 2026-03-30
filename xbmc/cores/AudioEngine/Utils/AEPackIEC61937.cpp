@@ -1,26 +1,15 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <cassert>
-#include "system.h"
 #include "AEPackIEC61937.h"
+
+#include <cassert>
+#include <string.h>
 
 #define IEC61937_PREAMBLE1  0xF872
 #define IEC61937_PREAMBLE2  0x4E1F
@@ -97,7 +86,7 @@ int CAEPackIEC61937::PackDTS_2048(uint8_t *data, unsigned int size, uint8_t *des
   return PackDTS(data, size, dest, littleEndian, OUT_FRAMESTOBYTES(DTS3_FRAME_SIZE), IEC61937_TYPE_DTS3);
 }
 
-int CAEPackIEC61937::PackTrueHD(uint8_t *data, unsigned int size, uint8_t *dest)
+int CAEPackIEC61937::PackTrueHD(const uint8_t* data, unsigned int size, uint8_t* dest)
 {
   if (size == 0)
     return OUT_FRAMESTOBYTES(TRUEHD_FRAME_SIZE);
@@ -106,8 +95,8 @@ int CAEPackIEC61937::PackTrueHD(uint8_t *data, unsigned int size, uint8_t *dest)
   struct IEC61937Packet *packet = (struct IEC61937Packet*)dest;
   packet->m_preamble1 = IEC61937_PREAMBLE1;
   packet->m_preamble2 = IEC61937_PREAMBLE2;
-  packet->m_type      = IEC61937_TYPE_TRUEHD;
-  packet->m_length    = size;
+  packet->m_type = IEC61937_TYPE_TRUEHD;
+  packet->m_length = 61424;
 
   if (data == NULL)
     data = packet->m_data;
@@ -210,7 +199,7 @@ int CAEPackIEC61937::PackDTS(uint8_t *data, unsigned int size, uint8_t *dest, bo
     size += size & 0x1;
     SwapEndian((uint16_t*)dataTo, (uint16_t*)data, size >> 1);
   }
-  
+
   if (size != frameSize)
     memset(packet->m_data + size, 0, frameSize - IEC61937_DATA_OFFSET - size);
 
@@ -239,7 +228,8 @@ int CAEPackIEC61937::PackPause(uint8_t *dest, unsigned int millis, unsigned int 
     memcpy(dest+i*periodInBytes, dest, periodInBytes);
   }
 
-  packet->m_data[1] = (gap & 0x00FF) << 8;
-  packet->m_data[0] = (gap & 0xFF00) >> 8;
+  uint16_t *gapPtr = reinterpret_cast<uint16_t*>(packet->m_data);
+  *gapPtr = gap;
+
   return periodsNeeded * periodInBytes;
 }

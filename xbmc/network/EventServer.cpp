@@ -1,62 +1,49 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-
-#ifdef HAS_EVENT_SERVER
-
 #include "EventServer.h"
-#include "EventPacket.h"
-#include "EventClient.h"
-#include "Socket.h"
-#include "threads/CriticalSection.h"
-#include "Application.h"
-#include "ServiceBroker.h"
-#include "interfaces/builtins/Builtins.h"
-#include "input/ActionTranslator.h"
-#include "threads/SingleLock.h"
-#include "Zeroconf.h"
-#include "guilib/GUIAudioManager.h"
-#include "input/Key.h"
-#include "utils/log.h"
-#include "utils/SystemInfo.h"
-#include "Util.h"
-#include <map>
-#include <queue>
-#include <cassert>
 
+#include "EventClient.h"
+#include "EventPacket.h"
+#include "ServiceBroker.h"
+#include "Socket.h"
+#include "Zeroconf.h"
+#include "application/Application.h"
+#include "guilib/GUIAudioManager.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "input/actions/ActionTranslator.h"
+#include "interfaces/builtins/Builtins.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/SystemInfo.h"
+#include "utils/log.h"
+
+#include <cassert>
+#include <map>
+#include <mutex>
+#include <queue>
+
+using namespace KODI;
 using namespace EVENTSERVER;
 using namespace EVENTPACKET;
 using namespace EVENTCLIENT;
 using namespace SOCKETS;
+using namespace std::chrono_literals;
 
 /************************************************************************/
 /* CEventServer                                                         */
 /************************************************************************/
-CEventServer* CEventServer::m_pInstance = NULL;
+std::unique_ptr<CEventServer> CEventServer::m_pInstance;
+
 CEventServer::CEventServer() : CThread("EventServer")
 {
-  m_pSocket       = NULL;
-  m_pPacketBuffer = NULL;
   m_bStop         = false;
-  m_bRunning      = false;
   m_bRefreshSettings = false;
 
   // default timeout in ms for receiving a single packet
@@ -65,37 +52,33 @@ CEventServer::CEventServer() : CThread("EventServer")
 
 void CEventServer::RemoveInstance()
 {
-  if (m_pInstance)
-  {
-    delete m_pInstance;
-    m_pInstance=NULL;
-  }
+  m_pInstance.reset();
 }
 
 CEventServer* CEventServer::GetInstance()
 {
   if (!m_pInstance)
-  {
-    m_pInstance = new CEventServer();
-  }
-  return m_pInstance;
+    m_pInstance = std::make_unique<CEventServer>();
+
+  return m_pInstance.get();
 }
 
 void CEventServer::StartServer()
 {
-  CSingleLock lock(m_critSection);
-  if(m_bRunning)
+  std::unique_lock lock(m_critSection);
+  if (m_bRunning)
     return;
 
   // set default port
-  m_iPort = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_SERVICES_ESPORT);
+  const std::shared_ptr<CSettings> settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  m_iPort = settings->GetInt(CSettings::SETTING_SERVICES_ESPORT);
   assert(m_iPort <= 65535 && m_iPort >= 1);
 
   // max clients
-  m_iMaxClients = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_SERVICES_ESMAXCLIENTS);
+  m_iMaxClients = settings->GetInt(CSettings::SETTING_SERVICES_ESMAXCLIENTS);
   if (m_iMaxClients < 0)
   {
-    CLog::Log(LOGERROR, "ES: Invalid maximum number of clients specified %d", m_iMaxClients);
+    CLog::Log(LOGERROR, "ES: Invalid maximum number of clients specified {}", m_iMaxClients);
     m_iMaxClients = 20;
   }
 
@@ -111,34 +94,16 @@ void CEventServer::StopServer(bool bWait)
 void CEventServer::Cleanup()
 {
   if (m_pSocket)
-  {
     m_pSocket->Close();
-    delete m_pSocket;
-    m_pSocket = NULL;
-  }
 
-  if (m_pPacketBuffer)
-  {
-    free(m_pPacketBuffer);
-    m_pPacketBuffer = NULL;
-  }
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
 
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
-  while (iter != m_clients.end())
-  {
-    if (iter->second)
-    {
-      delete iter->second;
-    }
-    m_clients.erase(iter);
-    iter =  m_clients.begin();
-  }
+  m_clients.clear();
 }
 
 int CEventServer::GetNumberOfClients()
 {
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
   return m_clients.size();
 }
 
@@ -148,7 +113,7 @@ void CEventServer::Process()
   {
     Run();
     if (!m_bStop)
-      Sleep(1000);
+      CThread::Sleep(1000ms);
   }
 }
 
@@ -157,7 +122,7 @@ void CEventServer::Run()
   CSocketListener listener;
   int packetSize = 0;
 
-  CLog::Log(LOGNOTICE, "ES: Starting UDP Event server on port %d", m_iPort);
+  CLog::Log(LOGINFO, "ES: Starting UDP Event server on port {}", m_iPort);
 
   Cleanup();
 
@@ -168,37 +133,31 @@ void CEventServer::Run()
     CLog::Log(LOGERROR, "ES: Could not create socket, aborting!");
     return;
   }
-  m_pPacketBuffer = (unsigned char *)malloc(PACKET_SIZE);
 
-  if (!m_pPacketBuffer)
-  {
-    CLog::Log(LOGERROR, "ES: Out of memory, could not allocate packet buffer");
-    return;
-  }
+  m_pPacketBuffer.resize(PACKET_SIZE);
 
   // bind to IP and start listening on port
-  int port_range = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_SERVICES_ESPORTRANGE);
+  const std::shared_ptr<CSettings> settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+  int port_range = settings->GetInt(CSettings::SETTING_SERVICES_ESPORTRANGE);
   if (port_range < 1 || port_range > 100)
   {
-    CLog::Log(LOGERROR, "ES: Invalid port range specified %d, defaulting to 10", port_range);
+    CLog::Log(LOGERROR, "ES: Invalid port range specified {}, defaulting to 10", port_range);
     port_range = 10;
   }
-  if (!m_pSocket->Bind(!CServiceBroker::GetSettings().GetBool(CSettings::SETTING_SERVICES_ESALLINTERFACES), m_iPort, port_range))
+  if (!m_pSocket->Bind(!settings->GetBool(CSettings::SETTING_SERVICES_ESALLINTERFACES), m_iPort, port_range))
   {
-    CLog::Log(LOGERROR, "ES: Could not listen on port %d", m_iPort);
+    CLog::Log(LOGERROR, "ES: Could not listen on port {}", m_iPort);
     return;
   }
 
   // publish service
-  std::vector<std::pair<std::string, std::string> > txt;
-  CZeroconf::GetInstance()->PublishService("servers.eventserver",
-                               "_xbmc-events._udp",
-                               CSysInfo::GetDeviceName(),
-                               m_iPort,
-                               txt);
+  std::vector<std::pair<std::string, std::string>> txt;
+  CZeroconf::GetInstance()->PublishService("servers.eventserver", "_xbmc-events._udp",
+                                           CSysInfo::GetDeviceName() + " eventserver", m_iPort,
+                                           txt);
 
   // add our socket to the 'select' listener
-  listener.AddSocket(m_pSocket);
+  listener.AddSocket(m_pSocket.get());
 
   m_bRunning = true;
 
@@ -210,7 +169,7 @@ void CEventServer::Run()
       if (listener.Listen(m_iListenTimeout))
       {
         CAddress addr;
-        if ((packetSize = m_pSocket->Read(addr, PACKET_SIZE, (void *)m_pPacketBuffer)) > -1)
+        if ((packetSize = m_pSocket->Read(addr, PACKET_SIZE, m_pPacketBuffer.data())) > -1)
         {
           ProcessPacket(addr, packetSize);
         }
@@ -232,7 +191,7 @@ void CEventServer::Run()
     // BroadcastBeacon();
   }
 
-  CLog::Log(LOGNOTICE, "ES: UDP Event server stopped");
+  CLog::Log(LOGINFO, "ES: UDP Event server stopped");
   m_bRunning = false;
   Cleanup();
 }
@@ -240,8 +199,9 @@ void CEventServer::Run()
 void CEventServer::ProcessPacket(CAddress& addr, int pSize)
 {
   // check packet validity
-  CEventPacket* packet = new CEventPacket(pSize, m_pPacketBuffer);
-  if(packet == NULL)
+  std::unique_ptr<CEventPacket> packet =
+      std::make_unique<CEventPacket>(pSize, m_pPacketBuffer.data());
+  if (!packet)
   {
     CLog::Log(LOGERROR, "ES: Out of memory, cannot accept packet");
     return;
@@ -252,7 +212,6 @@ void CEventServer::ProcessPacket(CAddress& addr, int pSize)
   if (!packet->IsValid())
   {
     CLog::Log(LOGDEBUG, "ES: Received invalid packet");
-    delete packet;
     return;
   }
 
@@ -260,46 +219,43 @@ void CEventServer::ProcessPacket(CAddress& addr, int pSize)
   if (!clientToken)
     clientToken = addr.ULong(); // use IP if packet doesn't have a token
 
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
 
   // first check if we have a client for this address
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.find(clientToken);
+  auto iter = m_clients.find(clientToken);
 
   if ( iter == m_clients.end() )
   {
     if ( m_clients.size() >= (unsigned int)m_iMaxClients)
     {
       CLog::Log(LOGWARNING, "ES: Cannot accept any more clients, maximum client count reached");
-      delete packet;
       return;
     }
 
     // new client
-    CEventClient* client = new CEventClient ( addr );
-    if (client==NULL)
+    auto client = std::make_unique<CEventClient>(addr);
+    if (!client)
     {
       CLog::Log(LOGERROR, "ES: Out of memory, cannot accept new client connection");
-      delete packet;
       return;
     }
 
-    m_clients[clientToken] = client;
+    m_clients[clientToken] = std::move(client);
   }
-  m_clients[clientToken]->AddPacket(packet);
+  m_clients[clientToken]->AddPacket(std::move(packet));
 }
 
 void CEventServer::RefreshClients()
 {
-  CSingleLock lock(m_critSection);
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
+  std::unique_lock lock(m_critSection);
+  auto iter = m_clients.begin();
 
   while ( iter != m_clients.end() )
   {
     if (! (iter->second->Alive()))
     {
-      CLog::Log(LOGNOTICE, "ES: Client %s from %s timed out", iter->second->Name().c_str(),
+      CLog::Log(LOGINFO, "ES: Client {} from {} timed out", iter->second->Name(),
                 iter->second->Address().Address());
-      delete iter->second;
       m_clients.erase(iter);
       iter = m_clients.begin();
     }
@@ -317,8 +273,8 @@ void CEventServer::RefreshClients()
 
 void CEventServer::ProcessEvents()
 {
-  CSingleLock lock(m_critSection);
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
+  std::unique_lock lock(m_critSection);
+  auto iter = m_clients.begin();
 
   while (iter != m_clients.end())
   {
@@ -329,17 +285,17 @@ void CEventServer::ProcessEvents()
 
 bool CEventServer::ExecuteNextAction()
 {
-  CSingleLock lock(m_critSection);
+  std::unique_lock lock(m_critSection);
 
   CEventAction actionEvent;
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
+  auto iter = m_clients.begin();
 
   while (iter != m_clients.end())
   {
     if (iter->second->GetNextAction(actionEvent))
     {
       // Leave critical section before processing action
-      lock.Leave();
+      lock.unlock();
       switch(actionEvent.actionType)
       {
       case AT_EXEC_BUILTIN:
@@ -349,9 +305,12 @@ bool CEventServer::ExecuteNextAction()
       case AT_BUTTON:
         {
           unsigned int actionID;
-          CActionTranslator::TranslateString(actionEvent.actionName, actionID);
+          ACTION::CActionTranslator::TranslateString(actionEvent.actionName, actionID);
           CAction action(actionID, 1.0f, 0.0f, actionEvent.actionName);
-          g_audioManager.PlayActionSound(action);
+          CGUIComponent* gui = CServiceBroker::GetGUI();
+          if (gui)
+            gui->GetAudioManager().PlayActionSound(action);
+
           g_application.OnAction(action);
         }
         break;
@@ -366,8 +325,8 @@ bool CEventServer::ExecuteNextAction()
 
 unsigned int CEventServer::GetButtonCode(std::string& strMapName, bool& isAxis, float& fAmount, bool &isJoystick)
 {
-  CSingleLock lock(m_critSection);
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
+  std::unique_lock lock(m_critSection);
+  auto iter = m_clients.begin();
   unsigned int bcode = 0;
 
   while (iter != m_clients.end())
@@ -382,8 +341,8 @@ unsigned int CEventServer::GetButtonCode(std::string& strMapName, bool& isAxis, 
 
 bool CEventServer::GetMousePos(float &x, float &y)
 {
-  CSingleLock lock(m_critSection);
-  std::map<unsigned long, CEventClient*>::iterator iter = m_clients.begin();
+  std::unique_lock lock(m_critSection);
+  auto iter = m_clients.begin();
 
   while (iter != m_clients.end())
   {
@@ -393,5 +352,3 @@ bool CEventServer::GetMousePos(float &x, float &y)
   }
   return false;
 }
-
-#endif // HAS_EVENT_SERVER

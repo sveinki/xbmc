@@ -1,33 +1,25 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <string>
-#include <vector>
-#include "utils/BitstreamStats.h"
-#include "filesystem/IFileTypes.h"
+#pragma once
 
 #include "FileItem.h"
 #include "URL.h"
-#include "guilib/Geometry.h"
+#include "cores/MenuType.h"
+#include "filesystem/IFileTypes.h"
+#include "utils/BitstreamStats.h"
+#include "utils/Geometry.h"
+#include "video/VideoInfoTag.h"
+
+#include <chrono>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 enum DVDStreamType
 {
@@ -45,7 +37,7 @@ enum DVDStreamType
   DVDSTREAM_TYPE_ADDON = 14
 };
 
-#define SEEK_POSSIBLE 0x10 // flag used to check if protocol allows seeks
+#define DVDSTREAM_SEEK_POSSIBLE 0x10 // flag used to check if protocol allows seeks
 
 #define DVDSTREAM_BLOCK_SIZE_FILE (2048 * 16)
 #define DVDSTREAM_BLOCK_SIZE_DVD  2048
@@ -57,6 +49,8 @@ namespace XFILE
 
 struct DemuxPacket;
 class CDemuxStream;
+class CStreamDetails;
+struct SPlayerState;
 
 class CDVDInputStream
 {
@@ -95,10 +89,10 @@ public:
   {
   public:
     virtual ~IChapter() = default;
-    virtual int  GetChapter() = 0;
-    virtual int  GetChapterCount() = 0;
-    virtual void GetChapterName(std::string& name, int ch=-1) = 0;
-    virtual int64_t GetChapterPos(int ch=-1) = 0;
+    virtual int GetChapter() = 0;
+    virtual int GetChapterCount() = 0;
+    virtual void GetChapterName(std::string& name, int ch = -1) = 0;
+    virtual std::chrono::milliseconds GetChapterPos(int ch = -1) = 0;
     virtual bool SeekChapter(int ch) = 0;
   };
 
@@ -114,18 +108,29 @@ public:
     virtual void OnDown() = 0;
     virtual void OnLeft() = 0;
     virtual void OnRight() = 0;
-    virtual void OnMenu() = 0;
+
+    /*! \brief Open the Menu
+    * \return true if the menu is successfully opened, false otherwise
+    */
+    virtual bool OnMenu() = 0;
     virtual void OnBack() = 0;
     virtual void OnNext() = 0;
     virtual void OnPrevious() = 0;
     virtual bool OnMouseMove(const CPoint &point) = 0;
     virtual bool OnMouseClick(const CPoint &point) = 0;
-    virtual bool HasMenu() = 0;
+
+    /*!
+    * \brief Get the supported menu type
+    * \return The supported menu type
+    */
+    virtual MenuType GetSupportedMenuType() = 0;
+
     virtual bool IsInMenu() = 0;
     virtual void SkipStill() = 0;
-    virtual double GetTimeStampCorrection() { return 0.0; };
+    virtual double GetTimeStampCorrection() { return 0.0; }
     virtual bool GetState(std::string &xmlstate) = 0;
     virtual bool SetState(const std::string &xmlstate) = 0;
+    virtual bool CanSeek() { return !IsInMenu(); }
   };
 
   class IDemux
@@ -136,14 +141,20 @@ public:
     virtual DemuxPacket* ReadDemux() = 0;
     virtual CDemuxStream* GetStream(int iStreamId) const = 0;
     virtual std::vector<CDemuxStream*> GetStreams() const = 0;
-    virtual void EnableStream(int iStreamId, bool enable) {};
-    virtual bool OpenStream(int iStreamId) { return false; };
+    virtual void EnableStream(int iStreamId, bool enable) {}
+    virtual bool OpenStream(int iStreamId) { return false; }
     virtual int GetNrOfStreams() const = 0;
     virtual void SetSpeed(int iSpeed) = 0;
+    virtual void FillBuffer(bool mode) {}
     virtual bool SeekTime(double time, bool backward = false, double* startpts = NULL) = 0;
     virtual void AbortDemux() = 0;
     virtual void FlushDemux() = 0;
-    virtual void SetVideoResolution(int width, int height) {};
+    virtual void SetVideoResolution(unsigned int width,
+                                    unsigned int height,
+                                    unsigned int maxWidth,
+                                    unsigned int maxHeight)
+    {
+    }
   };
 
   enum ENextStream
@@ -159,23 +170,21 @@ public:
   virtual void Close();
   virtual int Read(uint8_t* buf, int buf_size) = 0;
   virtual int64_t Seek(int64_t offset, int whence) = 0;
-  virtual bool Pause(double dTime) = 0;
   virtual int64_t GetLength() = 0;
-  virtual std::string& GetContent() { return m_content; };
+  virtual std::string& GetContent() { return m_content; }
   virtual std::string GetFileName();
   virtual CURL GetURL();
   virtual ENextStream NextStream() { return NEXTSTREAM_NONE; }
   virtual void Abort() {}
   virtual int GetBlockSize() { return 0; }
-  virtual void ResetScanTimeout(unsigned int iTimeoutMs) { }
-  virtual bool CanSeek() { return true; }
-  virtual bool CanPause() { return true; }
+  virtual bool CanSeek() { return true; } //! @todo drop this
+  virtual bool CanPause() { return false; }
 
   /*! \brief Indicate expected read rate in bytes per second.
    *  This could be used to throttle caching rate. Should
    *  be seen as only a hint
    */
-  virtual void SetReadRate(unsigned rate) {}
+  virtual void SetReadRate(uint32_t rate) {}
 
   /*! \brief Get the cache status
    \return true when cache status was successfully obtained
@@ -197,8 +206,77 @@ public:
   virtual IPosTime* GetIPosTime() { return nullptr; }
   virtual IDisplayTime* GetIDisplayTime() { return nullptr; }
   virtual ITimes* GetITimes() { return nullptr; }
+  virtual IChapter* GetIChapter() { return nullptr; }
 
-  const CVariant &GetProperty(const std::string key){ return m_item.GetProperty(key); }
+  const CVariant& GetProperty(const std::string& key) { return m_item.GetProperty(key); }
+
+  enum class UpdateState : uint8_t
+  {
+    NONE,
+    FINISHED,
+    NOT_PLAYED
+  };
+
+  /*!
+  \brief Saves the current state of the current stream (including stream details)
+  \param details streamdetails of the current playing stream
+  */
+  virtual void SaveCurrentState(const CStreamDetails& details) {}
+
+  /*!
+  \brief Updates the given fileitem with the state and streamdetails of what is decided to be the main (ie. main movie) title
+  \param item fileitem to update
+  \param time current playback time
+  \param closed sets closed to indicate if the stream was closed (=true) (ie. playback stopped before end) or finished (=false)
+  \returns an UpdateState flag indicating if no main title was played (=NOT_PLAYED), the main title was played completely (=FINISHED) 
+  \        or no update needs to be made to the VideoPlayer state (=NONE)
+  */
+  virtual UpdateState UpdateItemFromSavedStates(CFileItem& item, double time, bool& closed)
+  {
+    return UpdateState::NONE;
+  }
+
+  struct PlaylistInformation
+  {
+    int playlist{-1};
+    bool inMenu{false};
+    std::chrono::milliseconds duration{std::chrono::milliseconds::zero()};
+    std::chrono::milliseconds watchedTime{std::chrono::milliseconds::zero()};
+    std::chrono::milliseconds position{std::chrono::milliseconds::zero()};
+    CStreamDetails details;
+  };
+
+  /*!
+  \brief Function shared with DVDInputStreamBluray (for Blurays) and DVDInputStreamNavigator (for DVDs) to save playlist/title details
+  \param playedPlaylists vector of played playlists/titles to update
+  \param startTime a time point indicating when playback started (used to calculate the actual time a playlist/title was played for)
+  \param currentPlaylistInformation information about the current playlist/title being played
+  */
+  static void SavePlaylistDetails(std::vector<PlaylistInformation>& playedPlaylists,
+                                  std::chrono::steady_clock::time_point startTime,
+                                  const PlaylistInformation& currentPlaylistInformation);
+
+  /*!
+  \brief Function shared with DVDInputStreamBluray (for Blurays) and DVDInputStreamNavigator (for DVDs) to updates the given fileitem with 
+  \      the state and streamdetails of what is decided to be the main (ie. main movie) title
+  \param type playback type (DVD or Bluray)
+  \param playedPlaylists vector of played playlists/titles
+  \param item fileitem to update
+  \param time current playback time
+  \param closed sets closed to indicate if the stream was closed (=true) (ie. playback stopped before end) or finished (=false)
+  \returns an UpdateState flag indicating if no main title was played (=NOT_PLAYED), the main title was played completely (=FINISHED) 
+  \        or no update needs to be made (=NONE)
+  */
+  static UpdateState UpdateItemFromPlaylistDetails(
+      DVDStreamType type,
+      std::vector<PlaylistInformation>& playedPlaylists,
+      CFileItem& item,
+      double time,
+      bool& closed);
+
+  virtual void UpdateStack(CFileItem& item) {}
+
+  static void UpdateStackItem(CFileItem& item, std::chrono::milliseconds length);
 
 protected:
   DVDStreamType m_streamType;

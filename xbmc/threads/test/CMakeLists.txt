@@ -1,6 +1,6 @@
 set(SOURCES TestEvent.cpp
             TestSharedSection.cpp
-            TestThreadLocal.cpp)
+            TestEndTime.cpp)
 
 set(HEADERS TestHelpers.h)
 

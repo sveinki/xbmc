@@ -1,33 +1,22 @@
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ViewStateSettings.h"
 
-#include <cstring>
-#include <utility>
-
-#include "threads/SingleLock.h"
-#include "utils/log.h"
+#include "SortFileItem.h"
 #include "utils/SortUtils.h"
 #include "utils/XBMCTinyXML.h"
 #include "utils/XMLUtils.h"
+#include "utils/log.h"
+
+#include <cstring>
+#include <mutex>
+#include <utility>
 
 #define XML_VIEWSTATESETTINGS       "viewstates"
 #define XML_VIEWMODE                "viewmode"
@@ -41,22 +30,22 @@
 #define XML_EVENTLOG_LEVEL_HIGHER   "showhigherlevels"
 
 CViewStateSettings::CViewStateSettings()
-  : m_settingLevel(SettingLevel::Standard),
-    m_eventLevel(EventLevel::Basic),
-    m_eventShowHigherLevels(true)
 {
   AddViewState("musicnavartists");
   AddViewState("musicnavalbums");
-  AddViewState("musicnavsongs");
+  AddViewState("musicnavsongs", DEFAULT_VIEW_LIST, SortBy::TRACK_NUMBER);
   AddViewState("musiclastfm");
   AddViewState("videonavactors");
   AddViewState("videonavyears");
   AddViewState("videonavgenres");
   AddViewState("videonavtitles");
-  AddViewState("videonavepisodes", DEFAULT_VIEW_AUTO, SortByEpisodeNumber);
+  AddViewState("videonavepisodes", DEFAULT_VIEW_AUTO, SortBy::EPISODE_NUMBER);
   AddViewState("videonavtvshows");
   AddViewState("videonavseasons");
   AddViewState("videonavmusicvideos");
+  AddViewState("videonavassets");
+  AddViewState("videonavversions");
+  AddViewState("videonavextras");
 
   AddViewState("programs", DEFAULT_VIEW_AUTO);
   AddViewState("pictures", DEFAULT_VIEW_AUTO);
@@ -85,7 +74,7 @@ bool CViewStateSettings::Load(const TiXmlNode *settings)
   if (settings == NULL)
     return false;
 
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   const TiXmlNode *pElement = settings->FirstChildElement(XML_VIEWSTATESETTINGS);
   if (pElement == NULL)
   {
@@ -105,20 +94,25 @@ bool CViewStateSettings::Load(const TiXmlNode *settings)
     if (pViewState->FirstChild(XML_SORTATTRIBUTES) == NULL)
     {
       int sortMethod;
-      if (XMLUtils::GetInt(pViewState, XML_SORTMETHOD, sortMethod, SORT_METHOD_NONE, SORT_METHOD_MAX))
-        viewState->second->m_sortDescription = SortUtils::TranslateOldSortMethod((SORT_METHOD)sortMethod);
+      if (XMLUtils::GetInt(pViewState, XML_SORTMETHOD, sortMethod,
+                           static_cast<int>(SortMethod::NONE),
+                           static_cast<int>(SortMethod::SM_MAX)))
+        viewState->second->m_sortDescription =
+            SortUtils::TranslateOldSortMethod(static_cast<SortMethod>(sortMethod));
     }
     else
     {
       int sortMethod;
-      if (XMLUtils::GetInt(pViewState, XML_SORTMETHOD, sortMethod, SortByNone, SortByRandom))
+      if (XMLUtils::GetInt(pViewState, XML_SORTMETHOD, sortMethod, static_cast<int>(SortBy::NONE),
+                           static_cast<int>(SortBy::LAST_USED)))
         viewState->second->m_sortDescription.sortBy = (SortBy)sortMethod;
       if (XMLUtils::GetInt(pViewState, XML_SORTATTRIBUTES, sortMethod, SortAttributeNone, SortAttributeIgnoreFolders))
         viewState->second->m_sortDescription.sortAttributes = (SortAttribute)sortMethod;
     }
 
     int sortOrder;
-    if (XMLUtils::GetInt(pViewState, XML_SORTORDER, sortOrder, SortOrderNone, SortOrderDescending))
+    if (XMLUtils::GetInt(pViewState, XML_SORTORDER, sortOrder, static_cast<int>(SortOrder::NONE),
+                         static_cast<int>(SortOrder::DESCENDING)))
       viewState->second->m_sortDescription.sortOrder = (SortOrder)sortOrder;
   }
 
@@ -126,7 +120,7 @@ bool CViewStateSettings::Load(const TiXmlNode *settings)
   if (pElement != NULL)
   {
     int settingLevel;
-    if (XMLUtils::GetInt(pElement, XML_SETTINGLEVEL, settingLevel, (const int)SettingLevel::Basic, (const int)SettingLevel::Expert))
+    if (XMLUtils::GetInt(pElement, XML_SETTINGLEVEL, settingLevel, static_cast<int>(SettingLevel::Basic), static_cast<int>(SettingLevel::Expert)))
       m_settingLevel = (SettingLevel)settingLevel;
     else
       m_settingLevel = SettingLevel::Standard;
@@ -135,7 +129,7 @@ bool CViewStateSettings::Load(const TiXmlNode *settings)
     if (pEventLogNode != NULL)
     {
       int eventLevel;
-      if (XMLUtils::GetInt(pEventLogNode, XML_EVENTLOG_LEVEL, eventLevel, (const int)EventLevel::Basic, (const int)EventLevel::Error))
+      if (XMLUtils::GetInt(pEventLogNode, XML_EVENTLOG_LEVEL, eventLevel, static_cast<int>(EventLevel::Basic), static_cast<int>(EventLevel::Error)))
         m_eventLevel = (EventLevel)eventLevel;
       else
         m_eventLevel = EventLevel::Basic;
@@ -153,7 +147,7 @@ bool CViewStateSettings::Save(TiXmlNode *settings) const
   if (settings == NULL)
     return false;
 
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   // add the <viewstates> tag
   TiXmlElement xmlViewStateElement(XML_VIEWSTATESETTINGS);
   TiXmlNode *pViewStateNode = settings->InsertEndChild(xmlViewStateElement);
@@ -209,7 +203,7 @@ void CViewStateSettings::Clear()
 
 const CViewState* CViewStateSettings::Get(const std::string &viewState) const
 {
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   std::map<std::string, CViewState*>::const_iterator view = m_viewStates.find(viewState);
   if (view != m_viewStates.end())
     return view->second;
@@ -219,7 +213,7 @@ const CViewState* CViewStateSettings::Get(const std::string &viewState) const
 
 CViewState* CViewStateSettings::Get(const std::string &viewState)
 {
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   std::map<std::string, CViewState*>::iterator view = m_viewStates.find(viewState);
   if (view != m_viewStates.end())
     return view->second;
@@ -254,7 +248,7 @@ void CViewStateSettings::SetEventLevel(EventLevel eventLevel)
 {
   if (eventLevel < EventLevel::Basic)
     m_eventLevel = EventLevel::Basic;
-  if (eventLevel > EventLevel::Error)
+  else if (eventLevel > EventLevel::Error)
     m_eventLevel = EventLevel::Error;
   else
     m_eventLevel = eventLevel;
@@ -273,12 +267,14 @@ EventLevel CViewStateSettings::GetNextEventLevel() const
   return level;
 }
 
-void CViewStateSettings::AddViewState(const std::string& strTagName, int defaultView /* = DEFAULT_VIEW_LIST */, SortBy defaultSort /* = SortByLabel */)
+void CViewStateSettings::AddViewState(const std::string& strTagName,
+                                      int defaultView /* = DEFAULT_VIEW_LIST */,
+                                      SortBy defaultSort /* = SortBy::LABEL */)
 {
-  if (strTagName.empty() || m_viewStates.find(strTagName) != m_viewStates.end())
+  if (strTagName.empty() || m_viewStates.contains(strTagName))
     return;
 
-  CViewState *viewState = new CViewState(defaultView, defaultSort, SortOrderAscending);
+  CViewState* viewState = new CViewState(defaultView, defaultSort, SortOrder::ASCENDING);
   if (viewState == NULL)
     return;
 

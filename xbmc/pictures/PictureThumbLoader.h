@@ -1,28 +1,16 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "utils/JobManager.h"
+#pragma once
+
 #include "ThumbLoader.h"
 
-class CPictureThumbLoader : public CThumbLoader, public CJobQueue
+class CPictureThumbLoader : public CThumbLoader
 {
 public:
   CPictureThumbLoader();
@@ -31,17 +19,8 @@ public:
   bool LoadItem(CFileItem* pItem) override;
   bool LoadItemCached(CFileItem* pItem) override;
   bool LoadItemLookup(CFileItem* pItem) override;
-  void SetRegenerateThumbs(bool regenerate) { m_regenerateThumbs = regenerate; };
+  void SetRegenerateThumbs(bool regenerate) { m_regenerateThumbs = regenerate; }
   static void ProcessFoldersAndArchives(CFileItem *pItem);
-
-  /*!
-   \brief Callback from CThumbExtractor on completion of a generated image
-
-   Performs the callbacks and updates the GUI.
-
-   \sa CImageLoader, IJobCallback
-   */
-  void OnJobComplete(unsigned int jobID, bool success, CJob *job) override;
 
 protected:
   void OnLoaderFinish() override;

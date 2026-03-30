@@ -1,32 +1,23 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIControlProfiler.h"
-#include "utils/XBMCTinyXML.h"
-#include "utils/TimeUtils.h"
+
 #include "utils/StringUtils.h"
+#include "utils/TimeUtils.h"
+#include "utils/XBMCTinyXML.h"
 
 bool CGUIControlProfiler::m_bIsRunning = false;
 
-CGUIControlProfilerItem::CGUIControlProfilerItem(CGUIControlProfiler *pProfiler, CGUIControlProfilerItem *pParent, CGUIControl *pControl)
-: m_pProfiler(pProfiler), m_pParent(pParent), m_pControl(pControl), m_visTime(0), m_renderTime(0), m_i64VisStart(0), m_i64RenderStart(0)
+CGUIControlProfilerItem::CGUIControlProfilerItem(CGUIControlProfiler* pProfiler,
+                                                 CGUIControlProfilerItem* pParent,
+                                                 CGUIControl* pControl)
+  : m_pProfiler(pProfiler), m_pParent(pParent), m_pControl(pControl)
 {
   if (m_pControl)
   {
@@ -147,6 +138,9 @@ void CGUIControlProfilerItem::SaveToXML(TiXmlElement *parent)
     lpszType = "fixedlist"; break;
   case CGUIControl::GUICONTAINER_PANEL:
     lpszType = "panel"; break;
+  case CGUIControl::GUICONTROL_COLORBUTTON:
+    lpszType = "colorbutton";
+    break;
   //case CGUIControl::GUICONTROL_UNKNOWN:
   default:
     break;
@@ -156,14 +150,14 @@ void CGUIControlProfilerItem::SaveToXML(TiXmlElement *parent)
     xmlControl->SetAttribute("type", lpszType);
   if (m_controlID != 0)
   {
-    std::string str = StringUtils::Format("%u", m_controlID);
+    std::string str = std::to_string(m_controlID);
     xmlControl->SetAttribute("id", str.c_str());
   }
 
   float pct = (float)GetTotalTime() / (float)m_pProfiler->GetTotalTime();
   if (pct > 0.01f)
   {
-    std::string str = StringUtils::Format("%.0f", pct * 100.0f);
+    std::string str = StringUtils::Format("{:.0f}", pct * 100.0f);
     xmlControl->SetAttribute("percent", str.c_str());
   }
 
@@ -183,18 +177,18 @@ void CGUIControlProfilerItem::SaveToXML(TiXmlElement *parent)
     std::string val;
     TiXmlElement *elem = new TiXmlElement("rendertime");
     xmlControl->LinkEndChild(elem);
-    val = StringUtils::Format("%u", rend);
+    val = std::to_string(rend);
     TiXmlText *text = new TiXmlText(val.c_str());
     elem->LinkEndChild(text);
 
     elem = new TiXmlElement("visibletime");
     xmlControl->LinkEndChild(elem);
-    val = StringUtils::Format("%u", vis);
+    val = std::to_string(vis);
     text = new TiXmlText(val.c_str());
     elem->LinkEndChild(text);
   }
 
-  if (m_vecChildren.size())
+  if (!m_vecChildren.empty())
   {
     TiXmlElement *xmlChilds = new TiXmlElement("children");
     xmlControl->LinkEndChild(xmlChilds);
@@ -229,7 +223,7 @@ CGUIControlProfilerItem *CGUIControlProfilerItem::FindOrAddControl(CGUIControl *
 }
 
 CGUIControlProfiler::CGUIControlProfiler(void)
-: m_ItemHead(NULL, NULL, NULL), m_pLastItem(NULL), m_iMaxFrameCount(200), m_iFrameCount(0)
+: m_ItemHead(NULL, NULL, NULL), m_pLastItem(NULL)
 // m_bIsRunning(false), no isRunning because it is static
 {
   m_fPerfScale = 100000.0f / CurrentHostFrequency();
@@ -335,7 +329,7 @@ bool CGUIControlProfiler::SaveResults(void)
   doc.InsertEndChild(decl);
 
   TiXmlElement *root = new TiXmlElement("guicontrolprofiler");
-  std::string str = StringUtils::Format("%d", m_iFrameCount);
+  std::string str = std::to_string(m_iFrameCount);
   root->SetAttribute("framecount", str.c_str());
   root->SetAttribute("timeunit", "ms");
   doc.LinkEndChild(root);

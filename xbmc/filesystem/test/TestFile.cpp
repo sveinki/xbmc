@@ -1,38 +1,27 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "filesystem/File.h"
 #include "test/TestUtils.h"
 
-#include <string>
 #include <errno.h>
+#include <string>
+#include <string_view>
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
 TEST(TestFile, Read)
 {
   const std::string newLine = CXBMCTestUtils::Instance().getNewLineCharacters();
-  const int size = 1616;
-  const int lines = 25;
-  int addPerLine = newLine.length() - 1;
-  int realSize = size + lines * addPerLine;
+  const size_t size = 1616;
+  const size_t lines = 25;
+  size_t addPerLine = newLine.length() - 1;
+  size_t realSize = size + lines * addPerLine;
 
   const std::string firstBuf  = "About" + newLine + "-----" + newLine + "XBMC is ";
   const std::string secondBuf = "an award-winning fre";
@@ -41,27 +30,26 @@ TEST(TestFile, Read)
   const std::string fifthBuf = "multimedia jukebox." + newLine;
 
   XFILE::CFile file;
-  char buf[23];
-  memset(&buf, 0, sizeof(buf));
+  char buf[23] = {};
 
-  int currentPos;
+  size_t currentPos;
   ASSERT_TRUE(file.Open(
     XBMC_REF_FILE_PATH("/xbmc/filesystem/test/reffile.txt")));
   EXPECT_EQ(0, file.GetPosition());
   EXPECT_EQ(realSize, file.GetLength());
-  EXPECT_EQ(firstBuf.length(), file.Read(buf, firstBuf.length()));
+  EXPECT_EQ(firstBuf.length(), static_cast<size_t>(file.Read(buf, firstBuf.length())));
   file.Flush();
   currentPos = firstBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
   EXPECT_EQ(0, memcmp(firstBuf.c_str(), buf, firstBuf.length()));
-  EXPECT_EQ(secondBuf.length(), file.Read(buf, secondBuf.length()));
+  EXPECT_EQ(secondBuf.length(), static_cast<size_t>(file.Read(buf, secondBuf.length())));
   currentPos += secondBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
   EXPECT_EQ(0, memcmp(secondBuf.c_str(), buf, secondBuf.length()));
   currentPos = 100 + addPerLine * 3;
   EXPECT_EQ(currentPos, file.Seek(currentPos));
   EXPECT_EQ(currentPos, file.GetPosition());
-  EXPECT_EQ(thirdBuf.length(), file.Read(buf, thirdBuf.length()));
+  EXPECT_EQ(thirdBuf.length(), static_cast<size_t>(file.Read(buf, thirdBuf.length())));
   file.Flush();
   currentPos += thirdBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
@@ -69,7 +57,7 @@ TEST(TestFile, Read)
   currentPos += 100 + addPerLine * 1;
   EXPECT_EQ(currentPos, file.Seek(100 + addPerLine * 1, SEEK_CUR));
   EXPECT_EQ(currentPos, file.GetPosition());
-  EXPECT_EQ(fourthBuf.length(), file.Read(buf, fourthBuf.length()));
+  EXPECT_EQ(fourthBuf.length(), static_cast<size_t>(file.Read(buf, fourthBuf.length())));
   file.Flush();
   currentPos += fourthBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
@@ -77,7 +65,7 @@ TEST(TestFile, Read)
   currentPos = realSize - fifthBuf.length();
   EXPECT_EQ(currentPos, file.Seek(-(int64_t)fifthBuf.length(), SEEK_END));
   EXPECT_EQ(currentPos, file.GetPosition());
-  EXPECT_EQ(fifthBuf.length(), file.Read(buf, fifthBuf.length()));
+  EXPECT_EQ(fifthBuf.length(), static_cast<size_t>(file.Read(buf, fifthBuf.length())));
   file.Flush();
   currentPos += fifthBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
@@ -87,7 +75,7 @@ TEST(TestFile, Read)
   EXPECT_EQ(currentPos, file.GetPosition());
   currentPos = 0;
   EXPECT_EQ(currentPos, file.Seek(currentPos, SEEK_SET));
-  EXPECT_EQ(firstBuf.length(), file.Read(buf, firstBuf.length()));
+  EXPECT_EQ(firstBuf.length(), static_cast<size_t>(file.Read(buf, firstBuf.length())));
   file.Flush();
   currentPos += firstBuf.length();
   EXPECT_EQ(currentPos, file.GetPosition());
@@ -101,8 +89,7 @@ TEST(TestFile, Write)
 {
   XFILE::CFile *file;
   const char str[] = "TestFile.Write test string\n";
-  char buf[30];
-  memset(&buf, 0, sizeof(buf));
+  char buf[30] = {};
 
   ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
   file->Close();
@@ -116,7 +103,7 @@ TEST(TestFile, Write)
   EXPECT_EQ((int64_t)sizeof(str), file->Seek(0, SEEK_END));
   EXPECT_EQ(0, file->Seek(0, SEEK_SET));
   EXPECT_EQ((int64_t)sizeof(str), file->GetLength());
-  EXPECT_EQ(sizeof(str), file->Read(buf, sizeof(buf)));
+  EXPECT_EQ(sizeof(str), static_cast<size_t>(file->Read(buf, sizeof(buf))));
   file->Flush();
   EXPECT_EQ((int64_t)sizeof(str), file->GetPosition());
   EXPECT_EQ(0, memcmp(str, buf, sizeof(str)));
@@ -143,7 +130,7 @@ TEST(TestFile, Stat)
   ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
   EXPECT_EQ(0, file->Stat(&buffer));
   file->Close();
-  EXPECT_NE(0, buffer.st_mode | _S_IFREG);
+  EXPECT_NE(0U, buffer.st_mode | _S_IFREG);
   EXPECT_EQ(-1, XFILE::CFile::Stat("", &buffer));
   EXPECT_EQ(ENOENT, errno);
   EXPECT_TRUE(XBMC_DELETETEMPFILE(file));
@@ -160,19 +147,20 @@ TEST(TestFile, Delete)
   EXPECT_TRUE(XFILE::CFile::Exists(path));
   EXPECT_TRUE(XFILE::CFile::Delete(path));
   EXPECT_FALSE(XFILE::CFile::Exists(path));
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(file));
 }
 
 TEST(TestFile, Rename)
 {
-  XFILE::CFile *file;
+  XFILE::CFile *file1, *file2;
   std::string path1, path2;
 
-  ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
-  file->Close();
-  path1 = XBMC_TEMPFILEPATH(file);
-  ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
-  file->Close();
-  path2 = XBMC_TEMPFILEPATH(file);
+  ASSERT_NE(nullptr, file1 = XBMC_CREATETEMPFILE(""));
+  file1->Close();
+  path1 = XBMC_TEMPFILEPATH(file1);
+  ASSERT_NE(nullptr, file2 = XBMC_CREATETEMPFILE(""));
+  file2->Close();
+  path2 = XBMC_TEMPFILEPATH(file2);
   EXPECT_TRUE(XFILE::CFile::Delete(path1));
   EXPECT_FALSE(XFILE::CFile::Exists(path1));
   EXPECT_TRUE(XFILE::CFile::Exists(path2));
@@ -180,19 +168,21 @@ TEST(TestFile, Rename)
   EXPECT_TRUE(XFILE::CFile::Exists(path1));
   EXPECT_FALSE(XFILE::CFile::Exists(path2));
   EXPECT_TRUE(XFILE::CFile::Delete(path1));
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(file1));
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(file2));
 }
 
 TEST(TestFile, Copy)
 {
-  XFILE::CFile *file;
+  XFILE::CFile *file1, *file2;
   std::string path1, path2;
 
-  ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
-  file->Close();
-  path1 = XBMC_TEMPFILEPATH(file);
-  ASSERT_NE(nullptr, file = XBMC_CREATETEMPFILE(""));
-  file->Close();
-  path2 = XBMC_TEMPFILEPATH(file);
+  ASSERT_NE(nullptr, file1 = XBMC_CREATETEMPFILE(""));
+  file1->Close();
+  path1 = XBMC_TEMPFILEPATH(file1);
+  ASSERT_NE(nullptr, file2 = XBMC_CREATETEMPFILE(""));
+  file2->Close();
+  path2 = XBMC_TEMPFILEPATH(file2);
   EXPECT_TRUE(XFILE::CFile::Delete(path1));
   EXPECT_FALSE(XFILE::CFile::Exists(path1));
   EXPECT_TRUE(XFILE::CFile::Exists(path2));
@@ -201,6 +191,8 @@ TEST(TestFile, Copy)
   EXPECT_TRUE(XFILE::CFile::Exists(path2));
   EXPECT_TRUE(XFILE::CFile::Delete(path1));
   EXPECT_TRUE(XFILE::CFile::Delete(path2));
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(file1));
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(file2));
 }
 
 TEST(TestFile, SetHidden)
@@ -218,4 +210,73 @@ TEST(TestFile, SetHidden)
 #endif
   EXPECT_TRUE(XFILE::CFile::Exists(XBMC_TEMPFILEPATH(file)));
   EXPECT_TRUE(XBMC_DELETETEMPFILE(file));
+}
+
+TEST(TestFile, ReadLineRaw)
+{
+  // Note: The newline char on Windows is "\r", not "\r\n"!
+  // For Platform compatibility we therefor only match the prefix.
+
+  const auto newLineLen = CXBMCTestUtils::Instance().getNewLineCharacters().length();
+
+  XFILE::CFile file;
+  ASSERT_TRUE(file.Open(XBMC_REF_FILE_PATH("/xbmc/filesystem/test/reffile.txt")));
+  char buffer[1024];
+  // Read first line full
+  XFILE::CFile::ReadLineResult result = file.ReadLine(buffer, sizeof(buffer));
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::OK);
+  ASSERT_EQ(result.length, 6);
+  ASSERT_TRUE(std::string_view(buffer).starts_with("About"));
+  // Read second line in parts
+  result = file.ReadLine(buffer, 2);
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::TRUNCATED);
+  ASSERT_EQ(result.length, 1);
+  ASSERT_STREQ(buffer, "-");
+  result = file.ReadLine(buffer, 3);
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::TRUNCATED);
+  ASSERT_EQ(result.length, 2);
+  ASSERT_STREQ(buffer, "--");
+  result = file.ReadLine(buffer, 3 + newLineLen);
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::OK);
+  ASSERT_EQ(result.length, 3);
+  ASSERT_TRUE(std::string_view(buffer).starts_with("--"));
+  // Read third line until line break
+  result = file.ReadLine(buffer, 78);
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::TRUNCATED);
+  ASSERT_EQ(result.length, 77);
+  // Read remaining line break
+  result = file.ReadLine(buffer, 1 + newLineLen);
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::OK);
+  ASSERT_EQ(result.length, 1);
+  ASSERT_TRUE(std::string_view(buffer) == "\n" || std::string_view(buffer) == "\r");
+  // Read remaining 22 lines
+  for (int i = 0; i < 22; ++i)
+  {
+    result = file.ReadLine(buffer, sizeof(buffer));
+    ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::OK);
+  }
+  // Read after EOF
+  result = file.ReadLine(buffer, sizeof(buffer));
+  ASSERT_EQ(result.code, XFILE::CFile::ReadLineResult::FAILURE);
+}
+
+TEST(TestFile, ReadLine)
+{
+  // Note: The newline char on Windows is "\r", not "\r\n"!
+  // For Platform compatibility we therefor only match the prefix.
+
+  XFILE::CFile file;
+  ASSERT_TRUE(file.Open(XBMC_REF_FILE_PATH("/xbmc/filesystem/test/reffile.txt")));
+  std::string line;
+  ASSERT_TRUE(file.ReadLine(line));
+  ASSERT_TRUE(line.starts_with("About"));
+  ASSERT_TRUE(file.ReadLine(line));
+  ASSERT_TRUE(line.starts_with("-----"));
+  // Read remaining 23 lines
+  for (int i = 0; i < 23; ++i)
+  {
+    ASSERT_TRUE(file.ReadLine(line));
+  }
+  // Read after EOF
+  ASSERT_FALSE(file.ReadLine(line));
 }

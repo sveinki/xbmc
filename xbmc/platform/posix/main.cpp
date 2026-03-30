@@ -1,116 +1,74 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <sys/resource.h>
+#include "PlatformPosix.h"
+#include "application/AppEnvironment.h"
+#include "application/AppParamParser.h"
+#include "platform/xbmc.h"
+
+#if defined(TARGET_LINUX) || defined(TARGET_FREEBSD)
+#include "platform/linux/AppParamParserLinux.h"
+#endif
+
+#ifdef TARGET_WEBOS
+#include "platform/linux/AppParamParserWebOS.h"
+#endif
+
+#include <cstdio>
+#include <cstring>
+#include <errno.h>
+#include <locale.h>
 #include <signal.h>
 
-#include <cstring>
-
-// For HAS_SDL
-#include "system.h"
-
-#if defined(TARGET_DARWIN_OSX)
-  #include "Util.h"
-  // SDL redefines main as SDL_main 
-  #ifdef HAS_SDL
-    #include <SDL/SDL.h>
-  #endif
-#include <locale.h>
-#endif
-
-#include "AppParamParser.h"
-#include "FileItem.h"
-#include "messaging/ApplicationMessenger.h"
-#include "PlayListPlayer.h"
-#include "platform/MessagePrinter.h"
-#include "platform/xbmc.h"
-#include "platform/XbmcContext.h"
-#include "settings/AdvancedSettings.h"
-#include "utils/log.h"
-
-#ifdef HAS_LIRC
-#include "input/linux/LIRC.h"
-#endif
-
+#include <sys/resource.h>
 
 namespace
 {
-
-class CPOSIXSignalHandleThread : public CThread
+extern "C" void XBMC_POSIX_HandleSignal(int sig)
 {
-public:
-  CPOSIXSignalHandleThread()
-  : CThread("POSIX signal handler")
-  {}
-protected:
-  void Process() override
-  {
-    CMessagePrinter::DisplayMessage("Exiting application");
-    KODI::MESSAGING::CApplicationMessenger::GetInstance().PostMsg(TMSG_QUIT);
-  }
-};
-
-extern "C"
-{
-
-void XBMC_POSIX_HandleSignal(int sig)
-{
-  // Spawn handling thread: the current thread that this signal was catched on
-  // might have been interrupted in a call to PostMsg() while holding a lock
-  // there, which would lead to a deadlock if PostMsg() was called directly here
-  // as PostMsg() is not supposed to be reentrant
-  auto thread = new CPOSIXSignalHandleThread;
-  thread->Create(true);
+  // Setting an atomic flag is one of the only useful things that is permitted by POSIX
+  // in signal handlers
+  CPlatformPosix::RequestQuit();
 }
-
-}
-
-}
-
+} // namespace
 
 int main(int argc, char* argv[])
 {
-  // set up some xbmc specific relationships
-  XBMC::Context context;
-
 #if defined(_DEBUG)
   struct rlimit rlim;
   rlim.rlim_cur = rlim.rlim_max = RLIM_INFINITY;
   if (setrlimit(RLIMIT_CORE, &rlim) == -1)
-    CLog::Log(LOGDEBUG, "Failed to set core size limit (%s)", strerror(errno));
+    fprintf(stderr, "Failed to set core size limit (%s).\n", strerror(errno));
 #endif
-  
-  // Set up global SIGINT/SIGTERM handler
+
+  // Set up global SIGINT/SIGHUP/SIGTERM handler
   struct sigaction signalHandler;
   std::memset(&signalHandler, 0, sizeof(signalHandler));
   signalHandler.sa_handler = &XBMC_POSIX_HandleSignal;
   signalHandler.sa_flags = SA_RESTART;
   sigaction(SIGINT, &signalHandler, nullptr);
+  sigaction(SIGHUP, &signalHandler, nullptr);
   sigaction(SIGTERM, &signalHandler, nullptr);
 
   setlocale(LC_NUMERIC, "C");
- 
-  // Initialize before CAppParamParser so it can set the log level
-  g_advancedSettings.Initialize();
+
+#ifdef TARGET_WEBOS
+  CAppParamParserWebOS appParamParser;
+#elif defined(TARGET_LINUX) || defined(TARGET_FREEBSD)
+  CAppParamParserLinux appParamParser;
+#else
   CAppParamParser appParamParser;
+#endif
   appParamParser.Parse(argv, argc);
-  
-  return XBMC_Run(true, appParamParser);
+
+  CAppEnvironment::SetUp(appParamParser.GetAppParams());
+  int status = XBMC_Run(true);
+  CAppEnvironment::TearDown();
+
+  return status;
 }

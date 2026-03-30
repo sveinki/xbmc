@@ -1,56 +1,47 @@
 package @APP_PACKAGE@;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.System;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.Iterator;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.Properties;
-import java.util.Enumeration;
-import java.util.ArrayList;
+import @APP_PACKAGE@.util.Storage;
 
-import android.net.Uri;
-import android.os.AsyncTask;
-import android.os.Build;
-import android.os.Bundle;
+import static android.content.pm.PackageManager.FEATURE_LEANBACK;
+import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+
+import android.Manifest;
 import android.app.Activity;
-import android.app.ActivityManager;
-import android.app.ActivityManager.RunningTaskInfo;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.util.Log;
+import android.content.IntentFilter;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
+import android.provider.Settings;
 import android.text.Html;
 import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.content.res.Resources;
-import android.content.res.Resources.NotFoundException;
 
-import android.os.Handler;
-import android.os.Message;
-import android.content.BroadcastReceiver;
-import android.content.IntentFilter;
-import android.os.Environment;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.IOException;
+import java.lang.System;
+import java.util.Enumeration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
-public class Splash extends Activity {
-
+public class Splash extends Activity
+{
   private static final int Uninitialized = 0;
   private static final int InError = 1;
   private static final int Checking = 2;
@@ -60,14 +51,19 @@ public class Splash extends Activity {
   private static final int CachingDone = 6;
   private static final int WaitingStorageChecked = 7;
   private static final int StorageChecked = 8;
-  private static final int DownloadingObb = 90;
-  private static final int DownloadObbDone = 91;
+  private static final int CheckingPermissions = 9;
+  private static final int CheckingPermissionsDone = 10;
+  private static final int CheckingPermissionsInfo = 11;
+  private static final int CheckExternalStorage = 12;
+  private static final int RecordAudioPermission = 13;
+  private static final int RecordAudioInfo = 14;
   private static final int StartingXBMC = 99;
 
   private static final String TAG = "@APP_NAME@";
 
-  private String mCpuinfo = "";
-  private ArrayList<String> mMounts = new ArrayList<String>();
+  private static final int RECORDAUDIO_RESULT_CODE = 8946;
+  private static final int PERMISSION_RESULT_CODE = 8947;
+
   private String mErrorMsg = "";
 
   private ProgressBar mProgress = null;
@@ -78,76 +74,137 @@ public class Splash extends Activity {
 
   private String sPackagePath = "";
   private String sXbmcHome = "";
-  private String sXbmcdata = "";
   private File fPackagePath = null;
   private File fXbmcHome = null;
 
   private BroadcastReceiver mExternalStorageReceiver = null;
   private boolean mExternalStorageChecked = false;
   private boolean mCachingDone = false;
-  private boolean mInstallLibs = false;
+  private boolean mPermissionOK = false;
 
-  private class StateMachine extends Handler {
+  private class StateMachine extends Handler
+  {
+    private final Splash mSplash;
 
-    private Splash mSplash = null;
-
-    StateMachine(Splash a) {
+    StateMachine(Splash a)
+    {
+      super(Looper.myLooper());
       this.mSplash = a;
     }
 
-
     @Override
-    public void handleMessage(Message msg) {
+    public void handleMessage(Message msg)
+    {
       mSplash.mState = msg.what;
-      switch(mSplash.mState) {
+      switch (mSplash.mState)
+      {
         case InError:
-          showErrorDialog(mSplash, "Error", mErrorMsg);
+          showErrorDialog(mSplash, getString(R.string.error_title), mErrorMsg);
+          break;
+        case CheckingPermissionsInfo:
+          mSplash.mTextView.setText(getString(R.string.asking_permissions));
+          showInfoDialog(getString(R.string.notice_dialog, "@APP_NAME@"), CheckingPermissions);
+          break;
+        case RecordAudioInfo:
+          showInfoDialog(getString(R.string.record_audio_dialog, "@APP_NAME@"), RecordAudioPermission);
+          break;
+        case RecordAudioPermission:
+          requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},
+                  RECORDAUDIO_RESULT_CODE);
+          break;
+        case CheckingPermissions:
+          if (Build.VERSION.SDK_INT >= 33 || (Build.VERSION.SDK_INT >= 30 && !isAndroidTV()))
+          {
+            try
+            {
+              Intent intent = new Intent();
+              intent.setAction(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+              intent.setData(Uri.parse(String.format("package:%s", getPackageName())));
+              startActivityForResult(intent, PERMISSION_RESULT_CODE);
+            }
+            catch (Exception e)
+            {
+              Log.d(TAG, "Exception asking for permissions: " + e.getMessage());
+            }
+          }
+          else
+          {
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    PERMISSION_RESULT_CODE);
+          }
+          break;
+        case CheckingPermissionsDone:
+          if (mPermissionOK)
+            sendEmptyMessage(CheckExternalStorage);
+          else
+          {
+            mErrorMsg = getString(R.string.permission_denied);
+            sendEmptyMessage(InError);
+            break;
+          }
           break;
         case Checking:
           break;
         case Clearing:
-          mSplash.mTextView.setText("Clearing cache...");
+          mSplash.mTextView.setText(getString(R.string.clearing_cache));
           mSplash.mProgress.setVisibility(View.INVISIBLE);
           break;
-        case DownloadingObb:
-          break;
-        case DownloadObbDone:
-          new FillCache(mSplash).execute();
-          break;
         case Caching:
+          if (!mCachingDone)
+            new FillCache(mSplash).execute();
+          else
+            mStateMachine.sendEmptyMessage(CachingDone);
           break;
         case CachingDone:
           mSplash.mCachingDone = true;
           sendEmptyMessage(StartingXBMC);
           break;
+        case CheckExternalStorage:
+          if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState()))
+          {
+            mExternalStorageChecked = true;
+            sendEmptyMessage(StorageChecked);
+          }
+          else
+          {
+            startWatchingExternalStorage();
+            sendEmptyMessage(WaitingStorageChecked);
+          }
+          break;
         case WaitingStorageChecked:
-          mSplash.mTextView.setText("Waiting for external storage...");
+          mSplash.mTextView.setText(getString(R.string.waiting_external));
           mSplash.mProgress.setVisibility(View.INVISIBLE);
           break;
         case StorageChecked:
-          mSplash.mTextView.setText("External storage OK...");
+          mSplash.mTextView.setText(getString(R.string.external_ok));
           mExternalStorageChecked = true;
           mSplash.stopWatchingExternalStorage();
           if (mSplash.mCachingDone)
             sendEmptyMessage(StartingXBMC);
-          else {
+          else
+          {
             SetupEnvironment();
-            if (mState == InError) {
+
+            if (mState == InError)
+            {
               sendEmptyMessage(InError);
             }
-            if (fXbmcHome.exists() && fXbmcHome.lastModified() >= fPackagePath.lastModified() && !mInstallLibs) {
+            if (fXbmcHome.exists() && fXbmcHome.lastModified() >= fPackagePath.lastModified())
+            {
               mState = CachingDone;
               mCachingDone = true;
 
               sendEmptyMessage(StartingXBMC);
-            } else {
+            }
+            else
+            {
               new FillCache(mSplash).execute();
             }
           }
 
           break;
         case StartingXBMC:
-          mSplash.mTextView.setText("Starting @APP_NAME@...");
+          mSplash.mTextView.setText(getString(R.string.starting, "@APP_NAME@"));
           mSplash.mProgress.setVisibility(View.INVISIBLE);
           mSplash.startXBMC();
           break;
@@ -156,140 +213,52 @@ public class Splash extends Activity {
       }
     }
   }
-  private StateMachine mStateMachine = new StateMachine(this);
 
-  private class DownloadObb extends AsyncTask<String, Integer, Integer>
+  private final StateMachine mStateMachine = new StateMachine(this);
+
+  private class FillCache
   {
-    private Splash mSplash = null;
+    private final Splash mSplash;
     private int mProgressStatus = 0;
+    private final ExecutorService executor;
+    private final Handler handler;
 
-    public DownloadObb(Splash splash) {
-      this.mSplash = splash;
+    public FillCache(Splash splash)
+    {
+      mSplash = splash;
+      executor = Executors.newSingleThreadExecutor();
+      handler = new Handler(Looper.getMainLooper());
     }
 
-    @Override
-    protected Integer doInBackground(String... sUrl) {
-      InputStream input = null;
-      OutputStream output = null;
-      HttpURLConnection connection = null;
+    public void execute()
+    {
+      executor.execute(() -> {
+        Integer result = doInBackground();
+        handler.post(() -> onPostExecute(result));
+      });
+    }
 
-      String src = sUrl[0];
-      String dest = sUrl[1];
-      File fObb = new File(dest);
+    protected void publishProgress(Integer value)
+    {
+      handler.post(() -> onProgressUpdate(value));
+    }
 
-      Log.d(TAG, "Downloading " + src + " to " + dest);
-
-      if (!fObb.getParentFile().exists() && !fObb.getParentFile().mkdirs()) {
-        Log.e(TAG, "Error creating directory " + fObb.getParentFile().getAbsolutePath());
-        return -1;
+    void DeleteRecursive(File fileOrDirectory)
+    {
+      if (fileOrDirectory.isDirectory()) {
+        File[] files = fileOrDirectory.listFiles();
+        if (files != null)
+          for (File child : files)
+            DeleteRecursive(child);
       }
-
-      int ret = 0;
-      try {
-        URL url = new URL(src);
-        connection = (HttpURLConnection) url.openConnection();
-        connection.connect();
-
-        // expect HTTP 200 OK, so we don't mistakenly save error report
-        // instead of the file
-        if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
-            return -1;
-        }
-
-        // this will be useful to display download percentage
-        // might be -1: server did not report the length
-        int fileLength = connection.getContentLength();
-
-        // download the file
-        input = connection.getInputStream();
-        output = new FileOutputStream(dest);
-
-        byte data[] = new byte[4096];
-        long total = 0;
-        int count;
-        mProgress.setProgress(0);
-        mProgress.setMax(fileLength);
-        while ((count = input.read(data)) != -1) {
-          // allow canceling with back button
-          if (isCancelled()) {
-            ret = -1;
-            break;
-          }
-          total += count;
-          // publishing the progress....
-          if (fileLength > 0) // only if total length is known
-            publishProgress((int) total);
-          output.write(data, 0, count);
-        }
-      } catch (Exception e) {
-        return -1;
-      } finally {
-        try {
-          if (output != null)
-            output.close();
-          if (input != null)
-            input.close();
-        } catch (IOException ignored) {
-        }
-
-        if (connection != null)
-          connection.disconnect();
-      }
-      if (ret == 0)
-        mState = DownloadObbDone;
-      else
-        fObb.delete();
-
-      publishProgress(0);
-      return ret;
-    }
-
-    @Override
-    protected void onProgressUpdate(Integer... values) {
-      switch (mState) {
-      case DownloadingObb:
-        mSplash.mTextView.setText("Downloading OBB...");
-        mSplash.mProgress.setVisibility(View.VISIBLE);
-        mSplash.mProgress.setProgress(values[0]);
-        break;
-      case DownloadObbDone:
-        mSplash.mProgress.setVisibility(View.INVISIBLE);
-        break;
-      }
-    }
-
-    @Override
-    protected void onPostExecute(Integer result) {
-      super.onPostExecute(result);
-      if (result < 0) {
-        mState = InError;
-        mErrorMsg = "Cannot download obb.";
-      }
-
-      mStateMachine.sendEmptyMessage(mState);
-    }
-  }
-
-  private class FillCache extends AsyncTask<Void, Integer, Integer> {
-
-    private Splash mSplash = null;
-    private int mProgressStatus = 0;
-
-    public FillCache(Splash splash) {
-      this.mSplash = splash;
-    }
-
-    void DeleteRecursive(File fileOrDirectory) {
-      if (fileOrDirectory.isDirectory())
-        for (File child : fileOrDirectory.listFiles())
-          DeleteRecursive(child);
 
       fileOrDirectory.delete();
     }
 
-    @Override
-    protected Integer doInBackground(Void... param) {
-      if (fXbmcHome.exists()) {
+    protected Integer doInBackground()
+    {
+      if (fXbmcHome.exists())
+      {
         // Remove existing files
         mStateMachine.sendEmptyMessage(Clearing);
         Log.d(TAG, "Removing existing " + fXbmcHome.toString());
@@ -297,13 +266,14 @@ public class Splash extends Activity {
       }
       fXbmcHome.mkdirs();
 
-      // Log.d(TAG, "apk: " + sPackagePath);
-      // Log.d(TAG, "output: " + sXbmcHome);
+      Log.d(TAG, "apk: " + sPackagePath);
+      Log.d(TAG, "output: " + sXbmcHome);
 
       ZipFile zip;
       byte[] buf = new byte[4096];
       int n;
-      try {
+      try
+      {
         zip = new ZipFile(sPackagePath);
         Enumeration<? extends ZipEntry> entries = zip.entries();
         mProgress.setProgress(0);
@@ -311,47 +281,53 @@ public class Splash extends Activity {
 
         mState = Caching;
         publishProgress(mProgressStatus);
-        while (entries.hasMoreElements()) {
+
+        String cXbmcHome = fXbmcHome.getCanonicalPath();
+        Log.d(TAG, "output: " + cXbmcHome);
+
+        while (entries.hasMoreElements())
+        {
           // Update the progress bar
           publishProgress(++mProgressStatus);
 
-          ZipEntry e = (ZipEntry) entries.nextElement();
+          ZipEntry e = entries.nextElement();
           String sName = e.getName();
 
-          if (! (sName.startsWith("assets/") || (mInstallLibs && sName.startsWith("lib/"))) )
-            continue;
-          if (sName.startsWith("assets/python2.7"))
+          if (!sName.startsWith("assets/"))
             continue;
 
-          String sFullPath = null;
-          if (sName.startsWith("lib/"))
-          {
-            if (e.isDirectory())
-              continue;
-            sFullPath = getApplicationInfo().nativeLibraryDir + "/" + new File(sName).getName();
+          String sFullPath = sXbmcHome + "/" + sName;
+          File fFullPath = new File(sFullPath);
+
+          // Zip Path Traversal vulnerability
+          String cFullPath = fFullPath.getCanonicalPath();
+          if (!cFullPath.startsWith(cXbmcHome)) {
+            Log.w(TAG, "Unsafe unzipping pattern: " + cFullPath);
+            continue;
           }
-          else
-          {
-            sFullPath = sXbmcHome + "/" + sName;
-            File fFullPath = new File(sFullPath);
-            if (e.isDirectory()) {
-              fFullPath.mkdirs();
-              continue;
-            }
-            fFullPath.getParentFile().mkdirs();
-         }
 
-          try {
+          if (e.isDirectory())
+          {
+            fFullPath.mkdirs();
+            continue;
+          }
+          File parent = fFullPath.getParentFile();
+          if (parent != null && !parent.exists())
+            parent.mkdirs();
+
+          try
+          {
             InputStream in = zip.getInputStream(e);
-            BufferedOutputStream out = new BufferedOutputStream(
-                new FileOutputStream(sFullPath));
-            while ((n = in.read(buf, 0, 4096)) > -1)
+            FileOutputStream out = new FileOutputStream(sFullPath);
+            while ((n = in.read(buf)) > 0)
               out.write(buf, 0, n);
 
             in.close();
             out.close();
-          } catch (IOException e1) {
-            e1.printStackTrace();
+          }
+          catch (IOException e1)
+          {
+            Log.e(TAG, "Exception: " + e1.getMessage());
           }
         }
 
@@ -359,13 +335,17 @@ public class Splash extends Activity {
 
         fXbmcHome.setLastModified(fPackagePath.lastModified());
 
-      } catch (FileNotFoundException e1) {
-        e1.printStackTrace();
-        mErrorMsg = "Cannot find package.";
+      }
+      catch (FileNotFoundException e1)
+      {
+        Log.e(TAG, "Exception: " + e1.getMessage());
+        mErrorMsg = getString(R.string.no_find_apk);
         return -1;
-      } catch (IOException e) {
-        e.printStackTrace();
-        mErrorMsg = "Cannot read package.";
+      }
+      catch (IOException e)
+      {
+        Log.e(TAG, "Exception: " + e.getMessage());
+        mErrorMsg = getString(R.string.no_read_apk);
         File obb = new File(sPackagePath);
         obb.delete();
         return -1;
@@ -377,24 +357,25 @@ public class Splash extends Activity {
       return 0;
     }
 
-    @Override
-    protected void onProgressUpdate(Integer... values) {
-      switch (mState) {
-      case Caching:
-        mSplash.mTextView.setText("Preparing for first run. Please wait...");
-        mSplash.mProgress.setVisibility(View.VISIBLE);
-        mSplash.mProgress.setProgress(values[0]);
-        break;
-      case CachingDone:
-        mSplash.mProgress.setVisibility(View.INVISIBLE);
-        break;
+    protected void onProgressUpdate(Integer value)
+    {
+      switch (mState)
+      {
+        case Caching:
+          mSplash.mTextView.setText(getString(R.string.first_run));
+          mSplash.mProgress.setVisibility(View.VISIBLE);
+          mSplash.mProgress.setProgress(value);
+          break;
+        case CachingDone:
+          mSplash.mProgress.setVisibility(View.INVISIBLE);
+          break;
       }
     }
 
-    @Override
-    protected void onPostExecute(Integer result) {
-      super.onPostExecute(result);
-      if (result < 0) {
+    protected void onPostExecute(Integer result)
+    {
+      if (result < 0)
+      {
         mState = InError;
       }
 
@@ -402,28 +383,43 @@ public class Splash extends Activity {
     }
   }
 
-  public void showErrorDialog(final Activity act, final String title, final String message) {
+  public void showErrorDialog(final Activity act, final String title, final String message)
+  {
     if (myAlertDialog != null && myAlertDialog.isShowing())
       return;
 
     AlertDialog.Builder builder = new AlertDialog.Builder(act);
     builder.setTitle(title);
     builder.setIcon(android.R.drawable.ic_dialog_alert);
-    builder.setMessage(Html.fromHtml(message));
-    builder.setPositiveButton("Exit",
-        new DialogInterface.OnClickListener() {
-          public void onClick(DialogInterface dialog, int arg1) {
-            dialog.dismiss();
-            act.finish();
-          }
-        });
+    builder.setMessage(Html.fromHtml(message, Html.FROM_HTML_MODE_LEGACY));
+    builder.setPositiveButton(getString(R.string.exit_button), (dialog, arg1) -> {
+      dialog.dismiss();
+      act.finish();
+    });
     builder.setCancelable(false);
     myAlertDialog = builder.create();
     myAlertDialog.show();
 
     // Make links actually clickable
     ((TextView) myAlertDialog.findViewById(android.R.id.message))
-        .setMovementMethod(LinkMovementMethod.getInstance());
+            .setMovementMethod(LinkMovementMethod.getInstance());
+  }
+
+  /**
+   * Displays an info dialog with a specified message and a button to continue.
+   *
+   * @param message The message to be displayed in the dialog.
+   * @param state   The next state to be sent to the state machine.
+   */
+  private void showInfoDialog(final String message, int state)
+  {
+    AlertDialog dialog = new AlertDialog.Builder(this).create();
+    dialog.setCancelable(false);
+    dialog.setTitle(getString(R.string.info_title));
+    dialog.setMessage(message);
+    dialog.setButton(DialogInterface.BUTTON_NEUTRAL, getString(R.string.continue_button),
+            (dialog1, which) -> mStateMachine.sendEmptyMessage(state));
+    dialog.show();
   }
 
   private void SetupEnvironment()
@@ -439,7 +435,8 @@ public class Splash extends Activity {
         try
         {
           Thread.sleep(1000);
-        } catch (InterruptedException e)
+        }
+        catch (InterruptedException e)
         {
           continue;
         }
@@ -451,13 +448,16 @@ public class Splash extends Activity {
         sXbmcHome = "";
       }
     }
-    if (sXbmcHome.isEmpty()) {
-      File fCacheDir = getCacheDir();
+    File fCacheDir = getCacheDir();
+    if (sXbmcHome.isEmpty())
+    {
       sXbmcHome = fCacheDir.getAbsolutePath() + "/apk";
       fXbmcHome = new File(sXbmcHome);
     }
+    File fLibCache = new File(fCacheDir.getAbsolutePath() + "/lib");
+    fLibCache.mkdirs();
 
-    sXbmcdata = XBMCProperties.getStringProperty("xbmc.data", "");
+    final String sXbmcdata = XBMCProperties.getStringProperty("xbmc.data", "");
     if (!sXbmcdata.isEmpty())
     {
       File fXbmcData = new File(sXbmcdata);
@@ -468,7 +468,8 @@ public class Splash extends Activity {
         try
         {
           Thread.sleep(1000);
-        } catch (InterruptedException e)
+        }
+        catch (InterruptedException e)
         {
           continue;
         }
@@ -477,158 +478,119 @@ public class Splash extends Activity {
 
       if (!fXbmcData.exists())
       {
-        sXbmcdata = "";
         System.setProperty("xbmc.data", "");
+      }
+    }
+
+    final String sXbmcTemp = XBMCProperties.getStringProperty("xbmc.temp", "");
+    if (!sXbmcTemp.isEmpty())
+    {
+      File fXbmcTemp = new File(sXbmcTemp);
+      int loop = 20;
+      while (!fXbmcTemp.exists() && loop > 0)
+      {
+        // Wait a while in case of non-primary sdcard
+        try
+        {
+          Thread.sleep(1000);
+        }
+        catch (InterruptedException e)
+        {
+          continue;
+        }
+        loop--;
+      }
+
+      if (!fXbmcTemp.exists())
+      {
+        System.setProperty("xbmc.temp", "");
       }
     }
 
     sPackagePath = getPackageResourcePath();
     fPackagePath = new File(sPackagePath);
-    String obbfn = "";
-    if (fPackagePath.length() < 40 * 1024 * 1024)
+  }
+
+  private boolean CheckPermissions()
+  {
+    boolean retVal = false;
+    if (Build.VERSION.SDK_INT >= 33 || (Build.VERSION.SDK_INT >= 30 && !isAndroidTV()))
     {
-      sPackagePath = XBMCProperties.getStringProperty("@APP_NAME_LC@.obb", "");
-      if (sPackagePath.equals(""))
+      if (Environment.isExternalStorageManager())
       {
-        try
+        retVal = true;
+      }
+    }
+    else
+    {
+      int permissionCheck;
+      permissionCheck = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+      if (permissionCheck == PERMISSION_GRANTED)
+        retVal = true;
+    }
+    return retVal;
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults)
+  {
+    switch (requestCode)
+    {
+      case PERMISSION_RESULT_CODE:
+      {
+        // If request is cancelled, the result arrays are empty.
+        if (grantResults.length > 0
+                && grantResults[0] == PERMISSION_GRANTED)
         {
-          obbfn = "main." + getPackageManager().getPackageInfo(getPackageName(), 0).versionCode + "." + getPackageName() + ".obb";
-          sPackagePath = Environment.getExternalStorageDirectory()
-              + "/Android/obb/" + getPackageName() + "/" + obbfn;
-        } catch (Exception e) {}
+          mPermissionOK = true;
+        }
+        mStateMachine.sendEmptyMessage(RecordAudioInfo);
+        break;
       }
-
-      fPackagePath = new File(sPackagePath);
-      if (fPackagePath.length() < 10 * 1024 * 1024)
-        fPackagePath.delete();  // borked download
-      if (!fPackagePath.exists())
+      case RECORDAUDIO_RESULT_CODE:
       {
-        mState = DownloadingObb;
-        new DownloadObb(this).execute("http://mirrors.kodi.tv/releases/android/obb/" + obbfn, sPackagePath);
+        mStateMachine.sendEmptyMessage(CheckingPermissionsDone);
       }
     }
   }
 
-  private void MigrateUserData() {
-      String sOldUserDir;
-      File fOldUserDir;
-      try {
-        sOldUserDir = getExternalFilesDir(null).getParentFile().getParentFile() + "/org.xbmc.xbmc/files/.xbmc";
-        fOldUserDir = new File(sOldUserDir);
-        if (!fOldUserDir.exists())
-          return;
-      } catch (Exception e) {
-        return;
+  @Override
+  protected void onActivityResult(int requestCode, int resultCode, Intent data)
+  {
+    super.onActivityResult(requestCode, resultCode, data);
+    if (requestCode == PERMISSION_RESULT_CODE)
+    {
+      if (Environment.isExternalStorageManager())
+      {
+        mPermissionOK = true;
       }
-
-      File fNewUserDir = new File(getExternalFilesDir(null), ".@APP_NAME_LC@");
-      String sKodiMigrated = fNewUserDir.getAbsolutePath() + "/.kodi_data_was_migrated";
-      File fKodiMigrated = new File(sKodiMigrated);
-
-      Log.d(TAG, "External_dir = " + fOldUserDir);
-      if (fOldUserDir.exists() && !fNewUserDir.exists()) {
-        Log.d(TAG, "XBMC user data detected at " + fOldUserDir.getAbsolutePath() + ", migrating to " + fNewUserDir.getAbsolutePath());
-        if (!fNewUserDir.getParentFile().exists() && !fNewUserDir.getParentFile().mkdirs()) {
-          Log.d(TAG, "Error creating " + fNewUserDir.getParentFile().getAbsolutePath());
-          return;
-        }
-        if (fOldUserDir.renameTo(fNewUserDir)) {
-          try {
-            new FileOutputStream(fKodiMigrated).close();
-          } catch (IOException e1) {
-            e1.printStackTrace();
-          }
-          Log.d(TAG, "XBMC user data migrated to @APP_NAME@ successfully");
-        } else {
-          Log.d(TAG, "Error migrating XBMC user data");
-        }
-      }
-  }
-
-
-  private boolean ParseCpuFeature() {
-    ProcessBuilder cmd;
-
-    try {
-      String[] args = { "/system/bin/cat", "/proc/cpuinfo" };
-      cmd = new ProcessBuilder(args);
-
-      Process process = cmd.start();
-      InputStream in = process.getInputStream();
-      byte[] re = new byte[1024];
-      while (in.read(re) != -1) {
-        mCpuinfo = mCpuinfo + new String(re);
-      }
-      in.close();
-    } catch (IOException ex) {
-      ex.printStackTrace();
-      return false;
+      mStateMachine.sendEmptyMessage(RecordAudioInfo);
     }
-    return true;
   }
 
-  // We can't find a way to properly detect and monitor status of
-  //  a physical sdcard currently.
-  // "External storage" points to internal flash storage on modern
-  //  devices and nothing else seems available.
-  //
-  // ParseMounts() was part of the attempts to solve the issue and is not in use currently,
-  //   but kept for possible future use.
-  private boolean ParseMounts() {
-    ProcessBuilder cmd;
-    final Pattern reMount = Pattern.compile("^(.+?)\\s+(.+?)\\s+(.+?)\\s");
-    String strMounts = "";
-
-    try {
-      String[] args = { "/system/bin/cat", "/proc/mounts" };
-      cmd = new ProcessBuilder(args);
-
-      Process process = cmd.start();
-      InputStream in = process.getInputStream();
-      byte[] re = new byte[1024];
-      while (in.read(re) != -1) {
-        strMounts = strMounts + new String(re);
-      }
-      in.close();
-    } catch (IOException ex) {
-      ex.printStackTrace();
-      return false;
-    }
-
-    String[] Mounts = strMounts.split("\n");
-    for (int i=0; i<Mounts.length; ++i) {
-      Log.d(TAG, "mount: " + Mounts[i]);
-      Matcher m = reMount.matcher(Mounts[i]);
-      if (m.find()) {
-        if (m.group(1).startsWith("/dev/block/vold") && !m.group(2).startsWith("/mnt/secure/asec")) {
-          Log.d(TAG, "adding mount: " + m.group(2));
-          mMounts.add(m.group(2));
-        }
-      }
-    }
-    return true;
-  }
-
-  private boolean CheckCpuFeature(String feat) {
-    final Pattern FeaturePattern = Pattern.compile("(?i):.*?\\s" + feat + "(?:\\s|$)");
-    Matcher m = FeaturePattern.matcher(mCpuinfo);
-    return m.find();
-  }
-
-  void updateExternalStorageState() {
+  void updateExternalStorageState()
+  {
     String state = Environment.getExternalStorageState();
-    Log.d(TAG, "External storage = " + Environment.getExternalStorageDirectory().getAbsolutePath() + "; state = " + state);
-    if (Environment.MEDIA_MOUNTED.equals(state)) {
+    Log.d(TAG,
+          "External storage = " + Storage.getPrimaryStorageVolumePath(getApplicationContext()) +
+              "; state = " + state);
+    if (Environment.MEDIA_MOUNTED.equals(state))
+    {
       mStateMachine.sendEmptyMessage(StorageChecked);
-    } else {
+    }
+    else
+    {
       mExternalStorageChecked = false;
     }
   }
 
-  void startWatchingExternalStorage() {
-    mExternalStorageReceiver = new BroadcastReceiver() {
+  void startWatchingExternalStorage()
+  {
+    mExternalStorageReceiver = new BroadcastReceiver()
+    {
       @Override
-      public void onReceive(Context context, Intent intent) {
+      public void onReceive(Context context, Intent intent)
+      {
         Log.i(TAG, "Storage: " + intent.getData());
         updateExternalStorageState();
       }
@@ -643,12 +605,14 @@ public class Splash extends Activity {
     registerReceiver(mExternalStorageReceiver, filter);
   }
 
-  void stopWatchingExternalStorage() {
+  void stopWatchingExternalStorage()
+  {
     if (mExternalStorageReceiver != null)
       unregisterReceiver(mExternalStorageReceiver);
   }
 
-  protected void startXBMC() {
+  protected void startXBMC()
+  {
     // Run @APP_NAME@
     Intent intent = getIntent();
     intent.setClass(this, @APP_PACKAGE@.Main.class);
@@ -658,122 +622,90 @@ public class Splash extends Activity {
   }
 
   @Override
-  public void onCreate(Bundle savedInstanceState) {
+  public void onCreate(Bundle savedInstanceState)
+  {
     super.onCreate(savedInstanceState);
 
     // Be sure properties are initialized for native
-    XBMCProperties.initializeProperties();
+    XBMCProperties.initialize(getApplicationContext());
 
-    // Check if @APP_NAME@ is not already running
-    ActivityManager activityManager = (ActivityManager) getBaseContext()
-        .getSystemService(Context.ACTIVITY_SERVICE);
-    List<RunningTaskInfo> tasks = activityManager
-        .getRunningTasks(Integer.MAX_VALUE);
-    for (RunningTaskInfo task : tasks)
-      if (task.topActivity.toString().equalsIgnoreCase(
-          "ComponentInfo{@APP_PACKAGE@/@APP_PACKAGE@.Main}")) {
-        // @APP_NAME@ already running; just activate it
-        startXBMC();
-        return;
-      }
+    if (Main.isActivityRunning()) {
+      Log.d(TAG, "@APP_NAME@ already running; just activate it");
+      startXBMC();
+      return;
+    }
 
     mStateMachine.sendEmptyMessage(Checking);
 
-    String pkg_arch = "";
-    // Read the properties
-    try {
-      Resources resources = this.getResources();
-      InputStream xbmcprop = resources.openRawResource(R.raw.xbmc);
-      Properties properties = new Properties();
-      properties.load(xbmcprop);
-      pkg_arch = properties.getProperty("native_arch");
-    } catch (NotFoundException e) {
-      mErrorMsg = "Cannot find properties file";
-      Log.e(TAG, mErrorMsg);
-      mState = InError;
-    } catch (IOException e) {
-      mErrorMsg = "Failed to open properties file";
-      Log.e(TAG, mErrorMsg);
-      mState = InError;
-    }
+    Log.d(TAG,
+          "External storage = " + Storage.getPrimaryStorageVolumePath(getApplicationContext()) +
+              "; state = " + Environment.getExternalStorageState());
+    if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState()))
+      mExternalStorageChecked = true;
 
-    boolean arch_ok = false;
-    String[] abis = Build.SUPPORTED_ABIS;
-    for (int i=0; i<abis.length; ++i)
+    mPermissionOK = CheckPermissions();
+    if (!mPermissionOK)
     {
-      Log.i(TAG, "ABI: " + abis[i]);
-      if (abis[i].equalsIgnoreCase(pkg_arch))
+      mState = CheckingPermissionsInfo;
+    }
+    else
+    {
+      if (mState != InError && mExternalStorageChecked)
       {
-        arch_ok = true;
-        //break;
-      }
-    }
+        mState = ChecksDone;
 
-    if (!arch_ok)
-    {
-      mErrorMsg = "This package is not compatible with your device (" + pkg_arch +").\nPlease check the <a href=\"http://wiki.kodi.tv/index.php?title=XBMC_for_Android_specific_FAQ\">Kodi Android wiki</a> for more information.";
-      Log.e(TAG, mErrorMsg);
-      mState = InError;
-    }
+        SetupEnvironment();
 
-    if (mState != InError) {
-      if (pkg_arch.equalsIgnoreCase("arm")) {
-        // arm arch: check if the cpu supports neon
-        boolean ret = ParseCpuFeature();
-        //Log.d(TAG, "/proc/cpuinfo = " + mCpuinfo);
-        if (!ret) {
-          mErrorMsg = "Error! Cannot parse CPU features.";
-          Log.e(TAG, mErrorMsg);
-          mState = InError;
-        } else {
-          ret = CheckCpuFeature("neon") || CheckCpuFeature("aarch64") || CheckCpuFeature("asimd");  // aarch64 is always neon; asimd feature also represents neon
-          if (!ret) {
-            mErrorMsg = "This @APP_NAME@ package is not compatible with your device (NEON).\nPlease check the <a href=\"http://wiki.kodi.tv/index.php?title=XBMC_for_Android_specific_FAQ\">Kodi Android wiki</a> for more information.";
-            Log.e(TAG, mErrorMsg);
-            mState = InError;
-          }
+        if (mState != InError && fXbmcHome.exists() && fXbmcHome.lastModified() >= fPackagePath.lastModified())
+        {
+          mState = CachingDone;
+          mCachingDone = true;
         }
       }
     }
 
-    Log.d(TAG, "External storage = " + Environment.getExternalStorageDirectory().getAbsolutePath() + "; state = " + Environment.getExternalStorageState());
-    if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState()))
-      mExternalStorageChecked = true;
-
-    if (mState != InError && mExternalStorageChecked) {
-      mState = ChecksDone;
-
-      SetupEnvironment();
-      MigrateUserData();
-
-      if ((mState != DownloadingObb && mState != InError) && fXbmcHome.exists() && fXbmcHome.lastModified() >= fPackagePath.lastModified() && !mInstallLibs) {
-        mState = CachingDone;
-        mCachingDone = true;
-      }
-    }
-
-    if ((mState != DownloadingObb && mState != InError) && mCachingDone && mExternalStorageChecked) {
+    if (mState != InError && mCachingDone && mExternalStorageChecked && mPermissionOK)
+    {
       startXBMC();
       return;
     }
 
     setContentView(R.layout.activity_splash);
-    mProgress = (ProgressBar) findViewById(R.id.progressBar1);
-    mTextView = (TextView) findViewById(R.id.textView1);
+    mProgress = findViewById(R.id.progressBar1);
+    mProgress.setVisibility(View.INVISIBLE);
+    mTextView = findViewById(R.id.textView1);
 
-    if (mState == DownloadingObb || mState == InError) {
+    if (mState == InError || mState == CheckingPermissionsInfo)
+    {
       mStateMachine.sendEmptyMessage(mState);
       return;
     }
 
-    if (!mExternalStorageChecked) {
+    if (!mExternalStorageChecked)
+    {
       startWatchingExternalStorage();
       mStateMachine.sendEmptyMessage(WaitingStorageChecked);
-    } else {
+    }
+    else
+    {
       if (!mCachingDone)
         new FillCache(this).execute();
       else
         mStateMachine.sendEmptyMessage(CachingDone);
+    }
+  }
+
+  private boolean isAndroidTV()
+  {
+    if (getPackageManager().hasSystemFeature(FEATURE_LEANBACK))
+    {
+      Log.d(TAG, "Running on an Android TV Device");
+      return true;
+    }
+    else
+    {
+      Log.d(TAG, "Running on a non Android TV Device");
+      return false;
     }
   }
 

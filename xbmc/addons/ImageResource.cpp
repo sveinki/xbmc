@@ -1,41 +1,25 @@
 /*
-*      Copyright (C) 2005-2013 Team XBMC
-*      http://xbmc.org
-*
-*  This Program is free software; you can redistribute it and/or modify
-*  it under the terms of the GNU General Public License as published by
-*  the Free Software Foundation; either version 2, or (at your option)
-*  any later version.
-*
-*  This Program is distributed in the hope that it will be useful,
-*  but WITHOUT ANY WARRANTY; without even the implied warranty of
-*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-*  GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License
-*  along with XBMC; see the file COPYING.  If not, see
-*  <http://www.gnu.org/licenses/>.
-*
-*/
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
 #include "ImageResource.h"
+
 #include "URL.h"
-#include "addons/AddonManager.h"
-#include "filesystem/File.h"
+#include "addons/addoninfo/AddonType.h"
 #include "filesystem/XbtManager.h"
+#include "utils/FileUtils.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
 
 namespace ADDON
 {
 
-std::unique_ptr<CImageResource> CImageResource::FromExtension(CAddonInfo addonInfo, const cp_extension_t* ext)
-{
-  std::string type = CAddonMgr::GetInstance().GetExtValue(ext->configuration, "@type");
-  return std::unique_ptr<CImageResource>(new CImageResource(std::move(addonInfo), std::move(type)));
-}
-
-CImageResource::CImageResource(CAddonInfo addonInfo, std::string type)
-    : CResource(std::move(addonInfo)), m_type(std::move(type))
+CImageResource::CImageResource(const AddonInfoPtr& addonInfo)
+  : CResource(addonInfo, AddonType::RESOURCE_IMAGES),
+    m_type(Type(AddonType::RESOURCE_IMAGES)->GetValue("@type").asString())
 {
 }
 
@@ -76,7 +60,7 @@ bool CImageResource::HasXbt(CURL& xbtUrl) const
 {
   std::string resourcePath = GetResourcePath();
   std::string xbtPath = URIUtils::AddFileToFolder(resourcePath, "Textures.xbt");
-  if (!XFILE::CFile::Exists(xbtPath))
+  if (!CFileUtils::Exists(xbtPath))
     return false;
 
   // translate it into a xbt:// URL

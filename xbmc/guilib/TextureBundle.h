@@ -1,28 +1,21 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <string>
-#include <vector>
+#pragma once
+
 #include "TextureBundleXBT.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+class CTexture;
 
 class CTextureBundle
 {
@@ -33,13 +26,26 @@ public:
 
   void SetThemeBundle(bool themeBundle);
   bool HasFile(const std::string& Filename);
-  void GetTexturesFromPath(const std::string &path, std::vector<std::string> &textures);
-  static std::string Normalize(const std::string &name);
+  std::vector<std::string> GetTexturesFromPath(const std::string& path);
+  static std::string Normalize(std::string name);
 
-  bool LoadTexture(const std::string& Filename, CBaseTexture** ppTexture, int &width, int &height);
+  /*!
+   * \brief Load texture from bundle
+   *
+   * \param[in] filename name of the texture to load
+   * \return std::optional<CTextureBundleXBT::Texture> if texture was loaded
+   */
+  std::optional<CTextureBundleXBT::Texture> LoadTexture(const std::string& filename);
 
-  int LoadAnim(const std::string& Filename, CBaseTexture*** ppTextures, int &width, int &height, int& nLoops, int** ppDelays);
+  /*!
+   * \brief Load animation from bundle
+   *
+   * \param[in] filename name of the animation to load
+   * \return std::optional<CTextureBundleXBT::Animation> if animation was loaded
+   */
+  std::optional<CTextureBundleXBT::Animation> LoadAnim(const std::string& filename);
 
+  void Close();
 private:
   CTextureBundleXBT m_tbXBT;
 

@@ -1,43 +1,39 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include 03-gcrypt-android-select.patch Makefile
+include ../../Makefile.include LIBGCRYPT-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile LIBGCRYPT-VERSION ../../download-files.include
 
-# lib name, version
-LIBNAME=libgcrypt
-VERSION=1.6.2
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.bz2
+ifeq ($(findstring apple-darwin, $(HOST)), apple-darwin)
+  # required to fix asm link failure due C_SYMBOL_NAME macro not prepending _ to exported symbol
+  # exported symbols only have s single _ instead of double __
+  #   Undefined symbols for architecture x86_64:
+  #   "__gcry_mpih_add_n", referenced from:
+  CONFIGURE_FLAGS+= ac_cv_sys_symbol_underscore=yes
+  ifeq ($(OS), darwin_embedded)
+    # explicitly disable getentropy for ios/tvos as AC_CHECK_FUNCS(getentropy) incorrectly
+    # succeeds as of libgcrypt 1.9.4
+    CONFIGURE_FLAGS+= ac_cv_func_getentropy=no
+  endif
+endif
 
-ifeq ($(OS),osx)
-CONFIGURE_FLAGS+= --disable-asm --disable-avx-support --disable-avx2-support
-endif
-ifeq ($(CPU),arm64)
-CONFIGURE_FLAGS+= --disable-asm --disable-neon-support
-endif
+# Disable random jitter entropy due to failure on multiple platform/arches
+# ./jitterentropy-base.c:58:3: error: "The CPU Jitter random number generator must not be compiled with optimizations. 
+#                                       See documentation. Use the compiler switch -O0 for compiling jitterentropy.c."
+CONFIGURE_FLAGS+= --disable-jent-support
+
+export GPG_ERROR_CONFIG=$(PREFIX)/bin/gpg-error-config
 
 # configuration settings
 CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
-          ./configure --prefix=$(PREFIX) --disable-shared \
-	  $(CONFIGURE_FLAGS)
+          ./configure --prefix=$(PREFIX) --disable-doc --disable-shared $(CONFIGURE_FLAGS)
 
-LIBDYLIB=$(PLATFORM)/src/.libs/$(LIBNAME).a
-
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
+LIBDYLIB=$(PLATFORM)/src/.libs/$(BYPRODUCT)
 
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM)/*; mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	cd $(PLATFORM); patch -p1 < ../01-asm-Allow-building-x86-and-amd64-using-old-compilers.patch 
-	#cd $(PLATFORM); patch -p0 < ../02-armasm.patch
-	cd $(PLATFORM); patch -p0 < ../03-gcrypt-android-select.patch
-	#cd $(PLATFORM); patch -p0 < ../04-oflagmunging.patch
 	# do not build the tests or docs
-	sed -ie "s|doc tests||" "$(PLATFORM)/Makefile.am"
-	sed -ie "s|!defined (__arm__)|!defined (__arm__) \&\& !defined (__aarch64__)|" "$(PLATFORM)/src/hwf-arm.c"
+	sed -ie "s|\$$(doc) tests||" "$(PLATFORM)/Makefile.am"
 	cd $(PLATFORM); $(AUTORECONF) -vif
 	cd $(PLATFORM); $(CONFIGURE)
 

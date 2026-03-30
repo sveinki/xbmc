@@ -1,41 +1,33 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <cstdlib>
-
 #include "LabelFormatter.h"
-#include "ServiceBroker.h"
-#include "settings/AdvancedSettings.h"
-#include "settings/Settings.h"
-#include "RegExp.h"
-#include "Util.h"
-#include "video/VideoInfoTag.h"
-#include "music/tags/MusicInfoTag.h"
-#include "pictures/PictureInfoTag.h"
+
 #include "FileItem.h"
+#include "RegExp.h"
+#include "ServiceBroker.h"
 #include "StringUtils.h"
 #include "URIUtils.h"
-#include "guilib/LocalizeStrings.h"
+#include "Util.h"
 #include "Variant.h"
+#include "addons/IAddon.h"
+#include "music/tags/MusicInfoTag.h"
+#include "pictures/PictureInfoTag.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "video/VideoInfoTag.h"
 
 #include <cassert>
+#include <cstdlib>
+#include <inttypes.h>
 
 using namespace MUSIC_INFO;
 
@@ -102,14 +94,18 @@ using namespace MUSIC_INFO;
  *  %Y - Year
  *  %Z - tvshow title
  *  %a - Date Added
+ *  %b - Total number of discs
  *  %c - Relevance - Used for actors' appearances
  *  %d - Date and Time
+ *  %e - Original release date
+ *  %f - bpm
+ *  %h - plugin label2
  *  %p - Last Played
  *  %r - User Rating
  *  *t - Date Taken (suitable for Pictures)
  */
 
-#define MASK_CHARS "NSATBGYFLDIJRCKMEPHZOQUVXWacdiprstuv"
+#define MASK_CHARS "NSATBGYFLDIJRCKMEPHZOQUVXWabcdefhiprstuv"
 
 CLabelFormatter::CLabelFormatter(const std::string &mask, const std::string &mask2)
 {
@@ -117,7 +113,7 @@ CLabelFormatter::CLabelFormatter(const std::string &mask, const std::string &mas
   AssembleMask(0, mask);
   AssembleMask(1, mask2);
   // save a bool for faster lookups
-  m_hideFileExtensions = !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_FILELISTS_SHOWEXTENSIONS);
+  m_hideFileExtensions = !CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_FILELISTS_SHOWEXTENSIONS);
 }
 
 std::string CLabelFormatter::GetContent(unsigned int label, const CFileItem *item) const
@@ -147,7 +143,7 @@ void CLabelFormatter::FormatLabel(CFileItem *item) const
   std::string maskedLabel = GetContent(0, item);
   if (!maskedLabel.empty())
     item->SetLabel(maskedLabel);
-  else if (!item->m_bIsFolder && m_hideFileExtensions)
+  else if (!item->IsFolder() && m_hideFileExtensions)
     item->RemoveExtension();
 }
 
@@ -167,24 +163,24 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
   {
   case 'N':
     if (music && music->GetTrackNumber() > 0)
-      value = StringUtils::Format("%2.2i", music->GetTrackNumber());
+      value = StringUtils::Format("{:02}", music->GetTrackNumber());
     if (movie&& movie->m_iTrack > 0)
-      value = StringUtils::Format("%2.2i", movie->m_iTrack);
+      value = StringUtils::Format("{:02}", movie->m_iTrack);
     break;
   case 'S':
     if (music && music->GetDiscNumber() > 0)
-      value = StringUtils::Format("%2.2i", music->GetDiscNumber());
+      value = StringUtils::Format("{:02}", music->GetDiscNumber());
     break;
   case 'A':
-    if (music && music->GetArtistString().size())
+    if (music && !music->GetArtistString().empty())
       value = music->GetArtistString();
-    if (movie && movie->m_artist.size())
-      value = StringUtils::Join(movie->m_artist, g_advancedSettings.m_videoItemSeparator);
+    if (movie && !movie->m_artist.empty())
+      value = StringUtils::Join(movie->m_artist, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoItemSeparator);
     break;
   case 'T':
-    if (music && music->GetTitle().size())
+    if (music && !music->GetTitle().empty())
       value = music->GetTitle();
-    if (movie && movie->m_strTitle.size())
+    if (movie && !movie->m_strTitle.empty())
       value = movie->m_strTitle;
     break;
   case 'Z':
@@ -192,16 +188,16 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
       value = movie->m_strShowTitle;
     break;
   case 'B':
-    if (music && music->GetAlbum().size())
+    if (music && !music->GetAlbum().empty())
       value = music->GetAlbum();
     else if (movie)
       value = movie->m_strAlbum;
     break;
   case 'G':
-    if (music && music->GetGenre().size())
-      value = StringUtils::Join(music->GetGenre(), g_advancedSettings.m_musicItemSeparator);
-    if (movie && movie->m_genre.size())
-      value = StringUtils::Join(movie->m_genre, g_advancedSettings.m_videoItemSeparator);
+    if (music && !music->GetGenre().empty())
+      value = StringUtils::Join(music->GetGenre(), CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_musicItemSeparator);
+    if (movie && !movie->m_genre.empty())
+      value = StringUtils::Join(movie->m_genre, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoItemSeparator);
     break;
   case 'Y':
     if (music)
@@ -211,18 +207,18 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
       if (movie->m_firstAired.IsValid())
         value = movie->m_firstAired.GetAsLocalizedDate();
       else if (movie->HasYear())
-        value = StringUtils::Format("%i", movie->GetYear());
+        value = std::to_string(movie->GetYear());
     }
     break;
   case 'F': // filename
-    value = CUtil::GetTitleFromPath(item->GetPath(), item->m_bIsFolder && !item->IsFileFolder());
+    value = CUtil::GetTitleFromPath(item->GetPath(), item->IsFolder() && !item->IsFileFolder());
     break;
   case 'L':
     value = item->GetLabel();
     // is the label the actual file or folder name?
     if (value == URIUtils::GetFileName(item->GetPath()))
     { // label is the same as filename, clean it up as appropriate
-      value = CUtil::GetTitleFromPath(item->GetPath(), item->m_bIsFolder && !item->IsFileFolder());
+      value = CUtil::GetTitleFromPath(item->GetPath(), item->IsFolder() && !item->IsFileFolder());
     }
     break;
   case 'D':
@@ -234,50 +230,59 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
         nDuration = movie->GetDuration();
       if (nDuration > 0)
         value = StringUtils::SecondsToTimeString(nDuration, (nDuration >= 3600) ? TIME_FORMAT_H_MM_SS : TIME_FORMAT_MM_SS);
-      else if (item->m_dwSize > 0)
-        value = StringUtils::SizeToString(item->m_dwSize);
+      else if (item->GetSize() > 0)
+        value = StringUtils::SizeToString(item->GetSize());
     }
     break;
   case 'I': // size
-    if( (item->m_bIsFolder && item->m_dwSize != 0) || item->m_dwSize >= 0 )
-      value = StringUtils::SizeToString(item->m_dwSize);
+  {
+    const int64_t size{item->GetSize()};
+    if ((item->IsFolder() && size != 0) || size >= 0)
+      value = StringUtils::SizeToString(item->GetSize());
     break;
+  }
   case 'J': // date
-    if (item->m_dateTime.IsValid())
-      value = item->m_dateTime.GetAsLocalizedDate();
+  {
+    const CDateTime& dateTime{item->GetDateTime()};
+    if (dateTime.IsValid())
+      value = dateTime.GetAsLocalizedDate();
     break;
+  }
   case 'Q': // time
-    if (item->m_dateTime.IsValid())
-      value = item->m_dateTime.GetAsLocalizedTime("", false);
+  {
+    const CDateTime& dateTime{item->GetDateTime()};
+    if (dateTime.IsValid())
+      value = dateTime.GetAsLocalizedTime("", false);
     break;
+  }
   case 'R': // rating
     if (music && music->GetRating() != 0.f)
-      value = StringUtils::Format("%.1f", music->GetRating());
+      value = StringUtils::Format("{:.1f}", music->GetRating());
     else if (movie && movie->GetRating().rating != 0.f)
-      value = StringUtils::Format("%.1f", movie->GetRating().rating);
+      value = StringUtils::Format("{:.1f}", movie->GetRating().rating);
     break;
   case 'C': // programs count
-    value = StringUtils::Format("%i", item->m_iprogramCount);
+    value = std::to_string(item->GetProgramCount());
     break;
   case 'c': // relevance
-    value = StringUtils::Format("%i", movie->m_relevance);
+    value = std::to_string(movie->m_relevance);
     break;
   case 'K':
-    value = item->m_strTitle;
+    value = item->GetTitle();
     break;
   case 'M':
     if (movie && movie->m_iEpisode > 0)
-      value = StringUtils::Format("%i %s",
-                                  movie->m_iEpisode,
-                                  g_localizeStrings.Get(movie->m_iEpisode == 1 ? 20452 : 20453).c_str());
+      value = StringUtils::Format("{} {}", movie->m_iEpisode,
+                                  CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+                                      movie->m_iEpisode == 1 ? 20452 : 20453));
     break;
   case 'E':
     if (movie && movie->m_iEpisode > 0)
     { // episode number
       if (movie->m_iSeason == 0)
-        value = StringUtils::Format("S%2.2i", movie->m_iEpisode);
+        value = StringUtils::Format("S{:02}", movie->m_iEpisode);
       else
-        value = StringUtils::Format("%2.2i", movie->m_iEpisode);
+        value = StringUtils::Format("{:02}", movie->m_iEpisode);
     }
     break;
   case 'P':
@@ -288,9 +293,9 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
     if (movie && movie->m_iEpisode > 0)
     { // season*100+episode number
       if (movie->m_iSeason == 0)
-        value = StringUtils::Format("S%2.2i", movie->m_iEpisode);
+        value = StringUtils::Format("S{:02}", movie->m_iEpisode);
       else
-        value = StringUtils::Format("%ix%2.2i", movie->m_iSeason,movie->m_iEpisode);
+        value = StringUtils::Format("{}x{:02}", movie->m_iSeason, movie->m_iEpisode);
     }
     break;
   case 'O':
@@ -302,35 +307,54 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
   case 'U':
     if (movie && !movie->m_studio.empty())
     {// Studios
-      value = StringUtils::Join(movie ->m_studio, g_advancedSettings.m_videoItemSeparator);
+      value = StringUtils::Join(movie ->m_studio, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoItemSeparator);
     }
     break;
   case 'V': // Playcount
     if (music)
-      value = StringUtils::Format("%i", music->GetPlayCount());
+      value = std::to_string(music->GetPlayCount());
     if (movie)
-      value = StringUtils::Format("%i", movie->GetPlayCount());
+      value = std::to_string(movie->GetPlayCount());
     break;
   case 'X': // Bitrate
-    if( !item->m_bIsFolder && item->m_dwSize != 0 )
-      value = StringUtils::Format("%" PRId64" kbps", item->m_dwSize);
+    if (!item->IsFolder())
+    {
+      const int64_t size{item->GetSize()};
+      if (size != 0)
+        value = StringUtils::Format("{} kbps", size);
+    }
     break;
    case 'W': // Listeners
-    if( !item->m_bIsFolder && music && music->GetListeners() != 0 )
-     value = StringUtils::Format("%i %s",
-                                 music->GetListeners(),
-                                 g_localizeStrings.Get(music->GetListeners() == 1 ? 20454 : 20455).c_str());
-    break;
+     if (!item->IsFolder() && music && music->GetListeners() != 0)
+       value = StringUtils::Format("{} {}", music->GetListeners(),
+                                   CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+                                       music->GetListeners() == 1 ? 20454 : 20455));
+     break;
   case 'a': // Date Added
     if (movie && movie->m_dateAdded.IsValid())
       value = movie->m_dateAdded.GetAsLocalizedDate();
     if (music && music->GetDateAdded().IsValid())
       value = music->GetDateAdded().GetAsLocalizedDate();
     break;
-  case 'd': // date and time
-    if (item->m_dateTime.IsValid())
-      value = item->m_dateTime.GetAsLocalizedDateTime();
+  case 'b': // Total number of discs
+    if (music)
+      value = std::to_string(music->GetTotalDiscs());
     break;
+  case 'e': // Original release date
+    if (music)
+    {
+      value = music->GetOriginalDate();
+      if (!CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_bMusicLibraryUseISODates)
+        value = StringUtils::ISODateToLocalizedDate(value);
+    }
+    break;
+  case 'd': // date and time
+  {
+    const CDateTime& dateTime{item->GetDateTime()};
+    if (dateTime.IsValid())
+      value = dateTime.GetAsLocalizedDateTime();
+    break;
+  }
   case 'p': // Last played
     if (movie && movie->m_lastPlayed.IsValid())
       value = movie->m_lastPlayed.GetAsLocalizedDate();
@@ -339,9 +363,9 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
     break;
   case 'r': // userrating
     if (movie && movie->m_iUserRating != 0)
-      value = StringUtils::Format("%i", movie->m_iUserRating);
+      value = std::to_string(movie->m_iUserRating);
     if (music && music->GetUserrating() != 0)
-      value = StringUtils::Format("%i", music->GetUserrating());
+      value = std::to_string(music->GetUserrating());
     break;
   case 't': // Date Taken
     if (pic && pic->GetDateTimeTaken().IsValid())
@@ -363,6 +387,13 @@ std::string CLabelFormatter::GetMaskContent(const CMaskString &mask, const CFile
     if (item->HasAddonInfo() && item->GetAddonInfo()->LastUpdated().IsValid())
       value = item->GetAddonInfo()->LastUpdated().GetAsLocalizedDate();
     break;
+  case 'f': // BPM
+    if (music)
+      value = std::to_string(music->GetBPM());
+    break;
+  case 'h': //plugin label2
+    value = item->GetLabel2();
+    break;
   }
   if (!value.empty())
     return mask.m_prefix + value + mask.m_postfix;
@@ -379,8 +410,7 @@ void CLabelFormatter::SplitMask(unsigned int label, const std::string &mask)
   while ((findStart = reg.RegFind(work.c_str())) >= 0)
   { // we've found a match
     m_staticContent[label].push_back(work.substr(0, findStart));
-    m_dynamicContent[label].push_back(CMaskString("", 
-          reg.GetMatch(1)[0], ""));
+    m_dynamicContent[label].emplace_back("", reg.GetMatch(1)[0], "");
     work = work.substr(findStart + reg.GetFindLen());
   }
   m_staticContent[label].push_back(work);
@@ -403,10 +433,7 @@ void CLabelFormatter::AssembleMask(unsigned int label, const std::string& mask)
   { // we've found a match for a pre/postfixed string
     // send anything
     SplitMask(label, work.substr(0, findStart) + reg.GetMatch(1));
-    m_dynamicContent[label].push_back(CMaskString(
-            reg.GetMatch(2),
-            reg.GetMatch(4)[0],
-            reg.GetMatch(5)));
+    m_dynamicContent[label].emplace_back(reg.GetMatch(2), reg.GetMatch(4)[0], reg.GetMatch(5));
     work = work.substr(findStart + reg.GetFindLen());
   }
   SplitMask(label, work);
@@ -421,7 +448,8 @@ bool CLabelFormatter::FillMusicTag(const std::string &fileName, CMusicInfoTag *t
     return false;
   for (unsigned int i = 1; i < m_staticContent[0].size(); i++)
   {
-    size_t pos2 = m_staticContent[0][i].size() ? fileName.find(m_staticContent[0][i], pos1) : fileName.size();
+    size_t pos2 = !m_staticContent[0][i].empty() ? fileName.find(m_staticContent[0][i], pos1)
+                                                 : fileName.size();
     if (pos2 == std::string::npos)
       return false;
     // found static content - thus we have the dynamic content surrounded
@@ -465,6 +493,9 @@ void CLabelFormatter::FillMusicMaskContent(const char mask, const std::string &v
     break;
   case 'r': // userrating
     tag->SetUserrating(value[0]);
+    break;
+  case 'b': // total discs
+    tag->SetTotalDiscs(atol(value.c_str()));
     break;
   }
 }

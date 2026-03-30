@@ -1,26 +1,15 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "IDirectory.h"
-#include "utils/RegExp.h"
+
 #include <string>
 #include <vector>
 
@@ -28,16 +17,70 @@ namespace XFILE
 {
   class CStackDirectory : public IDirectory
   {
+    typedef struct StackPart
+    {
+      // user-defined ctor required for XCode 15.2 and emplace_back
+      StackPart(std::string&& newTitle, std::string&& newVolume = {});
+
+      std::string title;
+      std::string volume;
+
+      auto operator<=>(const StackPart&) const = default;
+    } StackPart;
+
   public:
-    CStackDirectory();
-    ~CStackDirectory() override;
     bool GetDirectory(const CURL& url, CFileItemList& items) override;
     bool AllowAll() const override { return true; }
-    static std::string GetStackedTitlePath(const std::string &strPath);
-    static std::string GetStackedTitlePath(const std::string &strPath, VECCREGEXP& RegExps);
+
+    /*!
+    \brief Get the common base path/file from all the elements of the stack (for finding nfo files/metadata etc..)
+    \param strPath The stack:// path
+    \return The common base path/file
+    */
+    static std::string GetStackTitlePath(const std::string& strPath);
+
+    /*!
+    \brief Get the first element (file path) of a stack
+    \param strPath The stack:// path
+    \return The first element
+    */
     static std::string GetFirstStackedFile(const std::string &strPath);
+
+    /*!
+    \brief Extract the indvidual paths from a stack:// path
+    \param strPath The stack:// path
+    \param vecPaths The vector to fill with the individual paths
+    \return True if successful, false otherwise
+    */
     static bool GetPaths(const std::string& strPath, std::vector<std::string>& vecPaths);
-    static std::string ConstructStackPath(const CFileItemList& items, const std::vector<int> &stack);
-    static bool ConstructStackPath(const std::vector<std::string> &paths, std::string &stackedPath);
+
+    /*!
+    \brief Construct a stack:// path from a CFileItemList with the position in the stack determined by the entry in the stack vector
+    \param items The CFileItemList containing the items to stack
+    \param stack The vector containing the positions in the CFileItemList to stack (ie. if stack[1] == 3 then the 2nd item in the stack is items[3])
+    Note that stack is 0 based.
+    \return The constructed stack:// path
+    */
+    static std::string ConstructStackPath(const CFileItemList& items,
+                                          const std::vector<int>& stack);
+
+    /*!
+    \brief Construct a stack:// path from a vector of paths and an optional additional path to append
+    \param paths The vector of paths to stack
+    \param stackedPath The constructed stack:// path
+    \param newPath An optional additional path to append to the stack
+    \return True if successful, false otherwise
+    */
+    static bool ConstructStackPath(const std::vector<std::string>& paths,
+                                   std::string& stackedPath,
+                                   const std::string& newPath = {});
+
+    /*!
+    \brief Get the base/parent path in common from all the parts of a stack:// path
+    \param stackPath The stack:// path
+    \return The base/parent path
+    */
+    static std::string GetBasePath(const std::string& stackPath);
+    static std::string GetParentPath(const std::string& stackPath);
   };
 }

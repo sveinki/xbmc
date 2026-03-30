@@ -1,74 +1,78 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
 #include "DVDFactoryInputStream.h"
+
 #include "DVDInputStream.h"
-#include "DVDInputStreamFile.h"
-#include "DVDInputStreamNavigator.h"
-#include "DVDInputStreamFFmpeg.h"
-#include "DVDInputStreamPVRManager.h"
-#include "InputStreamAddon.h"
-#include "InputStreamMultiSource.h"
+#include "network/NetworkFileItemClassify.h"
 #ifdef HAVE_LIBBLURAY
 #include "DVDInputStreamBluray.h"
 #endif
-#ifdef ENABLE_DVDINPUTSTREAM_STACK
-#include "DVDInputStreamStack.h"
-#endif
+#include "DVDInputStreamFFmpeg.h"
+#include "DVDInputStreamFile.h"
+#include "DVDInputStreamNavigator.h"
 #include "FileItem.h"
-#include "storage/MediaManager.h"
-#include "URL.h"
-#include "filesystem/CurlFile.h"
-#include "filesystem/File.h"
-#include "utils/URIUtils.h"
+#include "InputStreamAddon.h"
+#include "InputStreamMultiSource.h"
+#include "InputStreamPVRChannel.h"
+#include "InputStreamPVRRecording.h"
 #include "ServiceBroker.h"
-#include "addons/binary-addons/BinaryAddonManager.h"
+#include "URL.h"
 #include "Util.h"
+#include "addons/AddonManager.h"
+#include "addons/addoninfo/AddonType.h"
+#include "cores/VideoPlayer/Interface/InputStreamConstants.h"
+#include "filesystem/CurlFile.h"
+#include "filesystem/IFileTypes.h"
+#include "storage/MediaManager.h"
+#include "utils/FileUtils.h"
+#include "utils/URIUtils.h"
+#include "video/VideoFileItemClassify.h"
 
+#include <memory>
 
-CDVDInputStream* CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, bool scanforextaudio)
+using namespace KODI;
+
+std::shared_ptr<CDVDInputStream> CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, bool scanforextaudio)
 {
   using namespace ADDON;
 
-  std::string file = fileitem.GetDynPath();
+  const std::string& file = fileitem.GetDynPath();
   if (scanforextaudio)
   {
     // find any available external audio tracks
     std::vector<std::string> filenames;
     filenames.push_back(file);
     CUtil::ScanForExternalAudio(file, filenames);
-    CUtil::ScanForExternalDemuxSub(file, filenames);
     if (filenames.size() >= 2)
     {
       return CreateInputStream(pPlayer, fileitem, filenames);
     }
   }
 
-  BinaryAddonBaseList addonInfos;
-  CServiceBroker::GetBinaryAddonManager().GetAddonInfos(addonInfos, true /*enabled only*/, ADDON_INPUTSTREAM);
-  for (auto addonInfo : addonInfos)
+  std::vector<AddonInfoPtr> addonInfos;
+  CServiceBroker::GetAddonMgr().GetAddonInfos(addonInfos, true /*enabled only*/,
+                                              AddonType::INPUTSTREAM);
+  for (const auto& addonInfo : addonInfos)
   {
     if (CInputStreamAddon::Supports(addonInfo, fileitem))
-      return new CInputStreamAddon(addonInfo, pPlayer, fileitem);
+    {
+      // Used to inform input stream about special identifier;
+      const std::string instanceId =
+          fileitem.GetProperty(STREAM_PROPERTY_INPUTSTREAM_INSTANCE_ID).asString();
+
+      return std::make_shared<CInputStreamAddon>(addonInfo, pPlayer, fileitem, instanceId);
+    }
   }
+
+  if (fileitem.GetProperty(STREAM_PROPERTY_INPUTSTREAM).asString() ==
+      STREAM_PROPERTY_VALUE_INPUTSTREAMFFMPEG)
+    return std::make_shared<CDVDInputStreamFFmpeg>(fileitem);
 
   if (fileitem.IsDiscImage())
   {
@@ -76,56 +80,64 @@ CDVDInputStream* CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer
     CURL url("udf://");
     url.SetHostName(file);
     url.SetFileName("BDMV/index.bdmv");
-    if(XFILE::CFile::Exists(url.Get()))
-        return new CDVDInputStreamBluray(pPlayer, fileitem);
+    if (CFileUtils::Exists(url.Get()))
+      return std::make_shared<CDVDInputStreamBluray>(pPlayer, fileitem);
+    url.SetHostName(file);
+    url.SetFileName("BDMV/INDEX.BDM");
+    if (CFileUtils::Exists(url.Get()))
+      return std::make_shared<CDVDInputStreamBluray>(pPlayer, fileitem);
 #endif
 
-    return new CDVDInputStreamNavigator(pPlayer, fileitem);
+    return std::make_shared<CDVDInputStreamNavigator>(pPlayer, fileitem);
   }
 
-#ifdef HAS_DVD_DRIVE
-  if(file.compare(g_mediaManager.TranslateDevicePath("")) == 0)
+#ifdef HAS_OPTICAL_DRIVE
+  if (file.compare(CServiceBroker::GetMediaManager().TranslateDevicePath("")) == 0)
   {
 #ifdef HAVE_LIBBLURAY
-    if(XFILE::CFile::Exists(URIUtils::AddFileToFolder(file, "BDMV", "index.bdmv")))
-        return new CDVDInputStreamBluray(pPlayer, fileitem);
+    if (CFileUtils::Exists(URIUtils::AddFileToFolder(file, "BDMV", "index.bdmv")) ||
+        CFileUtils::Exists(URIUtils::AddFileToFolder(file, "BDMV", "INDEX.BDM")))
+      return std::make_shared<CDVDInputStreamBluray>(pPlayer, fileitem);
 #endif
 
-    return new CDVDInputStreamNavigator(pPlayer, fileitem);
+    return std::make_shared<CDVDInputStreamNavigator>(pPlayer, fileitem);
   }
 #endif
 
-  if (fileitem.IsDVDFile(false, true))
-    return (new CDVDInputStreamNavigator(pPlayer, fileitem));
-  else if(file.substr(0, 6) == "pvr://")
-    return new CDVDInputStreamPVRManager(pPlayer, fileitem);
+  if (VIDEO::IsDVDFile(fileitem, false, true))
+    return std::make_shared<CDVDInputStreamNavigator>(pPlayer, fileitem);
+  else if (URIUtils::IsPVRChannel(file))
+    return std::make_shared<CInputStreamPVRChannel>(fileitem);
+  else if (URIUtils::IsPVRRecording(file))
+    return std::make_shared<CInputStreamPVRRecording>(fileitem);
 #ifdef HAVE_LIBBLURAY
-  else if (fileitem.IsType(".bdmv") || fileitem.IsType(".mpls") || file.substr(0, 7) == "bluray:")
-    return new CDVDInputStreamBluray(pPlayer, fileitem);
+  else if (fileitem.IsType(".bdmv") || fileitem.IsType(".mpls")
+          || fileitem.IsType(".bdm") || fileitem.IsType(".mpl")
+          || StringUtils::StartsWithNoCase(file, "bluray:"))
+    return std::make_shared<CDVDInputStreamBluray>(pPlayer, fileitem);
 #endif
-  else if(file.substr(0, 6) == "rtp://"
-       || file.substr(0, 7) == "rtsp://"
-       || file.substr(0, 6) == "sdp://"
-       || file.substr(0, 6) == "udp://"
-       || file.substr(0, 6) == "tcp://"
-       || file.substr(0, 6) == "mms://"
-       || file.substr(0, 7) == "mmst://"
-       || file.substr(0, 7) == "mmsh://")
-    return new CDVDInputStreamFFmpeg(fileitem);
-#ifdef ENABLE_DVDINPUTSTREAM_STACK
-  else if(file.substr(0, 8) == "stack://")
-    return new CDVDInputStreamStack(fileitem);
-#endif
-  else if(file.substr(0, 7) == "rtmp://"
-       || file.substr(0, 8) == "rtmpt://"
-       || file.substr(0, 8) == "rtmpe://"
-       || file.substr(0, 9) == "rtmpte://"
-       || file.substr(0, 8) == "rtmps://")
-    return new CDVDInputStreamFFmpeg(fileitem);
+  else if (StringUtils::StartsWithNoCase(file, "rtp://") ||
+           StringUtils::StartsWithNoCase(file, "rtsp://") ||
+           StringUtils::StartsWithNoCase(file, "rtsps://") ||
+           StringUtils::StartsWithNoCase(file, "satip://") ||
+           StringUtils::StartsWithNoCase(file, "sdp://") ||
+           StringUtils::StartsWithNoCase(file, "udp://") ||
+           StringUtils::StartsWithNoCase(file, "tcp://") ||
+           StringUtils::StartsWithNoCase(file, "mms://") ||
+           StringUtils::StartsWithNoCase(file, "mmst://") ||
+           StringUtils::StartsWithNoCase(file, "mmsh://") ||
+           StringUtils::StartsWithNoCase(file, "rtmp://") ||
+           StringUtils::StartsWithNoCase(file, "rtmpt://") ||
+           StringUtils::StartsWithNoCase(file, "rtmpe://") ||
+           StringUtils::StartsWithNoCase(file, "rtmpte://") ||
+           StringUtils::StartsWithNoCase(file, "rtmps://"))
+  {
+    return std::make_shared<CDVDInputStreamFFmpeg>(fileitem);
+  }
 
   CFileItem finalFileitem(fileitem);
 
-  if (finalFileitem.IsInternetStream())
+  if (NETWORK::IsInternetStream(finalFileitem))
   {
     if (finalFileitem.ContentLookup())
     {
@@ -140,7 +152,7 @@ CDVDInputStream* CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer
           finalUrl.SetProtocolOptions(origUrl.GetProtocolOptions());
           finalUrl.SetUserName(origUrl.GetUserName());
           finalUrl.SetPassword(origUrl.GetPassWord());
-          finalFileitem.SetPath(finalUrl.Get());
+          finalFileitem.SetDynPath(finalUrl.Get());
         }
         curlFile.Close();
       }
@@ -155,20 +167,23 @@ CDVDInputStream* CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer
     }
 
     if (finalFileitem.IsType(".m3u8"))
-      return new CDVDInputStreamFFmpeg(finalFileitem);
+      return std::make_shared<CDVDInputStreamFFmpeg>(finalFileitem);
 
-    if (finalFileitem.GetMimeType() == "application/vnd.apple.mpegurl")
-      return new CDVDInputStreamFFmpeg(finalFileitem);
+    // mime type for m3u8/hls streams
+    if (finalFileitem.GetMimeType() == "application/vnd.apple.mpegurl" ||
+        finalFileitem.GetMimeType() == "application/x-mpegURL")
+      return std::make_shared<CDVDInputStreamFFmpeg>(finalFileitem);
 
     if (URIUtils::IsProtocol(finalFileitem.GetPath(), "udp"))
-      return new CDVDInputStreamFFmpeg(finalFileitem);
+      return std::make_shared<CDVDInputStreamFFmpeg>(finalFileitem);
   }
 
   // our file interface handles all these types of streams
-  return (new CDVDInputStreamFile(finalFileitem));
+  return std::make_shared<CDVDInputStreamFile>(finalFileitem,
+                                               XFILE::READ_TRUNCATED | XFILE::READ_BITRATE);
 }
 
-CDVDInputStream* CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, const std::vector<std::string>& filenames)
+std::shared_ptr<CDVDInputStream> CDVDFactoryInputStream::CreateInputStream(IVideoPlayer* pPlayer, const CFileItem &fileitem, const std::vector<std::string>& filenames)
 {
-  return (new CInputStreamMultiSource(pPlayer, fileitem, filenames));
+  return std::make_shared<CInputStreamMultiSource>(pPlayer, fileitem, filenames);
 }

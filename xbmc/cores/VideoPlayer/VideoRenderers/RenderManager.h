@@ -1,47 +1,36 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <list>
+#pragma once
 
+#include "DVDClock.h"
+#include "DebugRenderer.h"
+#include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodec.h"
 #include "cores/VideoPlayer/VideoRenderers/BaseRenderer.h"
 #include "cores/VideoPlayer/VideoRenderers/OverlayRenderer.h"
-#include "guilib/Geometry.h"
-#include "guilib/Resolution.h"
+#include "cores/VideoSettings.h"
 #include "threads/CriticalSection.h"
-#include "settings/VideoSettings.h"
-#include "OverlayRenderer.h"
-#include "DebugRenderer.h"
-#include <deque>
-#include <map>
-#include <atomic>
-#include "PlatformDefs.h"
 #include "threads/Event.h"
-#include "DVDClock.h"
+#include "threads/SystemClock.h"
+#include "utils/Geometry.h"
+#include "windowing/Resolution.h"
+
+#include <atomic>
+#include <deque>
+#include <list>
+#include <map>
+
+#include "PlatformDefs.h"
 
 class CRenderCapture;
 struct VideoPicture;
 
 class CWinRenderer;
-class CMMALRenderer;
 class CLinuxRenderer;
 class CLinuxRendererGL;
 class CLinuxRendererGLES;
@@ -60,30 +49,41 @@ protected:
   virtual void UpdateRenderBuffers(int queued, int discard, int free) = 0;
   virtual void UpdateGuiRender(bool gui) = 0;
   virtual void UpdateVideoRender(bool video) = 0;
+  virtual CVideoSettings GetVideoSettings() const = 0;
 };
 
 class CRenderManager
 {
 public:
   CRenderManager(CDVDClock &clock, IRenderMsg *player);
-  ~CRenderManager();
+  virtual ~CRenderManager();
 
   // Functions called from render thread
-  void GetVideoRect(CRect &source, CRect &dest, CRect &view);
-  float GetAspectRatio();
+  void GetVideoRect(CRect& source, CRect& dest, CRect& view) const;
+  float GetAspectRatio() const;
+  unsigned int GetOrientation() const;
   void FrameMove();
-  void FrameWait(int ms);
+  void FrameWait(std::chrono::milliseconds duration);
   void Render(bool clear, DWORD flags = 0, DWORD alpha = 255, bool gui = true);
   bool IsVideoLayer();
   RESOLUTION GetResolution();
   void UpdateResolution();
-  void TriggerUpdateResolution(float fps, int width, int flags);
+  void TriggerUpdateResolution(float fps, int width, int height, std::string &stereomode);
   void SetViewMode(int iViewMode);
   void PreInit();
   void UnInit();
-  bool Flush(bool wait);
+  bool Flush(bool wait, bool saveBuffers);
   bool IsConfigured() const;
   void ToggleDebug();
+  void ToggleDebugVideo();
+
+  /*!
+   * \brief Set the subtitle vertical position,
+   * it depends on current screen resolution
+   * \param value The subtitle position in pixels
+   * \param save If true, the value will be saved to resolution info
+   */
+  void SetSubtitleVerticalPosition(const int value, bool save);
 
   unsigned int AllocRenderCapture();
   void ReleaseRenderCapture(unsigned int captureId);
@@ -91,35 +91,24 @@ public:
   bool RenderCaptureGetPixels(unsigned int captureId, unsigned int millis, uint8_t *buffer, unsigned int size);
 
   // Functions called from GUI
-  bool Supports(ERENDERFEATURE feature);
-  bool Supports(ESCALINGMETHOD method);
+  bool Supports(ERENDERFEATURE feature) const;
+  bool Supports(ESCALINGMETHOD method) const;
 
   int GetSkippedFrames()  { return m_QueueSkip; }
 
-  // Functions called from mplayer
-  /**
-   * Called by video player to configure renderer
-   * @param picture
-   * @param fps frames per second of video
-   * @param flags see RenderFlags.h
-   * @param orientation
-   * @param numbers of kept buffer references
-   */
-  bool Configure(const VideoPicture& picture, float fps, unsigned flags, unsigned int orientation, int buffers = 0);
-
+  bool Configure(const VideoPicture& picture, float fps, unsigned int orientation, int buffers = 0);
   bool AddVideoPicture(const VideoPicture& picture, volatile std::atomic_bool& bStop, EINTERLACEMETHOD deintMethod, bool wait);
-
-  void AddOverlay(CDVDOverlay* o, double pts);
+  void AddOverlay(std::shared_ptr<CDVDOverlay> o, double pts);
+  void ShowVideo(bool enable);
 
   /**
    * If player uses buffering it has to wait for a buffer before it calls
    * AddVideoPicture and AddOverlay. It waits for max 50 ms before it returns -1
    * in case no buffer is available. Player may call this in a loop and decides
    * by itself when it wants to drop a frame.
-   * If no buffering is requested in Configure, player does not need to call this,
-   * because FlipPage will block.
    */
-  int WaitForBuffer(volatile std::atomic_bool& bStop, int timeout = 100);
+  int WaitForBuffer(volatile std::atomic_bool& bStop,
+                    std::chrono::milliseconds timeout = std::chrono::milliseconds(100));
 
   /**
    * Can be called by player for lateness detection. This is done best by
@@ -128,12 +117,14 @@ public:
   bool GetStats(int &lateframes, double &pts, int &queued, int &discard);
 
   /**
-   * Video player call this on flush in oder to discard any queued frames
+   * Video player call this on flush in order to discard any queued frames
    */
   void DiscardBuffer();
 
-  void SetDelay(int delay) { m_videoDelay = delay; };
-  int GetDelay() { return m_videoDelay; };
+  void SetDelay(int delay) { m_videoDelay = delay; }
+  int GetDelay() { return m_videoDelay; }
+
+  void SetVideoSettings(const CVideoSettings& settings);
 
 protected:
 
@@ -150,25 +141,22 @@ protected:
   void DeleteRenderer();
   void ManageCaptures();
 
-  void UpdateDisplayLatency();
+  void UpdateLatencyTweak();
   void CheckEnableClockSync();
-
-  void FlipPage(volatile std::atomic_bool& bStop, double pts, EINTERLACEMETHOD deintMethod, EFIELDSYNC sync, bool wait);
 
   CBaseRenderer *m_pRenderer = nullptr;
   OVERLAY::CRenderer m_overlays;
   CDebugRenderer m_debugRenderer;
-  CCriticalSection m_statelock;
+  mutable CCriticalSection m_statelock;
   CCriticalSection m_presentlock;
   CCriticalSection m_datalock;
   bool m_bTriggerUpdateResolution = false;
   bool m_bRenderGUI = true;
-  int m_waitForBufferCount = 0;
-  int m_rendermethod = 0;
   bool m_renderedOverlay = false;
   bool m_renderDebug = false;
-  XbmcThreads::EndTime m_debugTimer;
-
+  bool m_renderDebugVideo = false;
+  XbmcThreads::EndTime<> m_debugTimer;
+  std::atomic_bool m_showVideo = {false};
 
   enum EPRESENTSTEP
   {
@@ -183,7 +171,6 @@ protected:
   {
     PRESENT_METHOD_SINGLE = 0,
     PRESENT_METHOD_BLEND,
-    PRESENT_METHOD_WEAVE,
     PRESENT_METHOD_BOB,
   };
 
@@ -193,11 +180,15 @@ protected:
     STATE_CONFIGURING,
     STATE_CONFIGURED,
   };
-  ERENDERSTATE m_renderState;
+  ERENDERSTATE m_renderState = STATE_UNCONFIGURED;
   CEvent m_stateEvent;
 
+  /// Display latency tweak value from AdvancedSettings for the current refresh rate
+  /// in milliseconds
+  double m_latencyTweak = 0.0;
+  /// Display latency updated in PrepareNextRender in DVD clock units, includes m_latencyTweak
   double m_displayLatency = 0.0;
-  std::atomic_int m_videoDelay = {0};
+  std::atomic_int m_videoDelay = {};
 
   int m_QueueSize = 2;
   int m_QueueSkip = 0;
@@ -207,30 +198,29 @@ protected:
     double         pts;
     EFIELDSYNC     presentfield;
     EPRESENTMETHOD presentmethod;
-  } m_Queue[NUM_BUFFERS];
+  } m_Queue[NUM_BUFFERS]{};
 
   std::deque<int> m_free;
   std::deque<int> m_queued;
   std::deque<int> m_discard;
 
   std::unique_ptr<VideoPicture> m_pConfigPicture;
-  unsigned int m_width = 0;
-  unsigned int m_height = 0;
-  unsigned int m_dwidth = 0;
-  unsigned int m_dheight = 0;
-  unsigned int m_flags = 0;
+
+  VideoPicture m_picture{};
+
   float m_fps = 0.0;
   unsigned int m_orientation = 0;
   int m_NumberBuffers = 0;
-
   int m_lateframes = -1;
   double m_presentpts = 0.0;
   EPRESENTSTEP m_presentstep = PRESENT_IDLE;
-  XbmcThreads::EndTime m_presentTimer;
+  XbmcThreads::EndTime<> m_presentTimer;
   bool m_forceNext = false;
   int m_presentsource = 0;
+  int m_presentsourcePast = -1;
   XbmcThreads::ConditionVariable m_presentevent;
   CEvent m_flushEvent;
+  CEvent m_initEvent;
   CDVDClock &m_dvdClock;
   IRenderMsg *m_playerPort;
 

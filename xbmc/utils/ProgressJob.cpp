@@ -1,55 +1,31 @@
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <math.h>
-
 #include "ProgressJob.h"
-#include "dialogs/GUIDialogProgress.h"
+
+#include "ServiceBroker.h"
 #include "dialogs/GUIDialogExtendedProgressBar.h"
+#include "dialogs/GUIDialogProgress.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "utils/Variant.h"
 
-CProgressJob::CProgressJob()
-  : m_modal(false),
-    m_autoClose(true),
-    m_updateProgress(true),
-    m_updateInformation(true),
-    m_progress(NULL),
-    m_progressDialog(NULL)
-{ }
+#include <math.h>
 
-CProgressJob::CProgressJob(CGUIDialogProgressBarHandle* progressBar)
-  : m_modal(false),
-    m_autoClose(true),
-    m_updateProgress(true),
-    m_updateInformation(true),
-    m_progress(progressBar),
-    m_progressDialog(NULL)
+CProgressJob::CProgressJob(CGUIDialogProgressBarHandle* progressBar) : m_progress(progressBar)
 { }
 
 CProgressJob::~CProgressJob()
 {
   MarkFinished();
 
-  m_progress = NULL;
-  m_progressDialog = NULL;
+  m_progress = nullptr;
+  m_progressDialog = nullptr;
 }
 
 bool CProgressJob::ShouldCancel(unsigned int progress, unsigned int total) const
@@ -64,14 +40,14 @@ bool CProgressJob::ShouldCancel(unsigned int progress, unsigned int total) const
 
 bool CProgressJob::DoModal()
 {
-  m_progress = NULL;
+  m_progress = nullptr;
 
   // get a progress dialog if we don't already have one
-  if (m_progressDialog == NULL)
+  if (m_progressDialog == nullptr)
   {
-    m_progressDialog = g_windowManager.GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
+    m_progressDialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
 
-    if (m_progressDialog == NULL)
+    if (m_progressDialog == nullptr)
       return false;
   }
 
@@ -100,8 +76,7 @@ void CProgressJob::SetProgressIndicators(CGUIDialogProgressBarHandle* progressBa
 
 void CProgressJob::ShowProgressDialog() const
 {
-  if (!IsModal() || m_progressDialog == NULL ||
-      m_progressDialog->IsDialogRunning())
+  if (!IsModal() || m_progressDialog == nullptr || m_progressDialog->IsDialogRunning())
     return;
 
   // show the progress dialog as a modal dialog with a progress bar
@@ -114,13 +89,15 @@ void CProgressJob::SetTitle(const std::string &title)
   if (!m_updateInformation)
     return;
 
-  if (m_progress != NULL)
+  if (m_progress != nullptr)
     m_progress->SetTitle(title);
-  else if (m_progressDialog != NULL)
+  else if (m_progressDialog != nullptr)
   {
     m_progressDialog->SetHeading(CVariant{title});
 
-    ShowProgressDialog();
+    // Prevent displaying the progress dialog without any heading and/or text.
+    if (m_progressDialog->HasHeading() && m_progressDialog->HasText())
+      ShowProgressDialog();
   }
 }
 
@@ -129,13 +106,15 @@ void CProgressJob::SetText(const std::string &text)
   if (!m_updateInformation)
     return;
 
-  if (m_progress != NULL)
+  if (m_progress != nullptr)
     m_progress->SetText(text);
-  else if (m_progressDialog != NULL)
+  else if (m_progressDialog != nullptr)
   {
     m_progressDialog->SetText(CVariant{text});
 
-    ShowProgressDialog();
+    // Prevent displaying the progress dialog without any heading and/or text.
+    if (m_progressDialog->HasText() && m_progressDialog->HasHeading())
+      ShowProgressDialog();
   }
 }
 
@@ -144,9 +123,9 @@ void CProgressJob::SetProgress(float percentage) const
   if (!m_updateProgress)
     return;
 
-  if (m_progress != NULL)
+  if (m_progress != nullptr)
     m_progress->SetPercentage(percentage);
-  else if (m_progressDialog != NULL)
+  else if (m_progressDialog != nullptr)
   {
     ShowProgressDialog();
 
@@ -166,15 +145,15 @@ void CProgressJob::SetProgress(int currentStep, int totalSteps) const
   if (!m_updateProgress)
     return;
 
-  if (m_progress != NULL)
+  if (m_progress != nullptr)
     m_progress->SetProgress(currentStep, totalSteps);
-  else if (m_progressDialog != NULL)
+  else if (m_progressDialog != nullptr)
     SetProgress((static_cast<float>(currentStep) * 100.0f) / totalSteps);
 }
 
 void CProgressJob::MarkFinished()
 {
-  if (m_progress != NULL)
+  if (m_progress != nullptr)
   {
     if (m_updateProgress)
     {
@@ -184,13 +163,13 @@ void CProgressJob::MarkFinished()
       m_progress = nullptr;
     }
   }
-  else if (m_progressDialog != NULL && m_autoClose)
+  else if (m_progressDialog != nullptr && m_autoClose)
     m_progressDialog->Close();
 }
 
 bool CProgressJob::IsCancelled() const
 {
-  if (m_progressDialog != NULL)
+  if (m_progressDialog != nullptr)
     return m_progressDialog->IsCanceled();
 
   return false;

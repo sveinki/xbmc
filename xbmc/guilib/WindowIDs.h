@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
@@ -28,7 +16,6 @@
 #define WINDOW_FILES                      10003
 #define WINDOW_SETTINGS_MENU              10004
 #define WINDOW_SYSTEM_INFORMATION         10007
-#define WINDOW_TEST_PATTERN               10008
 #define WINDOW_SCREEN_CALIBRATION         10011
 
 #define WINDOW_SETTINGS_START             10016
@@ -53,6 +40,8 @@
 #define WINDOW_ADDON_BROWSER              10040
 
 #define WINDOW_EVENT_LOG                  10050
+
+#define WINDOW_FAVOURITES 10060
 
 #define WINDOW_SCREENSAVER_DIM               97
 #define WINDOW_DEBUG_INFO                    98
@@ -82,27 +71,30 @@
 #define WINDOW_DIALOG_PROFILE_SETTINGS    10130
 #define WINDOW_DIALOG_LOCK_SETTINGS       10131
 #define WINDOW_DIALOG_CONTENT_SETTINGS    10132
-#define WINDOW_DIALOG_FAVOURITES          10134
+#define WINDOW_DIALOG_LIBEXPORT_SETTINGS  10133
 #define WINDOW_DIALOG_SONG_INFO           10135
 #define WINDOW_DIALOG_SMART_PLAYLIST_EDITOR 10136
 #define WINDOW_DIALOG_SMART_PLAYLIST_RULE   10137
 #define WINDOW_DIALOG_BUSY                10138
 #define WINDOW_DIALOG_PICTURE_INFO        10139
 #define WINDOW_DIALOG_ADDON_SETTINGS      10140
-#define WINDOW_DIALOG_ACCESS_POINTS       10141
 #define WINDOW_DIALOG_FULLSCREEN_INFO     10142
 #define WINDOW_DIALOG_SLIDER              10145
 #define WINDOW_DIALOG_ADDON_INFO          10146
 #define WINDOW_DIALOG_TEXT_VIEWER         10147
+#ifdef HAS_OPTICAL_DRIVE
 #define WINDOW_DIALOG_PLAY_EJECT          10148
+#endif
+#define WINDOW_DIALOG_PERIPHERALS         10149
 #define WINDOW_DIALOG_PERIPHERAL_SETTINGS 10150
 #define WINDOW_DIALOG_EXT_PROGRESS        10151
 #define WINDOW_DIALOG_MEDIA_FILTER        10152
 #define WINDOW_DIALOG_SUBTITLES           10153
-#define WINDOW_DIALOG_AUDIO_DSP_MANAGER   10154
-#define WINDOW_DIALOG_AUDIO_DSP_OSD_SETTINGS 10155
 #define WINDOW_DIALOG_KEYBOARD_TOUCH      10156
 #define WINDOW_DIALOG_CMS_OSD_SETTINGS    10157
+#define WINDOW_DIALOG_INFOPROVIDER_SETTINGS 10158
+#define WINDOW_DIALOG_SUBTITLE_OSD_SETTINGS  10159
+#define WINDOW_DIALOG_BUSY_NOCANCEL       10160
 
 #define WINDOW_MUSIC_PLAYLIST             10500
 #define WINDOW_MUSIC_NAV                  10502
@@ -125,7 +117,9 @@
 #define WINDOW_DIALOG_PVR_CHANNEL_GUIDE   (WINDOW_DIALOG_PVR_ID_START+9)
 #define WINDOW_DIALOG_PVR_RADIO_RDS_INFO  (WINDOW_DIALOG_PVR_ID_START+10)
 #define WINDOW_DIALOG_PVR_RECORDING_SETTING (WINDOW_DIALOG_PVR_ID_START+11)
-#define WINDOW_DIALOG_PVR_ID_END          WINDOW_DIALOG_PVR_RECORDING_SETTING
+#define WINDOW_DIALOG_PVR_CLIENT_PRIORITIES (WINDOW_DIALOG_PVR_ID_START+12)
+#define WINDOW_DIALOG_PVR_GUIDE_CONTROLS  (WINDOW_DIALOG_PVR_ID_START+13)
+#define WINDOW_DIALOG_PVR_ID_END          WINDOW_DIALOG_PVR_GUIDE_CONTROLS
 
 #define WINDOW_PVR_ID_START               10700
 #define WINDOW_TV_CHANNELS                (WINDOW_PVR_ID_START)
@@ -140,15 +134,30 @@
 #define WINDOW_RADIO_SEARCH               (WINDOW_PVR_ID_START+9)
 #define WINDOW_TV_TIMER_RULES             (WINDOW_PVR_ID_START+10)
 #define WINDOW_RADIO_TIMER_RULES          (WINDOW_PVR_ID_START+11)
-#define WINDOW_PVR_ID_END                 WINDOW_RADIO_TIMER_RULES
+#define WINDOW_TV_PROVIDERS (WINDOW_PVR_ID_START + 12)
+#define WINDOW_RADIO_PROVIDERS (WINDOW_PVR_ID_START + 13)
+#define WINDOW_PVR_ID_END WINDOW_RADIO_PROVIDERS
 
-#define WINDOW_FULLSCREEN_LIVETV          10800 // virtual window for PVR specific keymap bindings in fullscreen playback (which internally uses WINDOW_FULLSCREEN_VIDEO)
-#define WINDOW_FULLSCREEN_RADIO           10801 // virtual window for PVR radio specific keymaps with fallback to WINDOW_VISUALISATION
+// virtual windows for PVR specific keymap bindings in fullscreen playback
+#define WINDOW_FULLSCREEN_LIVETV          10800
+#define WINDOW_FULLSCREEN_RADIO           10801
+#define WINDOW_FULLSCREEN_LIVETV_PREVIEW  10802
+#define WINDOW_FULLSCREEN_RADIO_PREVIEW   10803
+#define WINDOW_FULLSCREEN_LIVETV_INPUT    10804
+#define WINDOW_FULLSCREEN_RADIO_INPUT     10805
 
 #define WINDOW_DIALOG_GAME_CONTROLLERS    10820
 #define WINDOW_GAMES                      10821
 #define WINDOW_DIALOG_GAME_OSD            10822
-#define WINDOW_DIALOG_GAME_VIDEO_SETTINGS 10823
+#define WINDOW_DIALOG_GAME_VIDEO_FILTER   10823
+#define WINDOW_DIALOG_GAME_STRETCH_MODE   10824
+#define WINDOW_DIALOG_GAME_VOLUME         10825
+#define WINDOW_DIALOG_GAME_ADVANCED_SETTINGS 10826
+#define WINDOW_DIALOG_GAME_VIDEO_ROTATION 10827
+#define WINDOW_DIALOG_GAME_PORTS 10828
+#define WINDOW_DIALOG_IN_GAME_SAVES 10829
+#define WINDOW_DIALOG_GAME_SAVES 10830
+#define WINDOW_DIALOG_GAME_AGENTS 10831
 
 //#define WINDOW_VIRTUAL_KEYBOARD           11000
 // WINDOW_ID's from 11100 to 11199 reserved for Skins
@@ -157,9 +166,22 @@
 #define WINDOW_DIALOG_MUSIC_INFO          12001
 #define WINDOW_DIALOG_OK                  12002
 #define WINDOW_DIALOG_VIDEO_INFO          12003
+#define WINDOW_DIALOG_MANAGE_VIDEO_VERSIONS 12004
 #define WINDOW_FULLSCREEN_VIDEO           12005
 #define WINDOW_VISUALISATION              12006
 #define WINDOW_SLIDESHOW                  12007
+#define WINDOW_DIALOG_COLOR_PICKER 12008
+
+//! @todo Numbers given here must match the ids given in strings.po for a translatable string for
+//! the window. 12009 to 12014 are already taken for something else in strings.po (accidentally).
+//! So, do not define windows with ids 12009 to 12014, unless strings.po got fixed.
+
+#define WINDOW_DIALOG_MANAGE_VIDEO_EXTRAS 12017
+
+#define WINDOW_DIALOG_SELECT_VIDEO_STREAM 12300
+#define WINDOW_DIALOG_SELECT_AUDIO_STREAM 12301
+#define WINDOW_DIALOG_SELECT_SUBTITLE_STREAM 12302
+
 #define WINDOW_WEATHER                    12600
 #define WINDOW_SCREENSAVER                12900
 #define WINDOW_DIALOG_VIDEO_OSD           12901

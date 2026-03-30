@@ -1,28 +1,19 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIToggleButtonControl.h"
-#include "GUIWindowManager.h"
+
 #include "GUIDialog.h"
 #include "GUIInfoManager.h"
-#include "input/Key.h"
+#include "GUIWindowManager.h"
+#include "ServiceBroker.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
 
 CGUIToggleButtonControl::CGUIToggleButtonControl(int parentID, int controlID, float posX, float posY, float width, float height, const CTextureInfo& textureFocus, const CTextureInfo& textureNoFocus, const CTextureInfo& altTextureFocus, const CTextureInfo& altTextureNoFocus, const CLabelInfo &labelInfo, bool wrapMultiLine)
     : CGUIButtonControl(parentID, controlID, posX, posY, width, height, textureFocus, textureNoFocus, labelInfo, wrapMultiLine)
@@ -37,7 +28,7 @@ void CGUIToggleButtonControl::Process(unsigned int currentTime, CDirtyRegionList
 {
   // ask our infoManager whether we are selected or not...
   if (m_toggleSelect)
-    m_bSelected = m_toggleSelect->Get();
+    m_bSelected = m_toggleSelect->Get(INFO::DEFAULT_CONTEXT);
 
   if (m_bSelected)
   {
@@ -48,6 +39,7 @@ void CGUIToggleButtonControl::Process(unsigned int currentTime, CDirtyRegionList
     m_selectButton.SetPulseOnSelect(m_pulseOnSelect);
     ProcessToggle(currentTime);
     m_selectButton.DoProcess(currentTime, dirtyregions);
+    CGUIControl::Process(currentTime, dirtyregions);
   }
   else
     CGUIButtonControl::Process(currentTime, dirtyregions);
@@ -138,11 +130,11 @@ void CGUIToggleButtonControl::SetMinWidth(float minWidth)
   m_selectButton.SetMinWidth(minWidth);
 }
 
-bool CGUIToggleButtonControl::UpdateColors()
+bool CGUIToggleButtonControl::UpdateColors(const CGUIListItem* item)
 {
-  bool changed = CGUIButtonControl::UpdateColors();
+  bool changed = CGUIButtonControl::UpdateColors(nullptr);
   changed |= m_selectButton.SetColorDiffuse(m_diffuseColor);
-  changed |= m_selectButton.UpdateColors();
+  changed |= m_selectButton.UpdateColors(nullptr);
 
   return changed;
 }
@@ -155,7 +147,7 @@ void CGUIToggleButtonControl::SetLabel(const std::string &label)
 
 void CGUIToggleButtonControl::SetAltLabel(const std::string &label)
 {
-  if (label.size())
+  if (!label.empty())
     m_selectButton.SetLabel(label);
 }
 
@@ -182,5 +174,5 @@ void CGUIToggleButtonControl::OnClick()
 
 void CGUIToggleButtonControl::SetToggleSelect(const std::string &toggleSelect)
 {
-  m_toggleSelect = g_infoManager.Register(toggleSelect, GetParentID());
+  m_toggleSelect = CServiceBroker::GetGUI()->GetInfoManager().Register(toggleSelect, GetParentID());
 }

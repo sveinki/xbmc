@@ -1,35 +1,26 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
-#include <list>
-#include <utility>
 
 #include "AudioSinkAE.h"
 #include "DVDClock.h"
 #include "DVDMessageQueue.h"
 #include "DVDStreamInfo.h"
 #include "IVideoPlayer.h"
-#include "TimingConstants.h"
+#include "cores/VideoPlayer/Interface/TimingConstants.h"
+#include "threads/SystemClock.h"
 #include "threads/Thread.h"
 #include "utils/BitstreamStats.h"
+
+#include <list>
+#include <mutex>
+#include <utility>
 
 
 class CVideoPlayer;
@@ -39,7 +30,10 @@ class CDVDAudioCodec;
 class CVideoPlayerAudio : public CThread, public IDVDStreamPlayerAudio
 {
 public:
-  CVideoPlayerAudio(CDVDClock* pClock, CDVDMessageQueue& parent, CProcessInfo &processInfo);
+  CVideoPlayerAudio(CDVDClock* pClock,
+                    CDVDMessageQueue& parent,
+                    CProcessInfo& processInfo,
+                    double messageQueueTimeSize);
   ~CVideoPlayerAudio() override;
 
   bool OpenStream(CDVDStreamInfo hints) override;
@@ -53,7 +47,10 @@ public:
   bool HasData() const override { return m_messageQueue.GetDataSize() > 0; }
   int  GetLevel() const override { return m_messageQueue.GetLevel(); }
   bool IsInited() const override { return m_messageQueue.IsInited(); }
-  void SendMessage(CDVDMsg* pMsg, int priority = 0) override { m_messageQueue.Put(pMsg, priority); }
+  void SendMessage(std::shared_ptr<CDVDMsg> pMsg, int priority = 0) override
+  {
+    m_messageQueue.Put(pMsg, priority);
+  }
   void FlushMessages() override { m_messageQueue.Flush(); }
 
   void SetDynamicRangeCompression(long drc) override { m_audioSink.SetDynamicRangeCompression(drc); }
@@ -62,7 +59,11 @@ public:
   std::string GetPlayerInfo() override;
   int GetAudioChannels() override;
 
-  double GetCurrentPts() override { CSingleLock lock(m_info_section); return m_info.pts; }
+  double GetCurrentPts() override
+  {
+    std::unique_lock lock(m_info_section);
+    return m_info.pts;
+  }
 
   bool IsStalled() const override { return m_stalled;  }
   bool IsPassthrough() const override;
@@ -75,10 +76,11 @@ protected:
 
   bool ProcessDecoderOutput(DVDAudioFrame &audioframe);
   void UpdatePlayerInfo();
-  void OpenStream(CDVDStreamInfo &hints, CDVDAudioCodec* codec);
+  void OpenStream(CDVDStreamInfo& hints, std::unique_ptr<CDVDAudioCodec> codec);
   //! Switch codec if needed. Called when the sample rate gotten from the
   //! codec changes, in which case we may want to switch passthrough on/off.
   bool SwitchCodecIfNeeded();
+  void SetSyncType(bool passthrough);
 
   CDVDMessageQueue m_messageQueue;
   CDVDMessageQueue& m_messageParent;
@@ -90,38 +92,33 @@ protected:
 
   CAudioSinkAE m_audioSink; // audio output device
   CDVDClock* m_pClock; // dvd master clock
-  CDVDAudioCodec* m_pAudioCodec; // audio codec
+  std::unique_ptr<CDVDAudioCodec> m_pAudioCodec; // audio codec
   BitstreamStats m_audioStats;
 
   int m_speed;
   bool m_stalled;
   bool m_paused;
   IDVDStreamPlayer::ESyncState m_syncState;
-  XbmcThreads::EndTime m_syncTimer;
+  XbmcThreads::EndTime<> m_syncTimer;
 
-  //SYNC_DISCON, SYNC_SKIPDUP, SYNC_RESAMPLE
-  int    m_synctype;
-  int    m_setsynctype;
-  int    m_prevsynctype; //so we can print to the log
-
-  void   SetSyncType(bool passthrough);
+  int m_synctype;
+  int m_prevsynctype;
 
   bool   m_prevskipped;
   double m_maxspeedadjust;
 
   struct SInfo
   {
-    SInfo()
-    : pts(DVD_NOPTS_VALUE)
-    , passthrough(false)
-    {}
-
     std::string      info;
-    double           pts;
-    bool             passthrough;
+    double           pts = DVD_NOPTS_VALUE;
+    bool             passthrough = false;
   };
 
-  CCriticalSection m_info_section;
+  mutable CCriticalSection m_info_section;
   SInfo            m_info;
+
+  bool m_displayReset = false;
+  unsigned int m_disconAdjustTimeMs = 50; // maximum sync-off before adjusting
+  int m_disconAdjustCounter = 0;
 };
 

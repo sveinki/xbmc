@@ -1,24 +1,13 @@
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "SettingConditions.h"
+
 #include "SettingDefinitions.h"
 #include "SettingsManager.h"
 #include "utils/StringUtils.h"
@@ -30,17 +19,17 @@ bool CSettingConditionItem::Deserialize(const TiXmlNode *node)
     return false;
 
   auto elem = node->ToElement();
-  if (elem == nullptr)
+  if (!elem)
     return false;
 
   // get the "name" attribute
   auto strAttribute = elem->Attribute(SETTING_XML_ATTR_NAME);
-  if (strAttribute != nullptr)
+  if (strAttribute)
     m_name = strAttribute;
 
   // get the "setting" attribute
   strAttribute = elem->Attribute(SETTING_XML_ATTR_SETTING);
-  if (strAttribute != nullptr)
+  if (strAttribute)
     m_setting = strAttribute;
 
   return true;
@@ -48,7 +37,7 @@ bool CSettingConditionItem::Deserialize(const TiXmlNode *node)
 
 bool CSettingConditionItem::Check() const
 {
-  if (m_settingsManager == nullptr)
+  if (!m_settingsManager)
     return false;
 
   return m_settingsManager->GetConditions().Check(m_name, m_value, m_settingsManager->GetSetting(m_setting)) == !m_negated;
@@ -59,13 +48,13 @@ bool CSettingConditionCombination::Check() const
   bool ok = false;
   for (const auto& operation : m_operations)
   {
-    if (operation == nullptr)
+    if (!operation)
       continue;
 
     const auto combination = std::static_pointer_cast<const CSettingConditionCombination>(operation);
-    if (combination == nullptr)
+    if (!combination)
       continue;
-    
+
     if (combination->Check())
       ok = true;
     else if (m_operation == BooleanLogicOperationAnd)
@@ -74,11 +63,11 @@ bool CSettingConditionCombination::Check() const
 
   for (const auto& value : m_values)
   {
-    if (value == nullptr)
+    if (!value)
       continue;
 
     const auto condition = std::static_pointer_cast<const CSettingConditionItem>(value);
-    if (condition == nullptr)
+    if (!condition)
       continue;
 
     if (condition->Check())
@@ -93,13 +82,13 @@ bool CSettingConditionCombination::Check() const
 CSettingCondition::CSettingCondition(CSettingsManager *settingsManager /* = nullptr */)
   : ISettingCondition(settingsManager)
 {
-  m_operation = CBooleanLogicOperationPtr(new CSettingConditionCombination(settingsManager));
+  m_operation = std::make_shared<CSettingConditionCombination>(settingsManager);
 }
 
 bool CSettingCondition::Check() const
 {
   auto combination = std::static_pointer_cast<CSettingConditionCombination>(m_operation);
-  if (combination == nullptr)
+  if (!combination)
     return false;
 
   return combination->Check();
@@ -115,17 +104,33 @@ void CSettingConditionsManager::AddCondition(std::string condition)
   m_defines.insert(condition);
 }
 
-void CSettingConditionsManager::AddCondition(std::string identifier, SettingConditionCheck condition, void *data /*= nullptr*/)
+void CSettingConditionsManager::AddDynamicCondition(std::string identifier,
+                                                    const SettingConditionCheck& condition)
 {
-  if (identifier.empty() || condition == nullptr)
+  if (identifier.empty() || !condition)
     return;
 
   StringUtils::ToLower(identifier);
 
-  m_conditions.emplace(identifier, std::make_pair(condition, data));
+  m_conditions.try_emplace(identifier, condition);
 }
 
-bool CSettingConditionsManager::Check(std::string condition, const std::string &value /* = "" */, std::shared_ptr<const CSetting> setting /* = nullptr */) const
+void CSettingConditionsManager::RemoveDynamicCondition(std::string identifier)
+{
+  if (identifier.empty())
+    return;
+
+  StringUtils::ToLower(identifier);
+
+  auto it = m_conditions.find(identifier);
+  if (it != m_conditions.end())
+    m_conditions.erase(it);
+}
+
+bool CSettingConditionsManager::Check(
+    std::string condition,
+    const std::string& value /* = "" */,
+    const std::shared_ptr<const CSetting>& setting /* = nullptr */) const
 {
   if (condition.empty())
     return false;
@@ -138,12 +143,12 @@ bool CSettingConditionsManager::Check(std::string condition, const std::string &
     std::string tmpValue = value;
     StringUtils::ToLower(tmpValue);
 
-    return m_defines.find(tmpValue) != m_defines.end();
+    return m_defines.contains(tmpValue);
   }
 
   auto conditionIt = m_conditions.find(condition);
   if (conditionIt == m_conditions.end())
     return false;
 
-  return conditionIt->second.first(condition, value, setting, conditionIt->second.second);
+  return conditionIt->second(condition, value, setting);
 }

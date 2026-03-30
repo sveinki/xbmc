@@ -1,34 +1,33 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include "TextureCacheJob.h"
+#include "TextureDatabase.h"
+#include "guilib/AspectRatio.h"
+#include "jobs/JobQueue.h"
+#include "powermanagement/PowerState.h"
+#include "threads/CriticalSection.h"
+#include "threads/Event.h"
+#include "threads/Timer.h"
+
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
-#include "utils/JobManager.h"
-#include "TextureDatabase.h"
-#include "threads/Event.h"
 
+class CGUIDialogProgress;
+class CJob;
 class CURL;
-class CBaseTexture;
+class CTexture;
 
 /*!
  \ingroup textures
@@ -40,14 +39,11 @@ class CBaseTexture;
  unused for a set period of time.
 
  */
-class CTextureCache : public CJobQueue
+class CTextureCache : public CJobQueue, public CPowerState
 {
 public:
-  /*!
-   \brief The only way through which the global instance of the CTextureCache should be accessed.
-   \return the global instance.
-   */
-  static CTextureCache &GetInstance();
+  CTextureCache();
+  ~CTextureCache() override;
 
   /*! \brief Initialize the texture cache
    */
@@ -66,7 +62,7 @@ public:
    \param needsRecaching [out] whether the image needs recaching.
    \return cached url of this image
    \sa GetCachedImage
-   */ 
+   */
   std::string CheckCachedImage(const std::string &image, bool &needsRecaching);
 
   /*! \brief Cache image (if required) using a background job
@@ -80,6 +76,17 @@ public:
    */
   void BackgroundCacheImage(const std::string &image);
 
+  /*! \brief Updates the in-process list.
+
+   Inserts the image url into the currently processing list 
+   to avoid 2 jobs being processed at once
+
+   \param image url of the image to start processing
+   \return true if list updated, false otherwise
+   \sa CacheImage
+   */
+  bool StartCacheImage(const std::string& image);
+
   /*! \brief Cache an image to image cache, optionally return the texture
 
    Caches the given image, returning the texture if the caller wants it.
@@ -87,10 +94,18 @@ public:
    \param image url of the image to cache
    \param texture [out] the loaded image
    \param details [out] details of the cached image
+   \param idealWidth the ideal width of the returned texture (defaults to 0, no ideal width). Only matters if texture is not null.
+   \param idealHeight the ideal height of the returned texture (defaults to 0, no ideal height). Only matters if texture is not null.
+   \param aspectRatio the aspect ratio mode of the texture (defaults to "center"). Only matters if texture is not null.
    \return cached url of this image
    \sa CTextureCacheJob::CacheTexture
    */
-  std::string CacheImage(const std::string &image, CBaseTexture **texture = NULL, CTextureDetails *details = NULL);
+  std::string CacheImage(const std::string& image,
+                         std::unique_ptr<CTexture>* texture = nullptr,
+                         CTextureDetails* details = nullptr,
+                         unsigned int idealWidth = 0,
+                         unsigned int idealHeight = 0,
+                         CAspectRatio::AspectRatio aspectRatio = CAspectRatio::CENTER);
 
   /*! \brief Cache an image to image cache if not already cached, returning the image details.
    \param image url of the image to cache.
@@ -133,12 +148,6 @@ public:
    */
   static std::string GetCachedPath(const std::string &file);
 
-  /*! \brief check whether an image:// URL may be cached
-   \param url the URL to the image
-   \return true if the given URL may be cached, false otherwise
-   */
-  static bool CanCacheImageURL(const CURL &url);
-
   /*! \brief Add this image to the database
    Thread-safe wrapper of CTextureDatabase::AddCachedTexture
    \param image url of the original image
@@ -155,12 +164,13 @@ public:
    */
   bool Export(const std::string &image, const std::string &destination, bool overwrite);
   bool Export(const std::string &image, const std::string &destination); //! @todo BACKWARD COMPATIBILITY FOR MUSIC THUMBS
+
+  bool CleanAllUnusedImages();
+
 private:
   // private construction, and no assignments; use the provided singleton methods
-  CTextureCache();
-  CTextureCache(const CTextureCache&);
-  CTextureCache const& operator=(CTextureCache const&);
-  ~CTextureCache() override;
+  CTextureCache(const CTextureCache&) = delete;
+  CTextureCache const& operator=(CTextureCache const&) = delete;
 
   /*! \brief Check if the given image is a cached image
    \param image url of the image
@@ -209,7 +219,6 @@ private:
   bool SetCachedTextureValid(const std::string &url, bool updateable);
 
   void OnJobComplete(unsigned int jobID, bool success, CJob *job) override;
-  void OnJobProgress(unsigned int jobID, unsigned int progress, unsigned int total, const CJob *job) override;
 
   /*! \brief Called when a caching job has completed.
    Removes the job from our processing list, updates the database
@@ -219,6 +228,12 @@ private:
    */
   void OnCachingComplete(bool success, CTextureCacheJob *job);
 
+  void CleanTimer();
+  std::chrono::milliseconds ScanOldestCache();
+  bool CleanAllUnusedImagesJob(CGUIDialogProgress* progress);
+
+  std::atomic_flag m_cleaningInProgress;
+  CTimer m_cleanTimer;
   CCriticalSection m_databaseSection;
   CTextureDatabase m_database;
   std::set<std::string> m_processinglist; ///< currently processing list to avoid 2 jobs being processed at once

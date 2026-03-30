@@ -4,7 +4,8 @@ set(SOURCES Peripheral.cpp
             PeripheralHID.cpp
             PeripheralImon.cpp
             PeripheralJoystick.cpp
-            PeripheralJoystickEmulation.cpp
+            PeripheralKeyboard.cpp
+            PeripheralMouse.cpp
             PeripheralNIC.cpp
             PeripheralNyxboard.cpp
             PeripheralTuner.cpp)
@@ -15,12 +16,13 @@ set(HEADERS Peripheral.h
             PeripheralHID.h
             PeripheralImon.h
             PeripheralJoystick.h
-            PeripheralJoystickEmulation.h
+            PeripheralKeyboard.h
+            PeripheralMouse.h
             PeripheralNIC.h
             PeripheralNyxboard.h
             PeripheralTuner.h)
 
-if(CEC_FOUND)
+if(TARGET ${APP_NAME_LC}::CEC)
   list(APPEND SOURCES PeripheralCecAdapter.cpp)
   list(APPEND HEADERS PeripheralCecAdapter.h)
 endif()

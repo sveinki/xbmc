@@ -1,36 +1,46 @@
 /*
- *      Copyright (C) 2015-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ControllerLayout.h"
+
 #include "Controller.h"
 #include "ControllerDefinitions.h"
 #include "ControllerTranslator.h"
-#include "guilib/LocalizeStrings.h"
-#include "utils/log.h"
+#include "ServiceBroker.h"
+#include "games/controllers/input/PhysicalTopology.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "utils/URIUtils.h"
 #include "utils/XMLUtils.h"
+#include "utils/log.h"
 
+#include <cstring>
 #include <sstream>
+
+#include <tinyxml2.h>
 
 using namespace KODI;
 using namespace GAME;
+
+CControllerLayout::CControllerLayout() : m_topology(new CPhysicalTopology)
+{
+}
+
+CControllerLayout::CControllerLayout(const CControllerLayout& other)
+  : m_controller(other.m_controller),
+    m_labelId(other.m_labelId),
+    m_icon(other.m_icon),
+    m_strImage(other.m_strImage),
+    m_topology(new CPhysicalTopology(*other.m_topology))
+{
+}
+
+CControllerLayout::~CControllerLayout() = default;
 
 void CControllerLayout::Reset(void)
 {
@@ -38,7 +48,7 @@ void CControllerLayout::Reset(void)
   m_labelId = -1;
   m_icon.clear();
   m_strImage.clear();
-  m_models.clear();
+  m_topology->Reset();
 }
 
 bool CControllerLayout::IsValid(bool bLog) const
@@ -46,14 +56,16 @@ bool CControllerLayout::IsValid(bool bLog) const
   if (m_labelId < 0)
   {
     if (bLog)
-      CLog::Log(LOGERROR, "<%s> tag has no \"%s\" attribute", LAYOUT_XML_ROOT, LAYOUT_XML_ATTR_LAYOUT_LABEL);
+      CLog::Log(LOGERROR, "<{}> tag has no \"{}\" attribute", LAYOUT_XML_ROOT,
+                LAYOUT_XML_ATTR_LAYOUT_LABEL);
     return false;
   }
 
   if (m_strImage.empty())
   {
     if (bLog)
-      CLog::Log(LOGDEBUG, "<%s> tag has no \"%s\" attribute", LAYOUT_XML_ROOT, LAYOUT_XML_ATTR_LAYOUT_IMAGE);
+      CLog::Log(LOGDEBUG, "<{}> tag has no \"{}\" attribute", LAYOUT_XML_ROOT,
+                LAYOUT_XML_ATTR_LAYOUT_IMAGE);
     return false;
   }
 
@@ -65,7 +77,8 @@ std::string CControllerLayout::Label(void) const
   std::string label;
 
   if (m_labelId >= 0 && m_controller != nullptr)
-    label = g_localizeStrings.GetAddonString(m_controller->ID(), m_labelId);
+    label = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().GetAddonString(
+        m_controller->ID(), m_labelId);
 
   return label;
 }
@@ -80,7 +93,9 @@ std::string CControllerLayout::ImagePath(void) const
   return path;
 }
 
-void CControllerLayout::Deserialize(const TiXmlElement* pElement, const CController* controller, std::vector<CControllerFeature> &features)
+void CControllerLayout::Deserialize(const tinyxml2::XMLElement* pElement,
+                                    const CController* controller,
+                                    std::vector<CPhysicalFeature>& features)
 {
   if (pElement == nullptr || controller == nullptr)
     return;
@@ -107,38 +122,44 @@ void CControllerLayout::Deserialize(const TiXmlElement* pElement, const CControl
   if (!image.empty())
     m_strImage = image;
 
-  // Models
-  std::string models = XMLUtils::GetAttribute(pElement, LAYOUT_XML_ATTR_LAYOUT_MODELS);
-  if (!models.empty())
-    m_models = models;
-
-  // Features
-  for (const TiXmlElement* pChild = pElement->FirstChildElement(); pChild != nullptr; pChild = pChild->NextSiblingElement())
+  for (const auto* pChild = pElement->FirstChildElement(); pChild != nullptr;
+       pChild = pChild->NextSiblingElement())
   {
-    if (pChild->ValueStr() == LAYOUT_XML_ELM_CATEGORY)
+    if (std::strcmp(pChild->Value(), LAYOUT_XML_ELM_CATEGORY) == 0)
     {
       // Category
       std::string strCategory = XMLUtils::GetAttribute(pChild, LAYOUT_XML_ATTR_CATEGORY_NAME);
-      JOYSTICK::FEATURE_CATEGORY category = CControllerTranslator::TranslateFeatureCategory(strCategory);
+      JOYSTICK::FEATURE_CATEGORY category =
+          CControllerTranslator::TranslateFeatureCategory(strCategory);
 
       // Category label
       int categoryLabelId = -1;
 
-      std::string strCategoryLabelId = XMLUtils::GetAttribute(pChild, LAYOUT_XML_ATTR_CATEGORY_LABEL);
+      std::string strCategoryLabelId =
+          XMLUtils::GetAttribute(pChild, LAYOUT_XML_ATTR_CATEGORY_LABEL);
       if (!strCategoryLabelId.empty())
         std::istringstream(strCategoryLabelId) >> categoryLabelId;
 
-      for (const TiXmlElement* pFeature = pChild->FirstChildElement(); pFeature != nullptr; pFeature = pFeature->NextSiblingElement())
+      // Features
+      for (const auto* pFeature = pChild->FirstChildElement(); pFeature != nullptr;
+           pFeature = pFeature->NextSiblingElement())
       {
-        CControllerFeature feature;
+        CPhysicalFeature feature;
 
         if (feature.Deserialize(pFeature, controller, category, categoryLabelId))
           features.push_back(feature);
       }
     }
+    else if (std::strcmp(pChild->Value(), LAYOUT_XML_ELM_TOPOLOGY) == 0)
+    {
+      // Topology
+      CPhysicalTopology topology;
+      if (topology.Deserialize(pChild))
+        *m_topology = std::move(topology);
+    }
     else
     {
-      CLog::Log(LOGDEBUG, "Ignoring <%s> tag", pChild->ValueStr().c_str());
+      CLog::Log(LOGDEBUG, "Ignoring <{}> tag", pChild->Value());
     }
   }
 }

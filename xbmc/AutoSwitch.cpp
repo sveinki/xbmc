@@ -1,68 +1,68 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "AutoSwitch.h"
+
 #include "FileItem.h"
+#include "FileItemList.h"
 #include "ServiceBroker.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "guilib/WindowIDs.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
 #include "view/ViewState.h"
 
-#define METHOD_BYFOLDERS  0
-#define METHOD_BYFILES   1
-#define METHOD_BYTHUMBPERCENT 2
-#define METHOD_BYFILECOUNT 3
-#define METHOD_BYFOLDERTHUMBS 4
+#include <algorithm>
 
-CAutoSwitch::CAutoSwitch(void) = default;
+namespace
+{
 
-CAutoSwitch::~CAutoSwitch(void) = default;
+enum class Method
+{
+  NONE,
+  BY_FOLDERS,
+  BY_FILES,
+  BY_THUMBPERCENT,
+  BY_FILECOUNT,
+  BY_FOLDERTHUMBS,
+};
+
+auto hasThumb = [](const auto& item) { return item->HasArt("thumb"); };
+}
 
 /// \brief Generic function to add a layer of transparency to the calling window
 /// \param vecItems Vector of FileItems passed from the calling window
 int CAutoSwitch::GetView(const CFileItemList &vecItems)
 {
-  int iSortMethod = -1;
+  Method iSortMethod = Method::NONE;
   int iPercent = 0;
-  int iCurrentWindow = g_windowManager.GetActiveWindow();
-  bool bHideParentFolderItems = !CServiceBroker::GetSettings().GetBool(CSettings::SETTING_FILELISTS_SHOWPARENTDIRITEMS);
+  int iCurrentWindow = CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow();
+  bool bHideParentFolderItems = !CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_FILELISTS_SHOWPARENTDIRITEMS);
 
   switch (iCurrentWindow)
   {
   case WINDOW_PICTURES:
     {
-      iSortMethod = METHOD_BYFILECOUNT;
+      iSortMethod = Method::BY_FILECOUNT;
     }
     break;
 
   case WINDOW_PROGRAMS:
     {
-      iSortMethod = METHOD_BYTHUMBPERCENT;
+      iSortMethod = Method::BY_THUMBPERCENT;
       iPercent = 50;  // 50% of thumbs -> use thumbs.
     }
     break;
 
   default:
     {
-      if(MetadataPercentage(vecItems) > 0.25)
+      if (MetadataPercentage(vecItems) > 0.25f)
         return DEFAULT_VIEW_INFO;
       else
         return DEFAULT_VIEW_LIST;
@@ -74,23 +74,28 @@ int CAutoSwitch::GetView(const CFileItemList &vecItems)
 
   switch (iSortMethod)
   {
-  case METHOD_BYFOLDERS:
-    bThumbs = ByFolders(vecItems);
-    break;
+    case Method::BY_FOLDERS:
+      bThumbs = ByFolders(vecItems);
+      break;
 
-  case METHOD_BYFILES:
-    bThumbs = ByFiles(bHideParentFolderItems, vecItems);
-    break;
+    case Method::BY_FILES:
+      bThumbs = ByFiles(bHideParentFolderItems, vecItems);
+      break;
 
-  case METHOD_BYTHUMBPERCENT:
-    bThumbs = ByThumbPercent(bHideParentFolderItems, iPercent, vecItems);
-    break;
-  case METHOD_BYFILECOUNT:
-    bThumbs = ByFileCount(vecItems);
-    break;
-  case METHOD_BYFOLDERTHUMBS:
-    bThumbs = ByFolderThumbPercentage(bHideParentFolderItems, iPercent, vecItems);
-    break;
+    case Method::BY_THUMBPERCENT:
+      bThumbs = ByThumbPercent(bHideParentFolderItems, iPercent, vecItems);
+      break;
+
+    case Method::BY_FILECOUNT:
+      bThumbs = ByFileCount(vecItems);
+      break;
+
+    case Method::BY_FOLDERTHUMBS:
+      bThumbs = ByFolderThumbPercentage(bHideParentFolderItems, iPercent, vecItems);
+      break;
+
+    case Method::NONE:
+      break;
   }
 
   // the GUIViewControl object will default down to small icons if a big icon
@@ -102,22 +107,10 @@ int CAutoSwitch::GetView(const CFileItemList &vecItems)
 /// \param vecItems Vector of FileItems
 bool CAutoSwitch::ByFolders(const CFileItemList& vecItems)
 {
-  bool bThumbs = false;
-  // is the list all folders?
-  if (vecItems.GetFolderCount() == vecItems.Size())
-  {
-    // test for thumbs
-    for (int i = 0; i < vecItems.Size(); i++)
-    {
-      const CFileItemPtr pItem = vecItems[i];
-      if (pItem->HasArt("thumb"))
-      {
-        bThumbs = true;
-        break;
-      }
-    }
-  }
-  return bThumbs;
+  if (vecItems.GetFolderCount() != vecItems.Size())
+    return false;
+
+  return std::ranges::any_of(vecItems, hasThumb);
 }
 
 /// \brief Auto Switch method based on the current directory \e not containing ALL files and \e atleast one non-default thumb
@@ -125,73 +118,32 @@ bool CAutoSwitch::ByFolders(const CFileItemList& vecItems)
 /// \param vecItems Vector of FileItems
 bool CAutoSwitch::ByFiles(bool bHideParentDirItems, const CFileItemList& vecItems)
 {
-  bool bThumbs = false;
-  int iCompare = 0;
+  if (vecItems.GetFolderCount() <= (bHideParentDirItems ? 0 : 1))
+    return false;
 
-  // parent directorys are visible, increment
-  if (!bHideParentDirItems)
-  {
-    iCompare = 1;
-  }
-
-  // confirm the list is not just files and folderback
-  if (vecItems.GetFolderCount() > iCompare)
-  {
-    // test for thumbs
-    for (int i = 0; i < vecItems.Size(); i++)
-    {
-      const CFileItemPtr pItem = vecItems[i];
-      if (pItem->HasArt("thumb"))
-      {
-        bThumbs = true;
-        break;
-      }
-    }
-  }
-  return bThumbs;
+  return std::ranges::any_of(vecItems, hasThumb);
 }
-
 
 /// \brief Auto Switch method based on the percentage of non-default thumbs \e in the current directory
 /// \param iPercent Percent of non-default thumbs to autoswitch on
 /// \param vecItems Vector of FileItems
 bool CAutoSwitch::ByThumbPercent(bool bHideParentDirItems, int iPercent, const CFileItemList& vecItems)
 {
-  bool bThumbs = false;
-  int iNumThumbs = 0;
-  int iNumItems = vecItems.Size();
-  if (!bHideParentDirItems)
-  {
-    iNumItems--;
-  }
+  const int numItems = bHideParentDirItems ? vecItems.Size() : vecItems.Size() - 1;
+  if (numItems <= 0)
+    return false;
 
-  if (iNumItems <= 0) return false;
-
-  for (int i = 0; i < vecItems.Size(); i++)
-  {
-    const CFileItemPtr pItem = vecItems[i];
-    if (pItem->HasArt("thumb"))
-    {
-      iNumThumbs++;
-      float fTempPercent = ( (float)iNumThumbs / (float)iNumItems ) * (float)100;
-      if (fTempPercent >= (float)iPercent)
-      {
-        bThumbs = true;
-        break;
-      }
-    }
-  }
-
-  return bThumbs;
+  const float numThumbs = std::ranges::count_if(vecItems, hasThumb);
+  return numThumbs / numItems * 100.f > iPercent;
 }
 
 /// \brief Auto Switch method based on whether there is more than 25% files.
 /// \param iPercent Percent of non-default thumbs to autoswitch on
 bool CAutoSwitch::ByFileCount(const CFileItemList& vecItems)
 {
-  if (vecItems.Size() == 0) return false;
-  float fPercent = (float)vecItems.GetFileCount() / vecItems.Size();
-  return (fPercent > 0.25);
+  if (vecItems.IsEmpty())
+    return false;
+  return static_cast<float>(vecItems.GetFileCount()) / vecItems.Size() > 0.25f;
 }
 
 // returns true if:
@@ -199,43 +151,31 @@ bool CAutoSwitch::ByFileCount(const CFileItemList& vecItems)
 // 2. Have more than percent folders with thumbs
 bool CAutoSwitch::ByFolderThumbPercentage(bool hideParentDirItems, int percent, const CFileItemList &vecItems)
 {
-  int numItems = vecItems.Size();
-  if (!hideParentDirItems)
-    numItems--;
-  if (numItems <= 0) return false;
+  const int numItems = hideParentDirItems ? vecItems.Size() : vecItems.Size() - 1;
+  if (numItems <= 0)
+    return false;
 
-  int fileCount = vecItems.GetFileCount();
-  if (fileCount > 0.25f * numItems) return false;
+  const int fileCount = vecItems.GetFileCount();
+  if (fileCount > 0.25f * numItems)
+    return false;
 
-  int numThumbs = 0;
-  for (int i = 0; i < vecItems.Size(); i++)
-  {
-    const CFileItemPtr item = vecItems[i];
-    if (item->m_bIsFolder && item->HasArt("thumb"))
-    {
-      numThumbs++;
-      if (numThumbs >= 0.01f * percent * (numItems - fileCount))
-        return true;
-    }
-  }
-
-  return false;
+  const int numThumbs = std::ranges::count_if(
+      vecItems, [](const auto& item) { return item->IsFolder() && item->HasArt("thumb"); });
+  return numThumbs >= 0.01f * percent * (numItems - fileCount);
 }
 
 float CAutoSwitch::MetadataPercentage(const CFileItemList &vecItems)
 {
-  int count = 0;
   int total = vecItems.Size();
-  for (int i = 0; i < vecItems.Size(); i++)
-  {
-    const CFileItemPtr item = vecItems[i];
-    if(item->HasMusicInfoTag()
-    || item->HasVideoInfoTag()
-    || item->HasPictureInfoTag()
-    || item->HasProperty("Addon.ID"))
-      count++;
-    if(item->IsParentFolder())
-      total--;
-  }
-  return (total != 0) ? ((float)count / total) : 0.0f;
+  const float count =
+      std::ranges::count_if(vecItems,
+                            [&total](const auto& item)
+                            {
+                              if (item->IsParentFolder())
+                                --total;
+
+                              return item->HasMusicInfoTag() || item->HasVideoInfoTag() ||
+                                     item->HasPictureInfoTag() || item->HasProperty("Addon.ID");
+                            });
+  return total != 0 ? count / total : 0.0f;
 }

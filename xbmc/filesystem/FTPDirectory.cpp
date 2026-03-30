@@ -1,32 +1,24 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "FTPDirectory.h"
-#include "FTPParse.h"
-#include "URL.h"
-#include "utils/URIUtils.h"
+
 #include "CurlFile.h"
+#include "FTPParse.h"
 #include "FileItem.h"
-#include "utils/StringUtils.h"
+#include "FileItemList.h"
+#include "URL.h"
+#include "filesystem/IFile.h"
 #include "utils/CharsetConverter.h"
-#include "climits"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+
+#include <climits>
 
 using namespace XFILE;
 
@@ -52,7 +44,7 @@ bool CFTPDirectory::GetDirectory(const CURL& url2, CFileItemList &items)
   bool serverNotUseUTF8 = url.GetProtocolOption("utf8") == "0";
 
   char buffer[MAX_PATH + 1024];
-  while( reader.ReadString(buffer, sizeof(buffer)) )
+  while (reader.ReadLine(buffer, sizeof(buffer)).code == IFile::ReadLineResult::OK)
   {
     std::string strBuffer = buffer;
 
@@ -61,7 +53,7 @@ bool CFTPDirectory::GetDirectory(const CURL& url2, CFileItemList &items)
     CFTPParse parse;
     if (parse.FTPParse(strBuffer))
     {
-      if( parse.getName().length() == 0 )
+      if (parse.getName().empty())
         continue;
 
       if( parse.getFlagtrycwd() == 0 && parse.getFlagtryretr() == 0 )
@@ -91,17 +83,17 @@ bool CFTPDirectory::GetDirectory(const CURL& url2, CFileItemList &items)
 
       CFileItemPtr pItem(new CFileItem(name));
 
-      pItem->m_bIsFolder = (bool)(parse.getFlagtrycwd() != 0);
+      pItem->SetFolder(parse.getFlagtrycwd() != 0);
       std::string filePath = path + name;
-      if (pItem->m_bIsFolder)
+      if (pItem->IsFolder())
         URIUtils::AddSlashAtEnd(filePath);
 
       /* qualify the url with host and all */
       url.SetFileName(filePath);
       pItem->SetPath(url.Get());
 
-      pItem->m_dwSize = parse.getSize();
-      pItem->m_dateTime=parse.getTime();
+      pItem->SetSize(parse.getSize());
+      pItem->SetDateTime(parse.getTime());
 
       items.Add(pItem);
     }

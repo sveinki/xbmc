@@ -1,34 +1,23 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- *
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "ActiveAE.h"
 #include "ActiveAEBuffer.h"
+
+#include "ActiveAE.h"
 #include "ActiveAEFilter.h"
-#include "cores/AudioEngine/Engines/ActiveAE/AudioDSPAddons/ActiveAEDSPProcess.h"
-#include "cores/AudioEngine/Engines/ActiveAE/ActiveAE.h"
-#include "cores/AudioEngine/Utils/AEUtil.h"
 #include "cores/AudioEngine/AEResampleFactory.h"
+#include "cores/AudioEngine/Utils/AEUtil.h"
+
+#include <memory>
 
 using namespace ActiveAE;
 
-CSoundPacket::CSoundPacket(SampleConfig conf, int samples) : config(conf)
+CSoundPacket::CSoundPacket(const SampleConfig& conf, int samples) : config(conf)
 {
   data = CActiveAE::AllocSoundSample(config, samples, bytes_per_sample, planes, linesize);
   max_nb_samples = samples;
@@ -40,18 +29,6 @@ CSoundPacket::~CSoundPacket()
 {
   if (data)
     CActiveAE::FreeSoundSample(data);
-}
-
-CSampleBuffer::CSampleBuffer() : pkt(NULL), pool(NULL)
-{
-  refCount = 0;
-  timestamp = 0;
-  pkt_start_offset = 0;
-}
-
-CSampleBuffer::~CSampleBuffer()
-{
-  delete pkt;
 }
 
 CSampleBuffer* CSampleBuffer::Acquire()
@@ -67,9 +44,8 @@ void CSampleBuffer::Return()
     pool->ReturnBuffer(this);
 }
 
-CActiveAEBufferPool::CActiveAEBufferPool(const AEAudioFormat& format)
+CActiveAEBufferPool::CActiveAEBufferPool(const AEAudioFormat& format) : m_format(format)
 {
-  m_format = format;
   if (m_format.m_dataFormat == AE_FMT_RAW)
   {
     m_format.m_frameSize = 1;
@@ -99,6 +75,7 @@ CSampleBuffer* CActiveAEBufferPool::GetFreeBuffer()
     buf = m_freeSamples.front();
     m_freeSamples.pop_front();
     buf->refCount = 1;
+    buf->centerMixLevel = M_SQRT1_2;
   }
   return buf;
 }
@@ -132,7 +109,7 @@ bool CActiveAEBufferPool::Create(unsigned int totaltime)
   {
     buffer = new CSampleBuffer();
     buffer->pool = this;
-    buffer->pkt = new CSoundPacket(config, m_format.m_frames);
+    buffer->pkt = std::make_unique<CSoundPacket>(config, m_format.m_frames);
 
     m_allSamples.push_back(buffer);
     m_freeSamples.push_back(buffer);
@@ -147,10 +124,11 @@ bool CActiveAEBufferPool::Create(unsigned int totaltime)
 // Resample
 // ----------------------------------------------------------------------------------
 
-CActiveAEBufferPoolResample::CActiveAEBufferPoolResample(const AEAudioFormat& inputFormat, const AEAudioFormat& outputFormat, AEQuality quality)
-  : CActiveAEBufferPool(outputFormat)
+CActiveAEBufferPoolResample::CActiveAEBufferPoolResample(const AEAudioFormat& inputFormat,
+                                                         const AEAudioFormat& outputFormat,
+                                                         AEQuality quality)
+  : CActiveAEBufferPool(outputFormat), m_inputFormat(inputFormat)
 {
-  m_inputFormat = inputFormat;
   if (m_inputFormat.m_dataFormat == AE_FMT_RAW)
   {
     m_format.m_frameSize = 1;
@@ -158,33 +136,22 @@ CActiveAEBufferPoolResample::CActiveAEBufferPoolResample(const AEAudioFormat& in
     m_inputFormat.m_channelLayout.Reset();
     m_inputFormat.m_channelLayout += AE_CH_FC;
   }
-  m_resampler = nullptr;
-  m_fillPackets = false;
-  m_drain = false;
-  m_empty = true;
-  m_procSample = nullptr;
-  m_resampleRatio = 1.0;
   m_resampleQuality = quality;
-  m_forceResampler = false;
-  m_stereoUpmix = false;
-  m_normalize = true;
-  m_changeResampler = false;
-  m_lastSamplePts = 0;
 }
 
 CActiveAEBufferPoolResample::~CActiveAEBufferPoolResample()
 {
   Flush();
-
-  delete m_resampler;
 }
 
-bool CActiveAEBufferPoolResample::Create(unsigned int totaltime, bool remap, bool upmix, bool normalize)
+bool CActiveAEBufferPoolResample::Create(
+    unsigned int totaltime, bool remap, bool upmix, bool normalize, float sublevel)
 {
   CActiveAEBufferPool::Create(totaltime);
 
   m_remap = remap;
   m_stereoUpmix = upmix;
+  m_mixSubLevel = sublevel;
 
   m_normalize = true;
   if ((m_format.m_channelLayout.Count() < m_inputFormat.m_channelLayout.Count() && !normalize))
@@ -193,62 +160,35 @@ bool CActiveAEBufferPoolResample::Create(unsigned int totaltime, bool remap, boo
   if (m_inputFormat.m_channelLayout != m_format.m_channelLayout ||
       m_inputFormat.m_sampleRate != m_format.m_sampleRate ||
       m_inputFormat.m_dataFormat != m_format.m_dataFormat ||
-      m_changeResampler)
+      m_inputFormat.m_frames != m_format.m_frames || m_changeResampler)
   {
-    if (!m_resampler)
-    {
-      m_resampler = CAEResampleFactory::Create();
-    }
-
-    m_resampler->Init(CAEUtil::GetAVChannelLayout(m_format.m_channelLayout),
-                                m_format.m_channelLayout.Count(),
-                                m_format.m_sampleRate,
-                                CAEUtil::GetAVSampleFormat(m_format.m_dataFormat),
-                                CAEUtil::DataFormatToUsedBits(m_format.m_dataFormat),
-                                CAEUtil::DataFormatToDitherBits(m_format.m_dataFormat),
-                                CAEUtil::GetAVChannelLayout(m_inputFormat.m_channelLayout),
-                                m_inputFormat.m_channelLayout.Count(),
-                                m_inputFormat.m_sampleRate,
-                                CAEUtil::GetAVSampleFormat(m_inputFormat.m_dataFormat),
-                                CAEUtil::DataFormatToUsedBits(m_inputFormat.m_dataFormat),
-                                CAEUtil::DataFormatToDitherBits(m_inputFormat.m_dataFormat),
-                                upmix,
-                                m_normalize,
-                                remap ? &m_format.m_channelLayout : NULL,
-                                m_resampleQuality,
-                                m_forceResampler);
-
-    m_changeResampler = false;
+    ChangeResampler();
   }
   return true;
 }
 
 void CActiveAEBufferPoolResample::ChangeResampler()
 {
-  if (m_resampler)
-  {
-    delete m_resampler;
-    m_resampler = NULL;
-  }
-
   m_resampler = CAEResampleFactory::Create();
-  m_resampler->Init(CAEUtil::GetAVChannelLayout(m_format.m_channelLayout),
-                                m_format.m_channelLayout.Count(),
-                                m_format.m_sampleRate,
-                                CAEUtil::GetAVSampleFormat(m_format.m_dataFormat),
-                                CAEUtil::DataFormatToUsedBits(m_format.m_dataFormat),
-                                CAEUtil::DataFormatToDitherBits(m_format.m_dataFormat),
-                                CAEUtil::GetAVChannelLayout(m_inputFormat.m_channelLayout),
-                                m_inputFormat.m_channelLayout.Count(),
-                                m_inputFormat.m_sampleRate,
-                                CAEUtil::GetAVSampleFormat(m_inputFormat.m_dataFormat),
-                                CAEUtil::DataFormatToUsedBits(m_inputFormat.m_dataFormat),
-                                CAEUtil::DataFormatToDitherBits(m_inputFormat.m_dataFormat),
-                                m_stereoUpmix,
-                                m_normalize,
-                                m_remap ? &m_format.m_channelLayout : NULL,
-                                m_resampleQuality,
-                                m_forceResampler);
+
+  SampleConfig dstConfig, srcConfig;
+  dstConfig.channel_layout = CAEUtil::GetAVChannelLayout(m_format.m_channelLayout);
+  dstConfig.channels = m_format.m_channelLayout.Count();
+  dstConfig.sample_rate = m_format.m_sampleRate;
+  dstConfig.fmt = CAEUtil::GetAVSampleFormat(m_format.m_dataFormat);
+  dstConfig.bits_per_sample = CAEUtil::DataFormatToUsedBits(m_format.m_dataFormat);
+  dstConfig.dither_bits = CAEUtil::DataFormatToDitherBits(m_format.m_dataFormat);
+
+  srcConfig.channel_layout = CAEUtil::GetAVChannelLayout(m_inputFormat.m_channelLayout);
+  srcConfig.channels = m_inputFormat.m_channelLayout.Count();
+  srcConfig.sample_rate = m_inputFormat.m_sampleRate;
+  srcConfig.fmt = CAEUtil::GetAVSampleFormat(m_inputFormat.m_dataFormat);
+  srcConfig.bits_per_sample = CAEUtil::DataFormatToUsedBits(m_inputFormat.m_dataFormat);
+  srcConfig.dither_bits = CAEUtil::DataFormatToDitherBits(m_inputFormat.m_dataFormat);
+
+  m_resampler->Init(dstConfig, srcConfig, m_stereoUpmix, m_normalize, m_centerMixLevel,
+                    m_remap ? &m_format.m_channelLayout : nullptr, m_resampleQuality,
+                    m_forceResampler, m_mixSubLevel);
 
   m_changeResampler = false;
 }
@@ -303,10 +243,17 @@ bool CActiveAEBufferPoolResample::ResampleBuffers(int64_t timestamp)
       if (hasInput && !skipInput && !m_changeResampler)
       {
         in = m_inputSamples.front();
-        m_inputSamples.pop_front();
+        if (in->centerMixLevel != m_centerMixLevel)
+        {
+          m_centerMixLevel = in->centerMixLevel;
+          m_changeResampler = true;
+          in = nullptr;
+        }
+        else
+          m_inputSamples.pop_front();
       }
       else
-        in = NULL;
+        in = nullptr;
 
       int start = m_procSample->pkt->nb_samples *
                   m_procSample->pkt->bytes_per_sample *
@@ -350,7 +297,8 @@ bool CActiveAEBufferPoolResample::ResampleBuffers(int64_t timestamp)
         }
 
         // pts of last sample we added to the buffer
-        m_lastSamplePts += (in->pkt->nb_samples-in->pkt_start_offset) * 1000 / m_format.m_sampleRate;
+        m_lastSamplePts +=
+            (in->pkt->nb_samples - in->pkt_start_offset) * 1000 / in->pkt->config.sample_rate;
       }
 
       // calculate pts for last sample in m_procSample
@@ -400,7 +348,10 @@ bool CActiveAEBufferPoolResample::ResampleBuffers(int64_t timestamp)
   return busy;
 }
 
-void CActiveAEBufferPoolResample::ConfigureResampler(bool normalizelevels, bool stereoupmix, AEQuality quality)
+void CActiveAEBufferPoolResample::ConfigureResampler(bool normalizelevels,
+                                                     bool stereoupmix,
+                                                     AEQuality quality,
+                                                     float sublevel)
 {
   bool normalize = true;
   if ((m_format.m_channelLayout.Count() < m_inputFormat.m_channelLayout.Count()) && !normalizelevels)
@@ -475,7 +426,7 @@ void CActiveAEBufferPoolResample::SetRR(double rr)
   m_resampleRatio = rr;
 }
 
-double CActiveAEBufferPoolResample::GetRR()
+double CActiveAEBufferPoolResample::GetRR() const
 {
   return m_resampleRatio;
 }
@@ -485,7 +436,7 @@ void CActiveAEBufferPoolResample::FillBuffer()
   m_fillPackets = true;
 }
 
-bool CActiveAEBufferPoolResample::DoesNormalize()
+bool CActiveAEBufferPoolResample::DoesNormalize() const
 {
   return m_normalize;
 }
@@ -507,6 +458,7 @@ CActiveAEBufferPoolAtempo::CActiveAEBufferPoolAtempo(const AEAudioFormat& format
   m_tempo = 1.0;
   m_changeFilter = false;
   m_procSample = nullptr;
+  m_fillPackets = false;
 }
 
 CActiveAEBufferPoolAtempo::~CActiveAEBufferPoolAtempo()
@@ -518,7 +470,7 @@ bool CActiveAEBufferPoolAtempo::Create(unsigned int totaltime)
 {
   CActiveAEBufferPool::Create(totaltime);
 
-  m_pTempoFilter.reset(new CActiveAEFilter());
+  m_pTempoFilter = std::make_unique<CActiveAEFilter>();
   m_pTempoFilter->Init(CAEUtil::GetAVSampleFormat(m_format.m_dataFormat), m_format.m_sampleRate, CAEUtil::GetAVChannelLayout(m_format.m_channelLayout));
 
   return true;
@@ -635,10 +587,11 @@ bool CActiveAEBufferPoolAtempo::ProcessBuffers()
         }
 
         // check if draining is finished
-        if (m_drain && m_procSample->pkt->nb_samples == 0)
+        if (m_procSample->pkt->nb_samples == 0)
         {
           m_procSample->Return();
-          busy = false;
+          if (m_drain)
+            busy = false;
         }
         else
           m_outputSamples.push_back(m_procSample);
@@ -653,7 +606,14 @@ bool CActiveAEBufferPoolAtempo::ProcessBuffers()
       // some methods like encode require completely filled packets
       else if (!m_fillPackets || (m_procSample->pkt->nb_samples == m_procSample->pkt->max_nb_samples))
       {
-        m_outputSamples.push_back(m_procSample);
+        if (m_procSample->pkt->nb_samples == 0)
+        {
+          m_procSample->Return();
+        }
+        else
+        {
+          m_outputSamples.push_back(m_procSample);
+        }
         m_procSample = nullptr;
       }
 
@@ -713,9 +673,9 @@ float CActiveAEBufferPoolAtempo::GetDelay()
 
 void CActiveAEBufferPoolAtempo::SetTempo(float tempo)
 {
-  if (tempo > 2.0)
+  if (tempo > 2.0f)
     tempo = 2.0;
-  else if (tempo < 0.5)
+  else if (tempo < 0.5f)
     tempo = 0.5;
 
   if (tempo != m_tempo)
@@ -724,7 +684,7 @@ void CActiveAEBufferPoolAtempo::SetTempo(float tempo)
   m_tempo = tempo;
 }
 
-float CActiveAEBufferPoolAtempo::GetTempo()
+float CActiveAEBufferPoolAtempo::GetTempo() const
 {
   return m_tempo;
 }

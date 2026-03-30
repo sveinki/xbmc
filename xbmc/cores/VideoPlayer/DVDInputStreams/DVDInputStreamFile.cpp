@@ -1,33 +1,24 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDInputStreamFile.h"
+
 #include "filesystem/File.h"
 #include "filesystem/IFile.h"
-#include "settings/AdvancedSettings.h"
-#include "utils/log.h"
 #include "utils/URIUtils.h"
+#include "utils/log.h"
+#include "video/VideoFileItemClassify.h"
 
+using namespace KODI;
 using namespace XFILE;
 
-CDVDInputStreamFile::CDVDInputStreamFile(const CFileItem& fileitem) : CDVDInputStream(DVDSTREAM_TYPE_FILE, fileitem)
+CDVDInputStreamFile::CDVDInputStreamFile(const CFileItem& fileitem, unsigned int flags)
+  : CDVDInputStream(DVDSTREAM_TYPE_FILE, fileitem), m_flags(flags)
 {
   m_pFile = NULL;
   m_eof = true;
@@ -52,33 +43,13 @@ bool CDVDInputStreamFile::Open()
   if (!m_pFile)
     return false;
 
-  unsigned int flags = READ_TRUNCATED | READ_BITRATE | READ_CHUNKED;
-  
+  unsigned int flags = m_flags;
+
   // If this file is audio and/or video (= not a subtitle) flag to caller
-  if (!m_item.IsSubtitle())
+  if (!VIDEO::IsSubtitle(m_item))
     flags |= READ_AUDIO_VIDEO;
-
-  /*
-   * There are 5 buffer modes available (configurable in as.xml)
-   * 0) Buffer all internet filesystems (like 2 but additionally also ftp, webdav, etc.) (default)
-   * 1) Buffer all filesystems (including local)
-   * 2) Only buffer true internet filesystems (streams) (http, etc.)
-   * 3) No buffer
-   * 4) Buffer all non-local (remote) filesystems
-   */
-  if (!URIUtils::IsOnDVD(m_item.GetDynPath()) && !URIUtils::IsBluray(m_item.GetDynPath())) // Never cache these
-  {
-    if ((g_advancedSettings.m_cacheBufferMode == CACHE_BUFFER_MODE_INTERNET && URIUtils::IsInternetStream(m_item.GetDynPath(), true))
-     || (g_advancedSettings.m_cacheBufferMode == CACHE_BUFFER_MODE_TRUE_INTERNET && URIUtils::IsInternetStream(m_item.GetDynPath(), false))
-     || (g_advancedSettings.m_cacheBufferMode == CACHE_BUFFER_MODE_REMOTE && URIUtils::IsRemote(m_item.GetDynPath()))
-     || (g_advancedSettings.m_cacheBufferMode == CACHE_BUFFER_MODE_ALL))
-    {
-      flags |= READ_CACHED;
-    }
-  }
-
-  if (!(flags & READ_CACHED))
-    flags |= READ_NO_CACHE; // Make sure CFile honors our no-cache hint
+  else
+    flags |= READ_NO_BUFFER; // disable CFileStreamBuffer for subtitles
 
   std::string content = m_item.GetMimeType();
 
@@ -98,7 +69,7 @@ bool CDVDInputStreamFile::Open()
   }
 
   if (m_pFile->GetImplementation() && (content.empty() || content == "application/octet-stream"))
-    m_content = m_pFile->GetImplementation()->GetContent();
+    m_content = m_pFile->GetImplementation()->GetProperty(XFILE::FileProperty::CONTENT_TYPE);
 
   m_eof = false;
   return true;
@@ -128,7 +99,7 @@ int CDVDInputStreamFile::Read(uint8_t* buf, int buf_size)
     return -1; // player will retry read in case of error until playback is stopped
 
   /* we currently don't support non completing reads */
-  if (ret == 0) 
+  if (ret == 0)
     m_eof = true;
 
   return (int)ret;
@@ -138,8 +109,8 @@ int64_t CDVDInputStreamFile::Seek(int64_t offset, int whence)
 {
   if(!m_pFile) return -1;
 
-  if(whence == SEEK_POSSIBLE)
-    return m_pFile->IoControl(IOCTRL_SEEK_POSSIBLE, NULL);
+  if (whence == DVDSTREAM_SEEK_POSSIBLE)
+    return m_pFile->IoControl(IOControl::SEEK_POSSIBLE, nullptr);
 
   int64_t ret = m_pFile->Seek(offset, whence);
 
@@ -158,7 +129,7 @@ int64_t CDVDInputStreamFile::GetLength()
 
 bool CDVDInputStreamFile::GetCacheStatus(XFILE::SCacheStatus *status)
 {
-  if(m_pFile && m_pFile->IoControl(IOCTRL_CACHE_STATUS, status) >= 0)
+  if (m_pFile && m_pFile->IoControl(IOControl::CACHE_STATUS, status) >= 0)
     return true;
   else
     return false;
@@ -175,19 +146,24 @@ BitstreamStats CDVDInputStreamFile::GetBitstreamStats() const
     return m_stats;
 }
 
+// Use value returned by filesystem if is > 1
+// otherwise defaults to 64K
 int CDVDInputStreamFile::GetBlockSize()
 {
-  if(m_pFile)
-    return m_pFile->GetChunkSize();
-  else
-    return 0;
+  int chunk = 0;
+  if (m_pFile)
+    chunk = m_pFile->GetChunkSize();
+
+  return ((chunk > 1) ? chunk : 64 * 1024);
 }
 
-void CDVDInputStreamFile::SetReadRate(unsigned rate)
+void CDVDInputStreamFile::SetReadRate(uint32_t rate)
 {
   // Increase requested rate by 10%:
-  unsigned maxrate = (unsigned) (1.1 * rate);
+  uint32_t maxrate = static_cast<uint32_t>(1.1 * rate);
 
-  if(m_pFile->IoControl(IOCTRL_CACHE_SETRATE, &maxrate) >= 0)
-    CLog::Log(LOGDEBUG, "CDVDInputStreamFile::SetReadRate - set cache throttle rate to %u bytes per second", maxrate);
+  if (m_pFile->IoControl(IOControl::CACHE_SETRATE, &maxrate) >= 0)
+    CLog::Log(LOGDEBUG,
+              "CDVDInputStreamFile::SetReadRate - set cache throttle rate to {} bytes per second",
+              maxrate);
 }

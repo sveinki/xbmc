@@ -1,39 +1,31 @@
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialogLockSettings.h"
 
-#include <utility>
-
-#include "dialogs/GUIDialogContextMenu.h"
+#include "ServiceBroker.h"
+#include "URL.h"
 #include "dialogs/GUIDialogGamepad.h"
 #include "dialogs/GUIDialogNumeric.h"
+#include "dialogs/GUIDialogSelect.h"
+#include "favourites/FavouritesService.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIKeyboardFactory.h"
 #include "guilib/GUIWindowManager.h"
-#include "guilib/LocalizeStrings.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/lib/Setting.h"
 #include "settings/lib/SettingSection.h"
 #include "settings/windows/GUIControlSettings.h"
-#include "URL.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
+#include "utils/log.h"
+
+#include <utility>
 
 #define SETTING_USERNAME            "user.name"
 #define SETTING_PASSWORD            "user.password"
@@ -50,17 +42,14 @@
 
 CGUIDialogLockSettings::CGUIDialogLockSettings()
     : CGUIDialogSettingsManualBase(WINDOW_DIALOG_LOCK_SETTINGS, "DialogSettings.xml"),
-      m_changed(false),
-      m_details(true),
-      m_conditionalDetails(false),
-      m_getUser(false),
-      m_saveUserDetails(NULL),
-      m_buttonLabel(20091)
+      m_saveUserDetails(NULL)
 { }
 
 CGUIDialogLockSettings::~CGUIDialogLockSettings() = default;
 
-bool CGUIDialogLockSettings::ShowAndGetLock(LockType &lockMode, std::string &password, int header /* = 20091 */)
+bool CGUIDialogLockSettings::ShowAndGetLock(LockMode& lockMode,
+                                            std::string& password,
+                                            int header /* = 20091 */)
 {
   CProfile::CLock locks(lockMode, password);
   if (!ShowAndGetLock(locks, header, false, false))
@@ -75,7 +64,7 @@ bool CGUIDialogLockSettings::ShowAndGetLock(LockType &lockMode, std::string &pas
 
 bool CGUIDialogLockSettings::ShowAndGetLock(CProfile::CLock &locks, int buttonLabel /* = 20091 */, bool conditional /* = false */, bool details /* = true */)
 {
-  CGUIDialogLockSettings *dialog = g_windowManager.GetWindow<CGUIDialogLockSettings>(WINDOW_DIALOG_LOCK_SETTINGS);
+  CGUIDialogLockSettings *dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogLockSettings>(WINDOW_DIALOG_LOCK_SETTINGS);
   if (dialog == NULL)
     return false;
 
@@ -90,12 +79,17 @@ bool CGUIDialogLockSettings::ShowAndGetLock(CProfile::CLock &locks, int buttonLa
     return false;
 
   locks = dialog->m_locks;
+
+  // changed lock settings for certain sections (e.g. video, audio, or pictures)
+  // => refresh favourites due to possible visibility changes
+  CServiceBroker::GetFavouritesService().RefreshFavourites();
+
   return true;
 }
 
 bool CGUIDialogLockSettings::ShowAndGetUserAndPassword(std::string &user, std::string &password, const std::string &url, bool *saveUserDetails)
 {
-  CGUIDialogLockSettings *dialog = g_windowManager.GetWindow<CGUIDialogLockSettings>(WINDOW_DIALOG_LOCK_SETTINGS);
+  CGUIDialogLockSettings *dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogLockSettings>(WINDOW_DIALOG_LOCK_SETTINGS);
   if (dialog == NULL)
     return false;
 
@@ -114,7 +108,7 @@ bool CGUIDialogLockSettings::ShowAndGetUserAndPassword(std::string &user, std::s
   return true;
 }
 
-void CGUIDialogLockSettings::OnSettingChanged(std::shared_ptr<const CSetting> setting)
+void CGUIDialogLockSettings::OnSettingChanged(const std::shared_ptr<const CSetting>& setting)
 {
   if (setting == NULL)
     return;
@@ -139,14 +133,15 @@ void CGUIDialogLockSettings::OnSettingChanged(std::shared_ptr<const CSetting> se
   else if (settingId == SETTING_LOCK_FILEMANAGER)
     m_locks.files = std::static_pointer_cast<const CSettingBool>(setting)->GetValue();
   else if (settingId == SETTING_LOCK_SETTINGS)
-    m_locks.settings = static_cast<LOCK_LEVEL::SETTINGS_LOCK>(std::static_pointer_cast<const CSettingInt>(setting)->GetValue());
+    m_locks.settings =
+        static_cast<SettingsLock>(std::static_pointer_cast<const CSettingInt>(setting)->GetValue());
   else if (settingId == SETTING_LOCK_ADDONMANAGER)
     m_locks.addonManager = std::static_pointer_cast<const CSettingBool>(setting)->GetValue();
 
   m_changed = true;
 }
 
-void CGUIDialogLockSettings::OnSettingAction(std::shared_ptr<const CSetting> setting)
+void CGUIDialogLockSettings::OnSettingAction(const std::shared_ptr<const CSetting>& setting)
 {
   if (setting == NULL)
     return;
@@ -156,35 +151,41 @@ void CGUIDialogLockSettings::OnSettingAction(std::shared_ptr<const CSetting> set
   const std::string &settingId = setting->GetId();
   if (settingId == SETTING_LOCKCODE)
   {
-    CContextButtons choices;
-    choices.Add(1, 1223);
-    choices.Add(2, 12337);
-    choices.Add(3, 12338);
-    choices.Add(4, 12339);
-    int choice = CGUIDialogContextMenu::ShowAndGetChoice(choices);
+    CGUIDialogSelect* dialog = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogSelect>(WINDOW_DIALOG_SELECT);
+    if (!dialog)
+      return;
+
+    dialog->Reset();
+    dialog->SetHeading(CVariant{12360});
+    dialog->Add(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1223));
+    dialog->Add(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(12337));
+    dialog->Add(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(12338));
+    dialog->Add(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(12339));
+    dialog->SetSelected(GetLockModeLabel());
+    dialog->Open();
 
     std::string newPassword;
-    LockType iLockMode = LOCK_MODE_UNKNOWN;
+    LockMode iLockMode = LockMode::UNKNOWN;
     bool bResult = false;
-    switch(choice)
+    switch (dialog->GetSelectedItem())
     {
-      case 1:
-        iLockMode = LOCK_MODE_EVERYONE; //Disabled! Need check routine!!!
+      case 0:
+        iLockMode = LockMode::EVERYONE; //Disabled! Need check routine!!!
         bResult = true;
         break;
 
-      case 2:
-        iLockMode = LOCK_MODE_NUMERIC;
+      case 1:
+        iLockMode = LockMode::NUMERIC;
         bResult = CGUIDialogNumeric::ShowAndVerifyNewPassword(newPassword);
         break;
 
-      case 3:
-        iLockMode = LOCK_MODE_GAMEPAD;
+      case 2:
+        iLockMode = LockMode::GAMEPAD;
         bResult = CGUIDialogGamepad::ShowAndVerifyNewPassword(newPassword);
         break;
 
-      case 4:
-        iLockMode = LOCK_MODE_QWERTY;
+      case 3:
+        iLockMode = LockMode::QWERTY;
         bResult = CGUIKeyboardFactory::ShowAndVerifyNewPassword(newPassword);
         break;
 
@@ -194,15 +195,15 @@ void CGUIDialogLockSettings::OnSettingAction(std::shared_ptr<const CSetting> set
 
     if (bResult)
     {
-      if (iLockMode == LOCK_MODE_EVERYONE)
+      if (iLockMode == LockMode::EVERYONE)
         newPassword = "-";
       m_locks.code = newPassword;
       if (m_locks.code == "-")
-        iLockMode = LOCK_MODE_EVERYONE;
+        iLockMode = LockMode::EVERYONE;
       m_locks.mode = iLockMode;
 
-      setLockCodeLabel();
-      setDetailSettingsEnabled(m_locks.mode != LOCK_MODE_EVERYONE);
+      SetSettingLockCodeLabel();
+      SetDetailSettingsEnabled(m_locks.mode != LockMode::EVERYONE);
       m_changed = true;
     }
   }
@@ -218,15 +219,17 @@ void CGUIDialogLockSettings::OnCancel()
 void CGUIDialogLockSettings::SetupView()
 {
   CGUIDialogSettingsManualBase::SetupView();
-  
+
   // set the title
   if (m_getUser)
-    SetHeading(StringUtils::Format(g_localizeStrings.Get(20152).c_str(), CURL::Decode(m_url).c_str()));
+    SetHeading(
+        StringUtils::Format(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20152),
+                            CURL::Decode(m_url)));
   else
   {
     SetHeading(20066);
-    setLockCodeLabel();
-    setDetailSettingsEnabled(m_locks.mode != LOCK_MODE_EVERYONE);
+    SetSettingLockCodeLabel();
+    SetDetailSettingsEnabled(m_locks.mode != LockMode::EVERYONE);
   }
   SET_CONTROL_HIDDEN(CONTROL_SETTINGS_CUSTOM_BUTTON);
   SET_CONTROL_LABEL(CONTROL_SETTINGS_OKAY_BUTTON, 186);
@@ -279,20 +282,26 @@ void CGUIDialogLockSettings::InitializeSettings()
     AddToggle(groupDetails, SETTING_LOCK_FILEMANAGER, 20042, SettingLevel::Basic, m_locks.files);
 
     TranslatableIntegerSettingOptions settingsLevelOptions;
-    settingsLevelOptions.push_back(std::make_pair(106,    LOCK_LEVEL::NONE));
-    settingsLevelOptions.push_back(std::make_pair(593,    LOCK_LEVEL::ALL));
-    settingsLevelOptions.push_back(std::make_pair(10037,  LOCK_LEVEL::STANDARD));
-    settingsLevelOptions.push_back(std::make_pair(10038,  LOCK_LEVEL::ADVANCED));
-    settingsLevelOptions.push_back(std::make_pair(10039,  LOCK_LEVEL::EXPERT));
-    AddSpinner(groupDetails, SETTING_LOCK_SETTINGS, 20043, SettingLevel::Basic, static_cast<int>(m_locks.settings), settingsLevelOptions);
-    
+    settingsLevelOptions.emplace_back(106, static_cast<int>(SettingsLock::NONE));
+    settingsLevelOptions.emplace_back(593, static_cast<int>(SettingsLock::ALL));
+    settingsLevelOptions.emplace_back(10037, static_cast<int>(SettingsLock::STANDARD));
+    settingsLevelOptions.emplace_back(10038, static_cast<int>(SettingsLock::ADVANCED));
+    settingsLevelOptions.emplace_back(10039, static_cast<int>(SettingsLock::EXPERT));
+    AddList(groupDetails, SETTING_LOCK_SETTINGS, 20043, SettingLevel::Basic, static_cast<int>(m_locks.settings), settingsLevelOptions, 20043);
+
     AddToggle(groupDetails, SETTING_LOCK_ADDONMANAGER, 24090, SettingLevel::Basic, m_locks.addonManager);
   }
 
   m_changed = false;
 }
 
-void CGUIDialogLockSettings::setDetailSettingsEnabled(bool enabled)
+std::string CGUIDialogLockSettings::GetLockModeLabel()
+{
+  return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
+      m_locks.mode == LockMode::EVERYONE ? 1223 : 12336 + static_cast<int>(m_locks.mode));
+}
+
+void CGUIDialogLockSettings::SetDetailSettingsEnabled(bool enabled) const
 {
   if (!m_details)
     return;
@@ -307,12 +316,12 @@ void CGUIDialogLockSettings::setDetailSettingsEnabled(bool enabled)
   GetSettingControl(SETTING_LOCK_ADDONMANAGER)->GetSetting()->SetEnabled(enabled);
 }
 
-void CGUIDialogLockSettings::setLockCodeLabel()
+void CGUIDialogLockSettings::SetSettingLockCodeLabel()
 {
-  // adjust label2 of the lock code button
-  if (m_locks.mode > LOCK_MODE_QWERTY)
-    m_locks.mode = LOCK_MODE_EVERYONE;
+  // adjust label2 of the lock code setting button
+  if (m_locks.mode > LockMode::QWERTY)
+    m_locks.mode = LockMode::EVERYONE;
   BaseSettingControlPtr settingControl = GetSettingControl(SETTING_LOCKCODE);
   if (settingControl != NULL && settingControl->GetControl() != NULL)
-    SET_CONTROL_LABEL2(settingControl->GetID(), g_localizeStrings.Get(m_locks.mode == LOCK_MODE_EVERYONE ? 1223 : 12336 + m_locks.mode));
+    SET_CONTROL_LABEL2(settingControl->GetID(), GetLockModeLabel());
 }

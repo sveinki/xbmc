@@ -1,39 +1,90 @@
-# - Try to find python
-# Once done this will define
+# FindPython
+# --------
+# Finds Python3 libraries
 #
-# PYTHON_FOUND - system has PYTHON
-# PYTHON_INCLUDE_DIRS - the python include directory
-# PYTHON_LIBRARIES - The python libraries
+# This module will search for the required python libraries on the system
+# If multiple versions are found, the highest version will be used.
+#
+# --------
+#
+# the following variables influence behaviour:
+#
+# PYTHON_PATH - use external python not found in system paths
+#               usage: -DPYTHON_PATH=/path/to/python/lib
+# PYTHON_VER - use exact python version, fail if not found
+#               usage: -DPYTHON_VER=3.8
+#
+# --------
+#
+# This will define the following targets:
+#
+#   ${APP_NAME_LC}::Python - The Python library
 
-if(PKG_CONFIG_FOUND)
-  pkg_check_modules(PC_PYTHON python>=2.7 QUIET)
-endif()
-
-find_program(PYTHON_EXECUTABLE python ONLY_CMAKE_FIND_ROOT_PATH)
-find_library(PYTHON_LIBRARY NAMES python2.7 PATHS ${PC_PYTHON_LIBDIR})
-find_path(PYTHON_INCLUDE_DIR NAMES Python.h PATHS ${PC_PYTHON_INCLUDE_DIRS} ${DEPENDS_PATH}/include/python2.7)
-
-if(KODI_DEPENDSBUILD)
-  find_library(FFI_LIBRARY ffi REQUIRED)
-  find_library(EXPAT_LIBRARY expat REQUIRED)
-  find_library(INTL_LIBRARY intl REQUIRED)
-  find_library(GMP_LIBRARY gmp REQUIRED)
-
-  if(NOT CORE_SYSTEM_NAME STREQUAL android)
-    set(PYTHON_DEP_LIBRARIES pthread dl util)
+if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
+  # for Depends/Windows builds, set search root dir to libdir path
+  if(KODI_DEPENDSBUILD
+     OR CMAKE_SYSTEM_NAME STREQUAL WINDOWS
+     OR CMAKE_SYSTEM_NAME STREQUAL WindowsStore)
+    set(Python3_USE_STATIC_LIBS TRUE)
+    set(Python3_ROOT_DIR ${libdir})
   endif()
 
-  set(PYTHON_LIBRARIES ${PYTHON_LIBRARY} ${FFI_LIBRARY} ${EXPAT_LIBRARY} ${INTL_LIBRARY} ${GMP_LIBRARY} ${PYTHON_DEP_LIBRARIES})
-else()
-  find_package(PythonLibs 2.7 REQUIRED)
-  list(APPEND PYTHON_LIBRARIES ${PC_PYTHON_STATIC_LIBRARIES})
-endif()
+  # Provide root dir to search for Python if provided
+  if(PYTHON_PATH)
+    set(Python3_ROOT_DIR ${PYTHON_PATH})
 
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(Python REQUIRED_VARS PYTHON_INCLUDE_DIR PYTHON_LIBRARY PYTHON_LIBRARIES)
-if(PYTHON_FOUND)
-  set(PYTHON_INCLUDE_DIRS ${PYTHON_INCLUDE_DIR})
-  list(APPEND PYTHON_DEFINITIONS -DHAS_PYTHON=1)
-endif()
+    # unset cache var so we can generate again with a different dir (or none) if desired
+    unset(PYTHON_PATH CACHE)
+  endif()
 
-mark_as_advanced(PYTHON_EXECUTABLE PYTHON_INCLUDE_DIRS PYTHON_INCLUDE_DIR PYTHON_LIBRARY PYTHON_LIBRARIES PYTHON_LDFLAGS FFI_LIBRARY EXPAT_LIBRARY INTL_LIBRARY GMP_LIBRARY)
+  # Set specific version of Python to find if provided
+  if(PYTHON_VER)
+    set(VERSION ${PYTHON_VER})
+    set(EXACT_VER "EXACT")
+
+    # unset cache var so we can generate again with a different ver (or none) if desired
+    unset(PYTHON_VER CACHE)
+  endif()
+
+  find_package(Python3 ${VERSION} ${EXACT_VER} COMPONENTS Development ${SEARCH_QUIET})
+
+  if(Python3_FOUND)
+    if(KODI_DEPENDSBUILD)
+      set(EXPAT_USE_STATIC_LIBS TRUE)
+      find_package(EXPAT REQUIRED ${SEARCH_QUIET})
+
+      find_library(FFI_LIBRARY ffi REQUIRED)
+      find_library(GMP_LIBRARY gmp REQUIRED)
+
+      find_package(Iconv REQUIRED ${SEARCH_QUIET})
+      find_package(Intl REQUIRED ${SEARCH_QUIET})
+      find_package(LibLZMA REQUIRED ${SEARCH_QUIET})
+
+      if(NOT CORE_SYSTEM_NAME STREQUAL android)
+        set(PYTHON_DEP_LIBRARIES pthread dl util)
+        if(CORE_SYSTEM_NAME STREQUAL linux)
+          # python archive built via depends requires librt for _posixshmem library
+          list(APPEND PYTHON_DEP_LIBRARIES rt)
+        endif()
+      endif()
+
+      set(Py_LINK_LIBRARIES EXPAT::EXPAT ${FFI_LIBRARY} ${GMP_LIBRARY} LIBRARY::Iconv Intl::Intl LibLZMA::LibLZMA ${PYTHON_DEP_LIBRARIES})
+    endif()
+
+    # We use this all over the place. Maybe it would be nice to keep it as a TARGET property
+    # but for now a cached variable will do
+    set(PYTHON_VERSION "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}" CACHE INTERNAL "" FORCE)
+
+    add_library(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} UNKNOWN IMPORTED)
+    set_target_properties(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} PROPERTIES
+                                                                     IMPORTED_LOCATION "${Python3_LIBRARIES}"
+                                                                     INTERFACE_INCLUDE_DIRECTORIES "${Python3_INCLUDE_DIRS}"
+                                                                     INTERFACE_LINK_OPTIONS "${Python3_LINK_OPTIONS}"
+                                                                     INTERFACE_COMPILE_DEFINITIONS HAS_PYTHON)
+
+    if(Py_LINK_LIBRARIES)
+      set_target_properties(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} PROPERTIES
+                                                                       INTERFACE_LINK_LIBRARIES "${Py_LINK_LIBRARIES}")
+    endif()
+  endif()
+endif()

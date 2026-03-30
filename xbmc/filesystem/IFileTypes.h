@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
@@ -26,61 +14,108 @@ namespace XFILE
 {
 
 /* indicate that caller can handle truncated reads, where function returns before entire buffer has been filled */
-  static const unsigned int READ_TRUNCATED = 0x01;
-
-/* indicate that that caller support read in the minimum defined chunk size, this disables internal cache then */
-  static const unsigned int READ_CHUNKED = 0x02;
+static const unsigned int READ_TRUNCATED = 0x01;
 
 /* use cache to access this file */
-  static const unsigned int READ_CACHED = 0x04;
+static const unsigned int READ_CACHED = 0x04;
 
 /* open without caching. regardless to file type. */
-  static const unsigned int READ_NO_CACHE = 0x08;
+static const unsigned int READ_NO_CACHE = 0x08;
 
 /* calculate bitrate for file while reading */
-  static const unsigned int READ_BITRATE = 0x10;
+static const unsigned int READ_BITRATE = 0x10;
 
 /* indicate to the caller we will seek between multiple streams in the file frequently */
-  static const unsigned int READ_MULTI_STREAM = 0x20;
+static const unsigned int READ_MULTI_STREAM = 0x20;
 
-/* indicate to the caller file is audio and/or video (and e.g. may grow) */
-  static const unsigned int READ_AUDIO_VIDEO = 0x40;
+// Indicate to the caller file is audio and/or video and is suitable for caching with FileCache or StreamBuffer.
+// The final method used will depend on the user's settings and file location, e.g. user can disable FileCache.
+// This flag ensures that at least the buffer size necessary to read with the appropriate chunk size will be used.
+static const unsigned int READ_AUDIO_VIDEO = 0x40;
 
 /* indicate that caller will do write operations before reading  */
-  static const unsigned int READ_AFTER_WRITE = 0x80;
+static const unsigned int READ_AFTER_WRITE = 0x80;
 
 /* indicate that caller want to reopen a file if its already open  */
-  static const unsigned int READ_REOPEN = 0x100;
+static const unsigned int READ_REOPEN = 0x100;
+
+/* indicate that caller want open a file without intermediate buffer regardless to file type */
+static const unsigned int READ_NO_BUFFER = 0x200;
 
 struct SNativeIoControl
 {
-  unsigned long int   request;
-  void*               param;
+  unsigned long int request;
+  void* param;
 };
 
 struct SCacheStatus
 {
-  uint64_t forward;  /**< number of bytes cached forward of current position */
-  unsigned maxrate;  /**< maximum number of bytes per second cache is allowed to fill */
-  unsigned currate;  /**< average read rate from source file since last position change */
-  float    level;    /**< cache level (0.0 - 1.0) */
+  uint64_t maxforward; /**< forward cache max capacity in bytes */
+  uint64_t forward; /**< number of bytes cached forward of current position */
+  uint32_t maxrate; /**< maximum allowed read(fill) rate (bytes/second) */
+  uint32_t currate; /**< average read rate (bytes/second) since last position change */
+  uint32_t lowrate; /**< low speed read rate (bytes/second) (if any, else 0) */
 };
 
-typedef enum {
-  IOCTRL_NATIVE        = 1,  /**< SNativeIoControl structure, containing what should be passed to native ioctrl */
-  IOCTRL_SEEK_POSSIBLE = 2,  /**< return 0 if known not to work, 1 if it should work */
-  IOCTRL_CACHE_STATUS  = 3,  /**< SCacheStatus structure */
-  IOCTRL_CACHE_SETRATE = 4,  /**< unsigned int with speed limit for caching in bytes per second */
-  IOCTRL_SET_CACHE     = 8,  /**< CFileCache */
-  IOCTRL_SET_RETRY     = 16, /**< Enable/disable retry within the protocol handler (if supported) */
-} EIoControl;
-
-enum CURLOPTIONTYPE
+enum class CacheBufferMode
 {
-  CURL_OPTION_OPTION,     /**< Set a general option   */
-  CURL_OPTION_PROTOCOL,   /**< Set a protocol option  */
-  CURL_OPTION_CREDENTIALS,/**< Set User and password  */
-  CURL_OPTION_HEADER      /**< Add a Header           */
+  INTERNET = 0,
+  ALL = 1,
+  TRUE_INTERNET = 2,
+  NONE = 3,
+  NETWORK = 4,
 };
 
+enum class IOControl
+{
+  NATIVE = 1, /**< SNativeIoControl structure, containing what should be passed to native ioctrl */
+  SEEK_POSSIBLE = 2, /**< return 0 if known not to work, 1 if it should work */
+  CACHE_STATUS = 3, /**< SCacheStatus structure */
+  CACHE_SETRATE = 4, /**< unsigned int with speed limit for caching in bytes per second */
+  SET_CACHE = 8, /**< CFileCache */
+  SET_RETRY = 16, /**< Enable/disable retry within the protocol handler (if supported) */
+};
+
+enum class CURLOptionType
+{
+  OPTION, /**< Set a general option   */
+  PROTOCOL, /**< Set a protocol option (see below)  */
+  CREDENTIALS, /**< Set User and password  */
+  HEADER /**< Add a Header           */
+};
+
+/**
+ * The following names for CURL_OPTION_PROTOCOL are possible:
+ *
+ * accept-charset: Set the "accept-charset" header
+ * acceptencoding or encoding: Set the "accept-encoding" header
+ * active-remote: Set the "active-remote" header
+ * auth: Set the authentication method. Possible values: any, anysafe, digest, ntlm, basic
+ * connection-timeout: Set the connection timeout in seconds
+ * cookie: Set the "cookie" header
+ * customrequest: Set a custom HTTP request like DELETE
+ * noshout: Set to true if kodi detects a stream as shoutcast by mistake.
+ * postdata: Set the post body (value needs to be base64 encoded). (Implicitly sets the request to POST)
+ * referer: Set the "referer" header
+ * user-agent: Set the "user-agent" header
+ * seekable: Set the stream seekable. 1: enable, 0: disable
+ * sslcipherlist: Set list of accepted SSL ciphers.
+ */
+
+enum class FileProperty
+{
+  RESPONSE_PROTOCOL, /**< Get response protocol line  */
+  RESPONSE_HEADER, /**< Get response Header value  */
+  CONTENT_TYPE, /**< Get file content-type  */
+  CONTENT_CHARSET, /**< Get file content charset  */
+  MIME_TYPE, /**< Get file mime type  */
+  EFFECTIVE_URL /**< Get effective URL for redirected streams  */
+};
+
+class IFileCallback
+{
+public:
+  virtual bool OnFileCallback(void* pContext, int ipercent, float avgSpeed) = 0;
+  virtual ~IFileCallback() = default;
+};
 }

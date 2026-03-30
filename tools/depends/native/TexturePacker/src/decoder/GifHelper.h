@@ -17,10 +17,10 @@
  *  <http://www.gnu.org/licenses/>.
  *
  */
- 
+
 #pragma once
 
-#include "gif_lib.h"
+#include <gif_lib.h>
 #ifndef CONTINUE_EXT_FUNC_CODE
 #define CONTINUE_EXT_FUNC_CODE 0
 #endif
@@ -60,21 +60,18 @@ class GifFrame
   friend class GifHelper;
 public:
 
-  GifFrame();
-  virtual ~GifFrame();
+  GifFrame() = default;
+  virtual ~GifFrame() = default;
 
-  unsigned char*  m_pImage;
-  unsigned int    m_delay;
+  std::vector<uint8_t> m_pImage;
+  unsigned int m_delay = 0;
 
 private:
-  GifFrame(const GifFrame& src);
-
-  unsigned int    m_top;
-  unsigned int    m_left;
-  unsigned int    m_disposal;
-  unsigned int    m_height;
-  unsigned int    m_width;
-  unsigned int    m_imageSize;
+  unsigned int m_top = 0;
+  unsigned int m_left = 0;
+  unsigned int m_disposal = 0;
+  unsigned int m_height = 0;
+  unsigned int m_width = 0;
   std::vector<GifColor>   m_palette;
 };
 
@@ -87,11 +84,10 @@ class GifHelper
   typedef std::shared_ptr<GifFrame> FramePtr;
 
 public:
-  GifHelper();
+  GifHelper() = default;
   virtual ~GifHelper();
 
-
-  bool LoadGif(const char* file);
+  bool LoadGif(const std::string& file);
 
   std::vector<FramePtr>& GetFrames() { return m_frames; }
   unsigned int GetPitch() const { return m_pitch; }
@@ -101,16 +97,16 @@ public:
 
 private:
   std::vector<FramePtr> m_frames;
-  unsigned int    m_imageSize;
-  unsigned int    m_pitch;
-  unsigned int    m_loops;
-  unsigned int    m_numFrames;
+  unsigned int m_imageSize = 0;
+  unsigned int m_pitch = 0;
+  unsigned int m_loops = 0;
+  unsigned int m_numFrames = 0;
 
   std::string     m_filename;
-  GifFileType*    m_gif;
+  GifFileType* m_gif = nullptr;
   std::vector<GifColor> m_globalPalette;
-  unsigned char*  m_pTemplate;
-  CFile*          m_gifFile;
+  std::vector<uint8_t> m_pTemplate;
+  CFile m_gifFile;
 
   unsigned int m_width;
   unsigned int m_height;
@@ -120,7 +116,7 @@ private:
 
   const char* Reason(int reason);
 
-  bool LoadGifMetaData(const char* file);
+  bool LoadGifMetaData(const std::string& file);
   bool Slurp(GifFileType* gif);
   void InitTemplateAndColormap();
   bool LoadGifMetaData(GifFileType* gif);
@@ -132,7 +128,7 @@ private:
   bool PrepareTemplate(GifFrame &frame);
   void Release();
 
-#if GIFLIB_MAJOR != 5
+#if GIFLIB_MAJOR < 5
   /*
   taken from giflib 5.1.0
   */

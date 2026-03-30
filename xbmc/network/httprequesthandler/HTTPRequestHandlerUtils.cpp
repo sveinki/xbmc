@@ -1,27 +1,16 @@
 /*
- *      Copyright (C) 2016 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <map>
-
 #include "HTTPRequestHandlerUtils.h"
+
 #include "utils/StringUtils.h"
+
+#include <map>
 
 std::string HTTPRequestHandlerUtils::GetRequestHeaderValue(struct MHD_Connection *connection, enum MHD_ValueKind kind, const std::string &key)
 {
@@ -39,7 +28,7 @@ std::string HTTPRequestHandlerUtils::GetRequestHeaderValue(struct MHD_Connection
     std::string strValue(value);
     size_t pos = strValue.find(';');
     if (pos != std::string::npos)
-      strValue = strValue.substr(0, pos);
+      strValue.resize(pos);
 
     return strValue;
   }
@@ -73,7 +62,7 @@ bool HTTPRequestHandlerUtils::GetRequestedRanges(struct MHD_Connection *connecti
   return ranges.Parse(GetRequestHeaderValue(connection, MHD_HEADER_KIND, MHD_HTTP_HEADER_RANGE), totalLength);
 }
 
-int HTTPRequestHandlerUtils::FillArgumentMap(void *cls, enum MHD_ValueKind kind, const char *key, const char *value)
+MHD_RESULT HTTPRequestHandlerUtils::FillArgumentMap(void *cls, enum MHD_ValueKind kind, const char *key, const char *value)
 {
   if (cls == nullptr || key == nullptr)
     return MHD_NO;
@@ -84,7 +73,7 @@ int HTTPRequestHandlerUtils::FillArgumentMap(void *cls, enum MHD_ValueKind kind,
   return MHD_YES;
 }
 
-int HTTPRequestHandlerUtils::FillArgumentMultiMap(void *cls, enum MHD_ValueKind kind, const char *key, const char *value)
+MHD_RESULT HTTPRequestHandlerUtils::FillArgumentMultiMap(void *cls, enum MHD_ValueKind kind, const char *key, const char *value)
 {
   if (cls == nullptr || key == nullptr)
     return MHD_NO;

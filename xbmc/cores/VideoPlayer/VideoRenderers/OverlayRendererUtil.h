@@ -1,69 +1,50 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include <stdint.h>
 #include <stdlib.h>
+#include <vector>
 
 class CDVDOverlayImage;
 class CDVDOverlaySpu;
 class CDVDOverlaySSA;
 typedef struct ass_image ASS_Image;
 
-namespace OVERLAY {
+namespace OVERLAY
+{
 
-  struct SQuad
-  {
-     int           u, v;
-     unsigned char r, g, b, a;
-     int           x, y;
-     int           w, h;
-  };
+struct SQuad
+{
+  int u, v;
+  unsigned char r, g, b, a;
+  int x, y;
+  int w, h;
+};
 
-  struct SQuads
-  {
-    SQuads()
-    {
-      data = NULL;
-      quad = NULL;
-      size_x = 0;
-      size_y = 0;
-      count  = 0;
-    }
-   ~SQuads()
-    {
-      free(data);
-      free(quad);
-    }
-    int      size_x;
-    int      size_y;
-    int      count;
-    uint8_t* data;
-    SQuad*   quad;
-  };
+struct SQuads
+{
+  int size_x{0};
+  int size_y{0};
+  std::vector<uint8_t> texture;
+  std::vector<SQuad> quad;
+};
 
-  uint32_t* convert_rgba(CDVDOverlayImage* o, bool mergealpha);
-  uint32_t* convert_rgba(CDVDOverlaySpu*   o, bool mergealpha
-                       , int& min_x, int& max_x
-                       , int& min_y, int& max_y);
-  bool      convert_quad(ASS_Image* images, SQuads& quads, int max_x);
-  int       GetStereoscopicDepth();
+void convert_rgba(const CDVDOverlayImage& o, bool mergealpha, std::vector<uint32_t>& rgba);
+void convert_rgba(const CDVDOverlaySpu& o,
+                  bool mergealpha,
+                  int& min_x,
+                  int& max_x,
+                  int& min_y,
+                  int& max_y,
+                  std::vector<uint32_t>& rgba);
+bool convert_quad(ASS_Image* images, SQuads& quads, int max_x);
+int GetStereoscopicDepth();
 
-}
+} // namespace OVERLAY

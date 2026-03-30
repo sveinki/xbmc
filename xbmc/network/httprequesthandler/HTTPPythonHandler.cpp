@@ -1,37 +1,28 @@
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "HTTPPythonHandler.h"
+
+#include "ServiceBroker.h"
 #include "URL.h"
 #include "addons/Webinterface.h"
+#include "addons/addoninfo/AddonType.h"
+#include "filesystem/File.h"
 #include "interfaces/generic/ScriptInvocationManager.h"
 #include "interfaces/python/XBPython.h"
-#include "filesystem/File.h"
 #include "network/WebServer.h"
 #include "network/httprequesthandler/HTTPRequestHandlerUtils.h"
 #include "network/httprequesthandler/HTTPWebinterfaceHandler.h"
 #include "network/httprequesthandler/python/HTTPPythonInvoker.h"
 #include "network/httprequesthandler/python/HTTPPythonWsgiInvoker.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
+#include "utils/log.h"
 
 #define MAX_STRING_POST_SIZE 20000
 
@@ -61,8 +52,9 @@ CHTTPPythonHandler::CHTTPPythonHandler(const HTTPRequest &request)
   // get the real path of the script and check if it actually exists
   m_response.status = CHTTPWebinterfaceHandler::ResolveUrl(m_request.pathUrl, m_scriptPath, m_addon);
   // only allow requests to a non-static webinterface addon
-  if (m_addon == NULL || m_addon->Type() != ADDON::ADDON_WEB_INTERFACE ||
-      std::dynamic_pointer_cast<ADDON::CWebinterface>(m_addon)->GetType() == ADDON::WebinterfaceTypeStatic)
+  if (m_addon == NULL || m_addon->Type() != ADDON::AddonType::WEB_INTERFACE ||
+      std::dynamic_pointer_cast<ADDON::CWebinterface>(m_addon)->GetType() ==
+          ADDON::WebinterfaceType::TYPE_STATIC)
   {
     m_response.type = HTTPError;
     m_response.status = MHD_HTTP_INTERNAL_SERVER_ERROR;
@@ -112,19 +104,19 @@ bool CHTTPPythonHandler::CanHandleRequest(const HTTPRequest &request) const
   ADDON::AddonPtr addon;
   std::string path;
   // try to resolve the addon as any python script must be part of a webinterface
-  if (!CHTTPWebinterfaceHandler::ResolveAddon(request.pathUrl, addon, path) ||
-      addon == NULL || addon->Type() != ADDON::ADDON_WEB_INTERFACE)
+  if (!CHTTPWebinterfaceHandler::ResolveAddon(request.pathUrl, addon, path) || addon == NULL ||
+      addon->Type() != ADDON::AddonType::WEB_INTERFACE)
     return false;
 
   // static webinterfaces aren't allowed to run python scripts
   ADDON::CWebinterface* webinterface = static_cast<ADDON::CWebinterface*>(addon.get());
-  if (webinterface->GetType() != ADDON::WebinterfaceTypeWsgi)
+  if (webinterface->GetType() != ADDON::WebinterfaceType::TYPE_WSGI)
     return false;
 
   return true;
 }
 
-int CHTTPPythonHandler::HandleRequest()
+MHD_RESULT CHTTPPythonHandler::HandleRequest()
 {
   if (m_response.type == HTTPError || m_response.type == HTTPRedirect)
     return MHD_YES;
@@ -159,9 +151,10 @@ int CHTTPPythonHandler::HandleRequest()
       pythonRequest->port = port;
     }
 
-    CHTTPPythonInvoker* pythonInvoker = new CHTTPPythonWsgiInvoker(&g_pythonParser, pythonRequest);
-    LanguageInvokerPtr languageInvokerPtr(pythonInvoker);
-    int result = CScriptInvocationManager::GetInstance().ExecuteSync(m_scriptPath, languageInvokerPtr, m_addon, args, 30000, false);
+    auto languageInvokerPtr =
+        std::make_shared<CHTTPPythonWsgiInvoker>(&CServiceBroker::GetXBPython(), pythonRequest);
+    int result = CScriptInvocationManager::GetInstance().ExecuteSync(
+        m_scriptPath, languageInvokerPtr, m_addon, args, 30000, false);
 
     // check if the script couldn't be started
     if (result < 0)
@@ -184,7 +177,7 @@ int CHTTPPythonHandler::HandleRequest()
       return MHD_YES;
     }
 
-    HTTPPythonRequest* pythonFinalizedRequest = pythonInvoker->GetRequest();
+    HTTPPythonRequest* pythonFinalizedRequest = languageInvokerPtr->GetRequest();
     if (pythonFinalizedRequest == NULL)
     {
       m_response.type = HTTPError;
@@ -240,15 +233,14 @@ bool CHTTPPythonHandler::GetLastModifiedDate(CDateTime &lastModified) const
   return true;
 }
 
-#if (MHD_VERSION >= 0x00040001)
 bool CHTTPPythonHandler::appendPostData(const char *data, size_t size)
-#else
-bool CHTTPPythonHandler::appendPostData(const char *data, unsigned int size)
-#endif
 {
   if (m_requestData.size() + size > MAX_STRING_POST_SIZE)
   {
-    CLog::Log(LOGERROR, "WebServer: Stopped uploading post since it exceeded size limitations");
+    CServiceBroker::GetLogging()
+        .GetLogger("CHTTPPythonHandler")
+        ->error("Stopped uploading post since it exceeded size limitations ({})",
+                MAX_STRING_POST_SIZE);
     return false;
   }
 

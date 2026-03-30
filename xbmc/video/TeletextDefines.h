@@ -1,25 +1,16 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "threads/CriticalSection.h"
+
+#include <chrono>
 #include <string>
 
 #define FLOFSIZE 4
@@ -393,7 +384,7 @@ typedef struct
 typedef struct
 {
   bool Valid;
-  long Timestamp;
+  std::chrono::time_point<std::chrono::steady_clock> Timestamp;
   unsigned char  PageChar[TELETEXT_PAGE_SIZE];
   TextPageAttr_t PageAtrb[TELETEXT_PAGE_SIZE];
 } TextSubtitleCache_t;
@@ -433,6 +424,9 @@ typedef struct TextCacheStruct_t
   unsigned short *ColorTable;
 
   std::string      line30;
+
+  // TODO: We should get rid of this public mutex. Here are the details: https://github.com/xbmc/xbmc/pull/22226
+  CCriticalSection m_critSection;
 } TextCacheStruct_t;
 
 /* struct for all Information needed for Page Rendering */

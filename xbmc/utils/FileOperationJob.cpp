@@ -1,50 +1,38 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
-
 #include "FileOperationJob.h"
+
+#include "ServiceBroker.h"
 #include "URL.h"
 #include "Util.h"
 #include "dialogs/GUIDialogExtendedProgressBar.h"
-#include "guilib/LocalizeStrings.h"
-#include "guilib/GUIWindowManager.h"
 #include "filesystem/Directory.h"
 #include "filesystem/File.h"
 #include "filesystem/FileDirectoryFactory.h"
-#include "utils/log.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
+#include "utils/log.h"
+
+#include <memory>
 
 using namespace XFILE;
 
 CFileOperationJob::CFileOperationJob()
-  : m_action(ActionCopy),
-    m_items(),
+  : m_items(),
     m_strDestFile(),
     m_avgSpeed(),
     m_currentOperation(),
-    m_currentFile(),
-    m_displayProgress(false),
-    m_heading(0),
-    m_line(0)
+    m_currentFile()
 { }
 
 CFileOperationJob::CFileOperationJob(FileAction action, CFileItemList & items,
@@ -64,14 +52,16 @@ CFileOperationJob::CFileOperationJob(FileAction action, CFileItemList & items,
   SetFileOperation(action, items, strDestFile);
 }
 
-void CFileOperationJob::SetFileOperation(FileAction action, CFileItemList &items, const std::string &strDestFile)
+void CFileOperationJob::SetFileOperation(FileAction action,
+                                         const CFileItemList& items,
+                                         const std::string& strDestFile)
 {
   m_action = action;
   m_strDestFile = strDestFile;
 
   m_items.Clear();
   for (int i = 0; i < items.Size(); i++)
-    m_items.Add(CFileItemPtr(new CFileItem(*items[i])));
+    m_items.Add(std::make_shared<CFileItem>(*items[i]));
 }
 
 bool CFileOperationJob::DoWork()
@@ -82,7 +72,7 @@ bool CFileOperationJob::DoWork()
   if (m_displayProgress && GetProgressDialog() == NULL)
   {
     CGUIDialogExtendedProgressBar* dialog =
-      g_windowManager.GetWindow<CGUIDialogExtendedProgressBar>(WINDOW_DIALOG_EXT_PROGRESS);
+      CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogExtendedProgressBar>(WINDOW_DIALOG_EXT_PROGRESS);
     SetProgressBar(dialog->GetHandle(GetActionString(m_action)));
   }
 
@@ -112,7 +102,7 @@ bool CFileOperationJob::DoProcessFile(FileAction action, const std::string& strF
       time += data.st_size;
   }
 
-  fileOperations.push_back(CFileOperation(action, strFileA, strFileB, time));
+  fileOperations.emplace_back(action, strFileA, strFileB, time);
 
   totalTime += time;
 
@@ -140,20 +130,24 @@ bool CFileOperationJob::DoProcessFolder(FileAction action, const std::string& st
 
   if (!DoProcess(action, items, strDestFile, fileOperations, totalTime))
   {
-    CLog::Log(LOGERROR,"FileManager: error while processing folder: %s", strPath.c_str());
+    CLog::Log(LOGERROR, "FileManager: error while processing folder: {}", strPath);
     return false;
   }
 
   if (action == ActionMove)
   {
-    fileOperations.push_back(CFileOperation(ActionDeleteFolder, strPath, "", 1));
+    fileOperations.emplace_back(ActionDeleteFolder, strPath, "", 1);
     totalTime += 1.0;
   }
 
   return true;
 }
 
-bool CFileOperationJob::DoProcess(FileAction action, CFileItemList & items, const std::string& strDestFile, FileOperationList &fileOperations, double &totalTime)
+bool CFileOperationJob::DoProcess(FileAction action,
+                                  const CFileItemList& items,
+                                  const std::string& strDestFile,
+                                  FileOperationList& fileOperations,
+                                  double& totalTime)
 {
   for (int iItem = 0; iItem < items.Size(); ++iItem)
   {
@@ -170,21 +164,21 @@ bool CFileOperationJob::DoProcess(FileAction action, CFileItemList & items, cons
         // get filename from label instead of path
         strFileName = pItem->GetLabel();
 
-        if (!pItem->m_bIsFolder && !URIUtils::HasExtension(strFileName))
+        if (!pItem->IsFolder() && !URIUtils::HasExtension(strFileName))
         {
           // FIXME: for now we only work well if the url has the extension
           // we should map the content type to the extension otherwise
           strFileName += URIUtils::GetExtension(pItem->GetPath());
         }
 
-        strFileName = CUtil::MakeLegalFileName(strFileName);
+        strFileName = CUtil::MakeLegalFileName(std::move(strFileName));
       }
 
       std::string strnewDestFile;
       if (!strDestFile.empty()) // only do this if we have a destination
         strnewDestFile = URIUtils::ChangeBasePath(pItem->GetPath(), strFileName, strDestFile); // Convert (URL) encoding + slashes (if source / target differ)
 
-      if (pItem->m_bIsFolder)
+      if (pItem->IsFolder())
       {
         // in ActionReplace mode all subdirectories will be removed by the below
         // DoProcessFolder(ActionDelete) call as well, so ActionCopy is enough when
@@ -232,20 +226,20 @@ std::string CFileOperationJob::GetActionString(FileAction action)
   {
     case ActionCopy:
     case ActionReplace:
-      result = g_localizeStrings.Get(115);
+      result = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(115);
       break;
 
     case ActionMove:
-      result = g_localizeStrings.Get(116);
+      result = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(116);
       break;
 
     case ActionDelete:
     case ActionDeleteFolder:
-      result = g_localizeStrings.Get(117);
+      result = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(117);
       break;
 
     case ActionCreateFolder:
-      result = g_localizeStrings.Get(119);
+      result = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(119);
       break;
 
     default:
@@ -331,19 +325,18 @@ bool CFileOperationJob::CFileOperation::OnFileCallback(void* pContext, int iperc
   double current = data->current + ((double)ipercent * data->opWeight * (double)m_time)/ 100.0;
 
   if (avgSpeed > 1000000.0f)
-    data->base->m_avgSpeed = StringUtils::Format("%.1f MB/s", avgSpeed / 1000000.0f);
+    data->base->m_avgSpeed = StringUtils::Format("{:.1f} MB/s", avgSpeed / 1000000.0f);
   else
-    data->base->m_avgSpeed = StringUtils::Format("%.1f KB/s", avgSpeed / 1000.0f);
+    data->base->m_avgSpeed = StringUtils::Format("{:.1f} KB/s", avgSpeed / 1000.0f);
 
   std::string line;
-  line = StringUtils::Format("%s (%s)",
-                              data->base->GetCurrentFile().c_str(),
-                              data->base->GetAverageSpeed().c_str());
+  line =
+      StringUtils::Format("{} ({})", data->base->GetCurrentFile(), data->base->GetAverageSpeed());
   data->base->SetText(line);
   return !data->base->ShouldCancel((unsigned)current, 100);
 }
 
-bool CFileOperationJob::operator==(const CJob* job) const
+bool CFileOperationJob::Equals(const CJob* job) const
 {
   if (strcmp(job->GetType(), GetType()) != 0)
     return false;

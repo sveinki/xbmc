@@ -1,34 +1,25 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "imagefactory.h"
-#include "guilib/FFmpegImage.h"
-#include "addons/ImageDecoder.h"
-#include "addons/binary-addons/BinaryAddonBase.h"
-#include "utils/Mime.h"
-#include "utils/StringUtils.h"
+
 #include "ServiceBroker.h"
+#include "addons/ExtsMimeSupportList.h"
+#include "addons/ImageDecoder.h"
+#include "addons/addoninfo/AddonType.h"
+#include "guilib/FFmpegImage.h"
+#include "utils/Mime.h"
 
-#include <algorithm>
+#include <mutex>
 
-using namespace ADDON;
+CCriticalSection ImageFactory::m_createSec;
+
+using namespace KODI::ADDONS;
 
 IImage* ImageFactory::CreateLoader(const std::string& strFileName)
 {
@@ -46,18 +37,22 @@ IImage* ImageFactory::CreateLoader(const CURL& url)
 
 IImage* ImageFactory::CreateLoaderFromMimeType(const std::string& strMimeType)
 {
-  BinaryAddonBaseList addonInfos;
-
-  CServiceBroker::GetBinaryAddonManager().GetAddonInfos(addonInfos, true, ADDON_IMAGEDECODER);
-  for (auto addonInfo : addonInfos)
+  auto addonInfos = CServiceBroker::GetExtsMimeSupportList().GetMimetypeSupportedAddonInfos(
+      strMimeType, CExtsMimeSupportList::FilterSelect::all);
+  for (const auto& addonInfo : addonInfos)
   {
-    std::vector<std::string> mime = StringUtils::Split(addonInfo->Type(ADDON_IMAGEDECODER)->GetValue("@mimetype").asString(), "|");
-    if (std::find(mime.begin(), mime.end(), strMimeType) != mime.end())
+    // Check asked and given mime type is supported by only for here allowed imagedecoder addons.
+    if (addonInfo.first != ADDON::AddonType::IMAGEDECODER)
+      continue;
+
+    std::unique_lock lock(m_createSec);
+    std::unique_ptr<CImageDecoder> result =
+        std::make_unique<CImageDecoder>(addonInfo.second, strMimeType);
+    if (!result->IsCreated())
     {
-      CImageDecoder* result = new CImageDecoder(addonInfo);
-      result->Create(strMimeType);
-      return result;
+      continue;
     }
+    return result.release();
   }
 
   return new CFFmpegImage(strMimeType);

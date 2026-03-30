@@ -1,52 +1,50 @@
 /*
- *      Copyright (C) 2005-2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "AddonBuiltins.h"
 
-#include <memory>
-
-#include "addons/AddonManager.h"
+#include "FileItem.h"
+#include "GUIPassword.h"
+#include "GUIUserMessages.h"
+#include "ServiceBroker.h"
 #include "addons/AddonInstaller.h"
+#include "addons/AddonManager.h"
 #include "addons/AddonSystemSettings.h"
-#include "addons/settings/GUIDialogAddonSettings.h"
-#include "addons/GUIWindowAddonBrowser.h"
 #include "addons/PluginSource.h"
 #include "addons/RepositoryUpdater.h"
-#include "FileItem.h"
+#include "addons/addoninfo/AddonInfo.h"
+#include "addons/addoninfo/AddonType.h"
+#include "addons/gui/GUIDialogAddonSettings.h"
+#include "addons/gui/GUIWindowAddonBrowser.h"
+#include "application/Application.h"
 #include "filesystem/PluginDirectory.h"
 #include "games/tags/GameInfoTag.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
-#include "GUIUserMessages.h"
 #include "interfaces/generic/ScriptInvocationManager.h"
-#include "utils/log.h"
+#include "messaging/helpers/DialogHelper.h"
+#include "playlists/PlayListTypes.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
-#include "Application.h"
-#include "PlayListPlayer.h"
+#include "utils/log.h"
+
+#include <memory>
 
 #if defined(TARGET_DARWIN)
 #include "filesystem/SpecialProtocol.h"
+#if defined(TARGET_DARWIN_OSX)
 #include "platform/darwin/osx/CocoaInterface.h"
+#endif
 #endif
 
 using namespace ADDON;
+using namespace KODI;
+using KODI::MESSAGING::HELPERS::DialogResponse;
 
 /*! \brief Install an addon.
  *  \param params The parameters.
@@ -57,7 +55,30 @@ static int InstallAddon(const std::vector<std::string>& params)
   const std::string& addonid = params[0];
 
   AddonPtr addon;
-  CAddonInstaller::GetInstance().InstallModal(addonid, addon);
+  CAddonInstaller::GetInstance().InstallModal(addonid, addon, InstallModalPrompt::CHOICE_YES);
+
+  return 0;
+}
+
+/*! \brief Enable an addon.
+ *  \param params The parameters.
+ *  \details params[0] = add-on id.
+ */
+static int EnableAddon(const std::vector<std::string>& params)
+{
+  const std::string& addonid = params[0];
+
+  if (!g_passwordManager.CheckMenuLock(WINDOW_ADDON_BROWSER))
+    return -1;
+
+  AddonPtr addon;
+  if (!CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, OnlyEnabled::CHOICE_NO))
+    return -1;
+
+  auto response = MESSAGING::HELPERS::ShowYesNoDialogLines(
+      CVariant{24076}, CVariant{24135}, CVariant{addon->Name()}, CVariant{24136});
+  if (response == DialogResponse::CHOICE_YES)
+    CServiceBroker::GetAddonMgr().EnableAddon(addonid);
 
   return 0;
 }
@@ -68,10 +89,10 @@ static int InstallAddon(const std::vector<std::string>& params)
  */
 static int RunPlugin(const std::vector<std::string>& params)
 {
-  if (params.size())
+  if (!params.empty())
   {
     CFileItem item(params[0]);
-    if (!item.m_bIsFolder)
+    if (!item.IsFolder())
     {
       item.SetPath(params[0]);
       XFILE::CPluginDirectory::RunScriptWithParams(item.GetPath(), false);
@@ -94,14 +115,15 @@ static int RunPlugin(const std::vector<std::string>& params)
  */
 static int RunAddon(const std::vector<std::string>& params)
 {
-  if (params.size())
+  if (!params.empty())
   {
     const std::string& addonid = params[0];
 
     AddonPtr addon;
-    if (CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_PLUGIN))
+    if (CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::PLUGIN,
+                                               OnlyEnabled::CHOICE_YES))
     {
-      PluginPtr plugin = std::dynamic_pointer_cast<CPluginSource>(addon);
+      const auto plugin = std::dynamic_pointer_cast<CPluginSource>(addon);
       std::string urlParameters;
       std::vector<std::string> parameters;
       if (params.size() == 2 &&
@@ -120,32 +142,43 @@ static int RunAddon(const std::vector<std::string>& params)
       }
 
       std::string cmd;
-      if (plugin->Provides(CPluginSource::VIDEO))
-        cmd = StringUtils::Format("ActivateWindow(Videos,plugin://%s%s,return)", addonid.c_str(), urlParameters.c_str());
-      else if (plugin->Provides(CPluginSource::AUDIO))
-        cmd = StringUtils::Format("ActivateWindow(Music,plugin://%s%s,return)", addonid.c_str(), urlParameters.c_str());
-      else if (plugin->Provides(CPluginSource::EXECUTABLE))
-        cmd = StringUtils::Format("ActivateWindow(Programs,plugin://%s%s,return)", addonid.c_str(), urlParameters.c_str());
-      else if (plugin->Provides(CPluginSource::IMAGE))
-        cmd = StringUtils::Format("ActivateWindow(Pictures,plugin://%s%s,return)", addonid.c_str(), urlParameters.c_str());
-      else if (plugin->Provides(CPluginSource::GAME))
-        cmd = StringUtils::Format("ActivateWindow(Games,plugin://%s%s,return)", addonid.c_str(), urlParameters.c_str());
+      if (plugin->Provides(CPluginSource::Content::VIDEO))
+        cmd = StringUtils::Format("ActivateWindow(Videos,plugin://{}{},return)", addonid,
+                                  urlParameters);
+      else if (plugin->Provides(CPluginSource::Content::AUDIO))
+        cmd = StringUtils::Format("ActivateWindow(Music,plugin://{}{},return)", addonid,
+                                  urlParameters);
+      else if (plugin->Provides(CPluginSource::Content::EXECUTABLE))
+        cmd = StringUtils::Format("ActivateWindow(Programs,plugin://{}{},return)", addonid,
+                                  urlParameters);
+      else if (plugin->Provides(CPluginSource::Content::IMAGE))
+        cmd = StringUtils::Format("ActivateWindow(Pictures,plugin://{}{},return)", addonid,
+                                  urlParameters);
+      else if (plugin->Provides(CPluginSource::Content::GAME))
+        cmd = StringUtils::Format("ActivateWindow(Games,plugin://{}{},return)", addonid,
+                                  urlParameters);
       else
         // Pass the script name (addonid) and all the parameters
         // (params[1] ... params[x]) separated by a comma to RunPlugin
-        cmd = StringUtils::Format("RunPlugin(%s)", StringUtils::Join(params, ",").c_str());
+        cmd = StringUtils::Format("RunPlugin({})", StringUtils::Join(params, ","));
       CBuiltins::GetInstance().Execute(cmd);
     }
-    else if (CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_SCRIPT) ||
-        CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_SCRIPT_WEATHER) ||
-        CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_SCRIPT_LYRICS) ||
-        CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_SCRIPT_LIBRARY))
+    else if (CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::SCRIPT,
+                                                    OnlyEnabled::CHOICE_YES) ||
+             CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::SCRIPT_WEATHER,
+                                                    OnlyEnabled::CHOICE_YES) ||
+             CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::SCRIPT_LYRICS,
+                                                    OnlyEnabled::CHOICE_YES) ||
+             CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::SCRIPT_LIBRARY,
+                                                    OnlyEnabled::CHOICE_YES))
     {
       // Pass the script name (addonid) and all the parameters
       // (params[1] ... params[x]) separated by a comma to RunScript
-      CBuiltins::GetInstance().Execute(StringUtils::Format("RunScript(%s)", StringUtils::Join(params, ",").c_str()));
+      CBuiltins::GetInstance().Execute(
+          StringUtils::Format("RunScript({})", StringUtils::Join(params, ",")));
     }
-    else if (CAddonMgr::GetInstance().GetAddon(addonid, addon, ADDON_GAMEDLL))
+    else if (CServiceBroker::GetAddonMgr().GetAddon(addonid, addon, AddonType::GAMEDLL,
+                                                    OnlyEnabled::CHOICE_YES))
     {
       CFileItem item;
 
@@ -157,14 +190,17 @@ static int RunAddon(const std::vector<std::string>& params)
       else
         item = CFileItem(addon);
 
-      if (!g_application.PlayMedia(item, "", PLAYLIST_NONE))
+      if (!g_application.PlayMedia(item, "", PLAYLIST::Id::TYPE_NONE))
       {
-        CLog::Log(LOGERROR, "RunAddon could not start %s", addonid.c_str());
+        CLog::Log(LOGERROR, "RunAddon could not start {}", addonid);
         return false;
       }
     }
     else
-      CLog::Log(LOGERROR, "RunAddon: unknown add-on id '%s', or unexpected add-on type (not a script or plugin).", addonid.c_str());
+      CLog::Log(
+          LOGERROR,
+          "RunAddon: unknown add-on id '{}', or unexpected add-on type (not a script or plugin).",
+          addonid);
   }
   else
   {
@@ -204,22 +240,34 @@ static int RunScript(const std::vector<std::string>& params)
     AddonPtr addon;
     std::string scriptpath;
     // Test to see if the param is an addon ID
-    if (CAddonMgr::GetInstance().GetAddon(params[0], addon))
+    if (CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, OnlyEnabled::CHOICE_YES))
     {
       //Get the correct extension point to run
-      if (CAddonMgr::GetInstance().GetAddon(params[0], addon, ADDON_SCRIPT) ||
-          CAddonMgr::GetInstance().GetAddon(params[0], addon, ADDON_SCRIPT_WEATHER) ||
-          CAddonMgr::GetInstance().GetAddon(params[0], addon, ADDON_SCRIPT_LYRICS) ||
-          CAddonMgr::GetInstance().GetAddon(params[0], addon, ADDON_SCRIPT_LIBRARY))
+      if (CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, AddonType::SCRIPT,
+                                                 OnlyEnabled::CHOICE_YES) ||
+          CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, AddonType::SCRIPT_WEATHER,
+                                                 OnlyEnabled::CHOICE_YES) ||
+          CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, AddonType::SCRIPT_LYRICS,
+                                                 OnlyEnabled::CHOICE_YES) ||
+          CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, AddonType::SCRIPT_LIBRARY,
+                                                 OnlyEnabled::CHOICE_YES))
       {
         scriptpath = addon->LibPath();
       }
       else
       {
-        //Run a random extension point (old behaviour).
-        CAddonMgr::GetInstance().GetAddon(params[0], addon);
-        scriptpath = addon->LibPath();
-        CLog::Log(LOGWARNING, "RunScript called for a non-script addon '%s'. This behaviour is deprecated.", params[0].c_str());
+        // Run a random extension point (old behaviour).
+        if (CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, OnlyEnabled::CHOICE_YES))
+        {
+          scriptpath = addon->LibPath();
+          CLog::Log(LOGWARNING,
+                    "RunScript called for a non-script addon '{}'. This behaviour is deprecated.",
+                    params[0]);
+        }
+        else
+        {
+          CLog::Log(LOGERROR, "{} - Could not get addon: {}", __FUNCTION__, params[0]);
+        }
       }
     }
     else
@@ -244,12 +292,12 @@ static int RunScript(const std::vector<std::string>& params)
 static int OpenDefaultSettings(const std::vector<std::string>& params)
 {
   AddonPtr addon;
-  ADDON::TYPE type = CAddonInfo::TranslateType(params[0]);
+  AddonType type = CAddonInfo::TranslateType(params[0]);
   if (CAddonSystemSettings::GetInstance().GetActive(type, addon))
   {
     bool changed = CGUIDialogAddonSettings::ShowForAddon(addon);
-    if (type == ADDON_VIZ && changed)
-      g_windowManager.SendMessage(GUI_MSG_VISUALISATION_RELOAD, 0, 0);
+    if (type == AddonType::VISUALIZATION && changed)
+      CServiceBroker::GetGUI()->GetWindowManager().SendMessage(GUI_MSG_VISUALISATION_RELOAD, 0, 0);
   }
 
   return 0;
@@ -262,17 +310,16 @@ static int OpenDefaultSettings(const std::vector<std::string>& params)
 static int SetDefaultAddon(const std::vector<std::string>& params)
 {
   std::string addonID;
-  TYPE type = CAddonInfo::TranslateType(params[0]);
+  AddonType type = CAddonInfo::TranslateType(params[0]);
   bool allowNone = false;
-  if (type == ADDON_VIZ)
+  if (type == AddonType::VISUALIZATION)
     allowNone = true;
 
-  if (type != ADDON_UNKNOWN && 
-      CGUIWindowAddonBrowser::SelectAddonID(type,addonID,allowNone))
+  if (type != AddonType::UNKNOWN && CGUIWindowAddonBrowser::SelectAddonID(type, addonID, allowNone))
   {
     CAddonSystemSettings::GetInstance().SetActive(type, addonID);
-    if (type == ADDON_VIZ)
-      g_windowManager.SendMessage(GUI_MSG_VISUALISATION_RELOAD, 0, 0);
+    if (type == AddonType::VISUALIZATION)
+      CServiceBroker::GetGUI()->GetWindowManager().SendMessage(GUI_MSG_VISUALISATION_RELOAD, 0, 0);
   }
 
   return 0;
@@ -285,9 +332,18 @@ static int SetDefaultAddon(const std::vector<std::string>& params)
 static int AddonSettings(const std::vector<std::string>& params)
 {
   AddonPtr addon;
-  if (CAddonMgr::GetInstance().GetAddon(params[0], addon))
+  if (CServiceBroker::GetAddonMgr().GetAddon(params[0], addon, OnlyEnabled::CHOICE_YES))
     CGUIDialogAddonSettings::ShowForAddon(addon);
 
+  return 0;
+}
+
+/*! \brief Open the settings for a given add-on.
+*  \param params The parameters.
+*/
+static int InstallFromZip(const std::vector<std::string>& params)
+{
+  CGUIWindowAddonBrowser::InstallFromZip();
   return 0;
 }
 
@@ -304,7 +360,7 @@ static int StopScript(const std::vector<std::string>& params)
   std::string scriptpath(params[0]);
   // Test to see if the param is an addon ID
   AddonPtr script;
-  if (CAddonMgr::GetInstance().GetAddon(params[0], script))
+  if (CServiceBroker::GetAddonMgr().GetAddon(params[0], script, OnlyEnabled::CHOICE_YES))
     scriptpath = script->LibPath();
   CScriptInvocationManager::GetInstance().Stop(scriptpath);
 
@@ -326,14 +382,14 @@ static int UpdateRepos(const std::vector<std::string>& params)
  */
 static int UpdateLocals(const std::vector<std::string>& params)
 {
-  CAddonMgr::GetInstance().FindAddons();
+  CServiceBroker::GetAddonMgr().FindAddons();
 
   return 0;
 }
 
 // Note: For new Texts with comma add a "\" before!!! Is used for table text.
 //
-/// \page page_List_of_built_in_functions List of build in functions
+/// \page page_List_of_built_in_functions List of built-in functions
 /// \section built_in_functions_1 Add-on built-in's
 ///
 /// -----------------------------------------------------------------------------
@@ -363,10 +419,24 @@ static int UpdateLocals(const std::vector<std::string>& params)
 ///     @param[in] id                    The add-on ID
 ///   }
 ///   \table_row2_l{
+///     <b>`EnableAddon(id)`</b>
+///     \anchor Builtin_EnableAddonId,
+///     Enable the specified plugin/script
+///     @param[in] id                    The add-on id
+///     <p><hr>
+///     @skinning_v19 **[New builtin]** \link Builtin_EnableAddonId `EnableAddon(id)`\endlink
+///     <p>
+///   }
+///   \table_row2_l{
 ///     <b>`InstallAddon(id)`</b>
 ///     ,
 ///     Install the specified plugin/script
 ///     @param[in] id                    The add-on id
+///   }
+///   \table_row2_l{
+///     <b>`InstallFromZip`</b>
+///     ,
+///     Opens the "Install from zip" dialog if "Unknown sources" is enabled. Prompts the warning message if not.
 ///   }
 ///   \table_row2_l{
 ///     <b>`RunAddon(id[\,opt])`</b>
@@ -437,7 +507,9 @@ CBuiltins::CommandMap CAddonBuiltins::GetOperations() const
            {"addon.default.opensettings", {"Open a settings dialog for the default addon of the given type", 1, OpenDefaultSettings}},
            {"addon.default.set",          {"Open a select dialog to allow choosing the default addon of the given type", 1, SetDefaultAddon}},
            {"addon.opensettings",         {"Open a settings dialog for the addon of the given id", 1, AddonSettings}},
+           {"enableaddon",                {"Enables the specified plugin/script", 1, EnableAddon}},
            {"installaddon",               {"Install the specified plugin/script", 1, InstallAddon}},
+           {"installfromzip",             { "Open the install from zip dialog", 0, InstallFromZip}},
            {"runaddon",                   {"Run the specified plugin/script", 1, RunAddon}},
 #ifdef TARGET_DARWIN
            {"runapplescript",             {"Run the specified AppleScript command", 1, RunScript<true>}},

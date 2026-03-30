@@ -1,35 +1,27 @@
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <vector>
-
 #include "SettingControl.h"
+
 #include "settings/lib/SettingDefinitions.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "utils/XBMCTinyXML.h"
 #include "utils/XMLUtils.h"
+#include "utils/log.h"
 
-const char* SHOW_ADDONS_ALL = "all";
-const char* SHOW_ADDONS_INSTALLED = "installed";
-const char* SHOW_ADDONS_INSTALLABLE = "installable";
+#include <vector>
+
+namespace
+{
+constexpr const char* SHOW_ADDONS_ALL = "all";
+constexpr const char* SHOW_ADDONS_INSTALLED = "installed";
+constexpr const char* SHOW_ADDONS_INSTALLABLE = "installable";
+} // unnamed namespace
 
 std::shared_ptr<ISettingControl> CSettingControlCreator::CreateControl(const std::string &controlType) const
 {
@@ -51,6 +43,8 @@ std::shared_ptr<ISettingControl> CSettingControlCreator::CreateControl(const std
     return std::make_shared<CSettingControlTitle>();
   else if (StringUtils::EqualsNoCase(controlType, "label"))
     return std::make_shared<CSettingControlLabel>();
+  else if (StringUtils::EqualsNoCase(controlType, "colorbutton"))
+    return std::make_shared<CSettingControlColorButton>();
 
   return nullptr;
 }
@@ -70,20 +64,20 @@ bool CSettingControlFormattedRange::Deserialize(const TiXmlNode *node, bool upda
     XMLUtils::GetInt(node, SETTING_XML_ELM_CONTROL_FORMATLABEL, m_formatLabel);
 
     // get the minimum label from <setting><constraints><minimum label="X" />
-    auto settingNode = node->Parent();
-    if (settingNode != nullptr)
+    const TiXmlNode* settingNode = node->Parent();
+    if (settingNode)
     {
-      auto constraintsNode = settingNode->FirstChild(SETTING_XML_ELM_CONSTRAINTS);
-      if (constraintsNode != nullptr)
+      const TiXmlNode* constraintsNode = settingNode->FirstChild(SETTING_XML_ELM_CONSTRAINTS);
+      if (constraintsNode)
       {
-        auto minimumNode = constraintsNode->FirstChild(SETTING_XML_ELM_MINIMUM);
-        if (minimumNode != nullptr)
+        const TiXmlNode* minimumNode = constraintsNode->FirstChild(SETTING_XML_ELM_MINIMUM);
+        if (minimumNode)
         {
-          auto minimumElem = minimumNode->ToElement();
-          if (minimumElem != nullptr)
+          const TiXmlElement* minimumElem = minimumNode->ToElement();
+          if (minimumElem && minimumElem->QueryIntAttribute(SETTING_XML_ATTR_LABEL,
+                                                            &m_minimumLabel) != TIXML_SUCCESS)
           {
-            if (minimumElem->QueryIntAttribute(SETTING_XML_ATTR_LABEL, &m_minimumLabel) != TIXML_SUCCESS)
-              m_minimumLabel = -1;
+            m_minimumLabel = -1;
           }
         }
       }
@@ -145,11 +139,20 @@ bool CSettingControlButton::Deserialize(const TiXmlNode *node, bool update /* = 
 {
   if (!ISettingControl::Deserialize(node, update))
     return false;
-  
+
   XMLUtils::GetInt(node, SETTING_XML_ELM_CONTROL_HEADING, m_heading);
   XMLUtils::GetBoolean(node, SETTING_XML_ELM_CONTROL_HIDEVALUE, m_hideValue);
 
-  if (m_format == "addon")
+  if (m_format == "action")
+  {
+    bool closeDialog = false;
+    if (XMLUtils::GetBoolean(node, "close", closeDialog))
+      m_closeDialog = closeDialog;
+    std::string strActionData;
+    if (XMLUtils::GetString(node, SETTING_XML_ELM_DATA, strActionData))
+      m_actionData = strActionData;
+  }
+  else if (m_format == "addon")
   {
     std::string strShowAddons;
     if (XMLUtils::GetString(node, "show", strShowAddons) && !strShowAddons.empty())
@@ -172,11 +175,11 @@ bool CSettingControlButton::Deserialize(const TiXmlNode *node, bool update /* = 
       else
         CLog::Log(LOGWARNING, "CSettingControlButton: invalid <show>");
 
-      auto show = node->FirstChildElement("show");
-      if (show != nullptr)
+      const TiXmlElement* show = node->FirstChildElement("show");
+      if (show)
       {
-        const char *strShowDetails = nullptr;
-        if ((strShowDetails = show->Attribute(SETTING_XML_ATTR_SHOW_DETAILS)) != nullptr)
+        const char* strShowDetails = show->Attribute(SETTING_XML_ATTR_SHOW_DETAILS);
+        if (strShowDetails)
         {
           if (StringUtils::EqualsNoCase(strShowDetails, "false") || StringUtils::EqualsNoCase(strShowDetails, "true"))
             m_showAddonDetails = StringUtils::EqualsNoCase(strShowDetails, "true");
@@ -186,8 +189,8 @@ bool CSettingControlButton::Deserialize(const TiXmlNode *node, bool update /* = 
 
         if (!m_showInstallableAddons)
         {
-          const char *strShowMore = nullptr;
-          if ((strShowMore = show->Attribute(SETTING_XML_ATTR_SHOW_MORE)) != nullptr)
+          const char* strShowMore = show->Attribute(SETTING_XML_ATTR_SHOW_MORE);
+          if (strShowMore)
           {
             if (StringUtils::EqualsNoCase(strShowMore, "false") || StringUtils::EqualsNoCase(strShowMore, "true"))
               m_showMoreAddons = StringUtils::EqualsNoCase(strShowMore, "true");
@@ -197,6 +200,15 @@ bool CSettingControlButton::Deserialize(const TiXmlNode *node, bool update /* = 
         }
       }
     }
+  }
+  else if (m_format == "file")
+  {
+    bool useThumbs = false;
+    if (XMLUtils::GetBoolean(node, "usethumbs", useThumbs))
+      m_useImageThumbs = useThumbs;
+    bool useFileDirectories = false;
+    if (XMLUtils::GetBoolean(node, "treatasfolder", useFileDirectories))
+      m_useFileDirectories = useFileDirectories;
   }
 
   return true;
@@ -224,10 +236,11 @@ bool CSettingControlList::Deserialize(const TiXmlNode *node, bool update /* = fa
 {
   if (!CSettingControlFormattedRange::Deserialize(node, update))
     return false;
-  
+
   XMLUtils::GetInt(node, SETTING_XML_ELM_CONTROL_HEADING, m_heading);
   XMLUtils::GetBoolean(node, SETTING_XML_ELM_CONTROL_MULTISELECT, m_multiselect);
   XMLUtils::GetBoolean(node, SETTING_XML_ELM_CONTROL_HIDEVALUE, m_hideValue);
+  XMLUtils::GetInt(node, SETTING_XML_ELM_CONTROL_ADDBUTTONLABEL, m_addButtonLabel);
 
   return true;
 }
@@ -265,19 +278,28 @@ bool CSettingControlSlider::Deserialize(const TiXmlNode *node, bool update /* = 
 
 bool CSettingControlSlider::SetFormat(const std::string &format)
 {
-  if (StringUtils::EqualsNoCase(format, "percentage"))
-    m_formatString = "%i %%";
-  else if (StringUtils::EqualsNoCase(format, "integer"))
-    m_formatString = "%d";
-  else if (StringUtils::EqualsNoCase(format, "number"))
-    m_formatString = "%.1f";
-  else
+  if (!StringUtils::EqualsNoCase(format, "percentage") &&
+      !StringUtils::EqualsNoCase(format, "integer") &&
+      !StringUtils::EqualsNoCase(format, "number"))
     return false;
 
   m_format = format;
   StringUtils::ToLower(m_format);
+  m_formatString = GetDefaultFormatString();
 
   return true;
+}
+
+std::string CSettingControlSlider::GetDefaultFormatString() const
+{
+  if (m_format == "percentage")
+    return "{} %";
+  if (m_format == "integer")
+    return "{:d}";
+  if (m_format == "number")
+    return "{:.1f}";
+
+  return "{}";
 }
 
 bool CSettingControlRange::Deserialize(const TiXmlNode *node, bool update /* = false */)
@@ -285,15 +307,15 @@ bool CSettingControlRange::Deserialize(const TiXmlNode *node, bool update /* = f
   if (!ISettingControl::Deserialize(node, update))
     return false;
 
-  auto formatLabel = node->FirstChildElement(SETTING_XML_ELM_CONTROL_FORMATLABEL);
-  if (formatLabel != nullptr)
+  const TiXmlElement* formatLabel = node->FirstChildElement(SETTING_XML_ELM_CONTROL_FORMATLABEL);
+  if (formatLabel)
   {
     XMLUtils::GetInt(node, SETTING_XML_ELM_CONTROL_FORMATLABEL, m_formatLabel);
     if (m_formatLabel < 0)
       return false;
 
-    auto formatValue = formatLabel->Attribute(SETTING_XML_ELM_CONTROL_FORMATVALUE);
-    if (formatValue != nullptr)
+    const char* formatValue = formatLabel->Attribute(SETTING_XML_ELM_CONTROL_FORMATVALUE);
+    if (formatValue)
     {
       if (StringUtils::IsInteger(formatValue))
         m_valueFormatLabel = (int)strtol(formatValue, nullptr, 0);
@@ -312,11 +334,11 @@ bool CSettingControlRange::Deserialize(const TiXmlNode *node, bool update /* = f
 bool CSettingControlRange::SetFormat(const std::string &format)
 {
   if (StringUtils::EqualsNoCase(format, "percentage"))
-    m_valueFormat = "%i %%";
+    m_valueFormat = "{} %";
   else if (StringUtils::EqualsNoCase(format, "integer"))
-    m_valueFormat = "%d";
+    m_valueFormat = "{:d}";
   else if (StringUtils::EqualsNoCase(format, "number"))
-    m_valueFormat = "%.1f";
+    m_valueFormat = "{:.1f}";
   else if (StringUtils::EqualsNoCase(format, "date") ||
            StringUtils::EqualsNoCase(format, "time"))
     m_valueFormat.clear();
@@ -338,7 +360,8 @@ bool CSettingControlTitle::Deserialize(const TiXmlNode *node, bool update /* = f
   if (XMLUtils::GetString(node, SETTING_XML_ATTR_SEPARATOR_POSITION, strTmp))
   {
     if (!StringUtils::EqualsNoCase(strTmp, "top") && !StringUtils::EqualsNoCase(strTmp, "bottom"))
-      CLog::Log(LOGWARNING, "CSettingControlTitle: error reading \"value\" attribute of <%s>", SETTING_XML_ATTR_SEPARATOR_POSITION);
+      CLog::Log(LOGWARNING, "CSettingControlTitle: error reading \"value\" attribute of <{}>",
+                SETTING_XML_ATTR_SEPARATOR_POSITION);
     else
       m_separatorBelowLabel = StringUtils::EqualsNoCase(strTmp, "bottom");
   }
@@ -350,4 +373,9 @@ bool CSettingControlTitle::Deserialize(const TiXmlNode *node, bool update /* = f
 CSettingControlLabel::CSettingControlLabel()
 {
   m_format = "string";
+}
+
+bool CSettingControlColorButton::SetFormat(const std::string& format)
+{
+  return format.empty() || StringUtils::EqualsNoCase(format, "string");
 }

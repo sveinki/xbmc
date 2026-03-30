@@ -1,12 +1,6 @@
-set(SOURCES InputSink.cpp
-            Port.cpp
-            PortManager.cpp
-            PortMapper.cpp)
+set(HEADERS PortDefinitions.h
+)
 
-set(HEADERS InputSink.h
-            Port.h
-            PortManager.h
-            PortMapper.h
-            PortTypes.h)
-
-core_add_library(gameports)
+if(NOT ENABLE_STATIC_LIBS)
+  core_add_library(games_ports)
+endif()

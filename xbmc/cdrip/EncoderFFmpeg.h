@@ -1,74 +1,72 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "IEncoder.h"
+#pragma once
 
-extern "C" {
-#include "libavformat/avformat.h"
-#include "libavcodec/avcodec.h"
-#include "libswresample/swresample.h"
+#include "Encoder.h"
+
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libswresample/swresample.h>
 }
 
-class CEncoderFFmpeg : public IEncoder
+namespace KODI
+{
+namespace CDRIP
+{
+
+class CEncoderFFmpeg : public CEncoder
 {
 public:
-  CEncoderFFmpeg();
+  CEncoderFFmpeg() = default;
   ~CEncoderFFmpeg() override = default;
 
-  bool Init(AddonToKodiFuncTable_AudioEncoder& callbacks) override;
-  int Encode(int nNumBytesRead, uint8_t *pbtStream) override;
+  bool Init() override;
+  ssize_t Encode(uint8_t* pbtStream, size_t nNumBytesRead) override;
   bool Close() override;
-private:
 
-  AVFormatContext  *m_Format;
-  AVCodecContext   *m_CodecCtx;
-  SwrContext       *m_SwrCtx;
-  AVStream         *m_Stream;
-  AVPacket          m_Pkt;
-  AVSampleFormat    m_InFormat;
-  AVSampleFormat    m_OutFormat;
+private:
+  static int avio_write_callback(void* opaque, const uint8_t* buf, int buf_size);
+  static int64_t avio_seek_callback(void* opaque, int64_t offset, int whence);
+
+  void SetTag(const std::string& tag, const std::string& value);
+  bool WriteFrame();
+  AVSampleFormat GetInputFormat(int inBitsPerSample);
+
+  AVFormatContext* m_formatCtx{nullptr};
+  AVCodecContext* m_codecCtx{nullptr};
+  SwrContext* m_swrCtx{nullptr};
+  AVStream* m_stream{nullptr};
+  AVSampleFormat m_inFormat;
+  AVSampleFormat m_outFormat;
+
   /* From libavformat/avio.h:
    * The buffer size is very important for performance.
    * For protocols with fixed blocksize it should be set to this
    * blocksize.
    * For others a typical size is a cache page, e.g. 4kb.
    */
-  unsigned char     m_BCBuffer[4096];
-  static int        avio_write_callback(void *opaque, uint8_t *buf, int buf_size);
-  static int64_t    avio_seek_callback(void *opaque, int64_t offset, int whence);
-  void              SetTag(const std::string &tag, const std::string &value);
+  static constexpr size_t BUFFER_SIZE = 4096;
 
-  unsigned int      m_NeededFrames;
-  unsigned int      m_NeededBytes;
-  uint8_t          *m_Buffer;
-  unsigned int      m_BufferSize;
-  AVFrame          *m_BufferFrame;
-  uint8_t          *m_ResampledBuffer;
-  unsigned int      m_ResampledBufferSize;
-  AVFrame          *m_ResampledFrame;
-  bool              m_NeedConversion;
-
-  AddonToKodiFuncTable_AudioEncoder m_callbacks;
-
-  bool WriteFrame();
+  unsigned int m_neededFrames{0};
+  size_t m_neededBytes{0};
+  uint8_t* m_buffer{nullptr};
+  size_t m_bufferSize{0};
+  AVFrame* m_bufferFrame{nullptr};
+  uint8_t* m_resampledBuffer{nullptr};
+  size_t m_resampledBufferSize{0};
+  AVFrame* m_resampledFrame{nullptr};
+  bool m_needConversion{false};
+  int64_t m_samplesCount{0};
+  int64_t m_samplesCountMultiply{1000};
 };
 
+} /* namespace CDRIP */
+} /* namespace KODI */

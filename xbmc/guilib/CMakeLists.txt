@@ -2,13 +2,14 @@ set(SOURCES DDSImage.cpp
             DirtyRegionSolvers.cpp
             DirtyRegionTracker.cpp
             FFmpegImage.cpp
-            GraphicContext.cpp
             GUIAction.cpp
             GUIAudioManager.cpp
             GUIBaseContainer.cpp
             GUIBorderedImage.cpp
             GUIButtonControl.cpp
+            GUIColorButtonControl.cpp
             GUIColorManager.cpp
+            GUIComponent.cpp
             GUIControl.cpp
             GUIControlFactory.cpp
             GUIControlGroup.cpp
@@ -25,7 +26,6 @@ set(SOURCES DDSImage.cpp
             GUIFontTTF.cpp
             GUIImage.cpp
             GUIIncludes.cpp
-            GUIInfoTypes.cpp
             GUIKeyboardFactory.cpp
             GUILabelControl.cpp
             GUILabel.cpp
@@ -40,6 +40,7 @@ set(SOURCES DDSImage.cpp
             GUIPanelContainer.cpp
             GUIProgressControl.cpp
             GUIRadioButtonControl.cpp
+            GUIRangesControl.cpp
             GUIRenderingControl.cpp
             GUIResizeControl.cpp
             GUIRSSControl.cpp
@@ -52,42 +53,43 @@ set(SOURCES DDSImage.cpp
             GUITextBox.cpp
             GUITextLayout.cpp
             GUITexture.cpp
+            GUITextureCallbackManager.cpp
             GUIToggleButtonControl.cpp
+            GUIUtils.cpp
             GUIVideoControl.cpp
             GUIVisualisationControl.cpp
             GUIWindow.cpp
             GUIWindowManager.cpp
             GUIWrappingListContainer.cpp
             imagefactory.cpp
+            ImageSettings.cpp
             IWindowManagerCallback.cpp
-            LocalizeStrings.cpp
-            Resolution.cpp
-            Shader.cpp
             StereoscopicsManager.cpp
             TextureBundle.cpp
             TextureBundleXBT.cpp
             Texture.cpp
+            TextureBase.cpp
             TextureManager.cpp
             VisibleEffect.cpp
             XBTF.cpp
             XBTFReader.cpp)
 
-set(HEADERS DDSImage.h
+set(HEADERS AspectRatio.h
+            DDSImage.h
             DirtyRegion.h
             DirtyRegionSolvers.h
             DirtyRegionTracker.h
             DispResource.h
             FFmpegImage.h
-            Geometry.h
-            GraphicContext.h
             gui3d.h
             GUIAction.h
             GUIAudioManager.h
             GUIBaseContainer.h
             GUIBorderedImage.h
             GUIButtonControl.h
-            GUICallback.h
+            GUIColorButtonControl.h
             GUIColorManager.h
+            GUIComponent.h
             GUIControl.h
             GUIControlFactory.h
             GUIControlGroup.h
@@ -104,7 +106,6 @@ set(HEADERS DDSImage.h
             GUIFontTTF.h
             GUIImage.h
             GUIIncludes.h
-            GUIInfoTypes.h
             GUIKeyboard.h
             GUIKeyboardFactory.h
             GUILabel.h
@@ -114,12 +115,15 @@ set(HEADERS DDSImage.h
             GUIListItem.h
             GUIListItemLayout.h
             GUIListLabel.h
+            GUIMacros.h
             GUIMessage.h
+            GUIMessageIDs.h
             GUIMoverControl.h
             GUIMultiImage.h
             GUIPanelContainer.h
             GUIProgressControl.h
             GUIRadioButtonControl.h
+            GUIRangesControl.h
             GUIRenderingControl.h
             GUIResizeControl.h
             GUIRSSControl.h
@@ -132,7 +136,9 @@ set(HEADERS DDSImage.h
             GUITextBox.h
             GUITextLayout.h
             GUITexture.h
+            GUITextureCallbackManager.h
             GUIToggleButtonControl.h
+            GUIUtils.h
             GUIVideoControl.h
             GUIVisualisationControl.h
             GUIWindow.h
@@ -143,55 +149,50 @@ set(HEADERS DDSImage.h
             IGUIContainer.h
             iimage.h
             imagefactory.h
+            ImageSettings.h
             IMsgTargetCallback.h
             IRenderingCallback.h
             ISliderCallback.h
             IWindowManagerCallback.h
-            LocalizeStrings.h
-            Resolution.h
-            Shader.h
             StereoscopicsManager.h
             Texture.h
+            TextureBase.h
             TextureBundle.h
             TextureBundleXBT.h
+            TextureFormats.h
             TextureManager.h
-            TransformMatrix.h
+            TextureScaling.h
             Tween.h
             VisibleEffect.h
             WindowIDs.h
             XBTF.h
             XBTFReader.h)
 
-if(OPENGL_FOUND)
-  list(APPEND SOURCES GUIFontTTFGL.cpp
-                      GUITextureGL.cpp
-                      MatrixGLES.cpp
-                      TextureGL.cpp)
-  list(APPEND HEADERS GUIFontTTFGL.h
-                      GUITextureGL.h
-                      MatrixGLES.h
-                      TextureGL.h)
+if(TARGET ${APP_NAME_LC}::OpenGl OR TARGET ${APP_NAME_LC}::OpenGLES)
+  list(APPEND SOURCES Shader.cpp)
+  list(APPEND HEADERS Shader.h)
+
+  if(TARGET ${APP_NAME_LC}::OpenGl)
+    list(APPEND SOURCES GUIFontTTFGL.cpp
+                        GUITextureGL.cpp
+                        TextureGL.cpp)
+    list(APPEND HEADERS GUIFontTTFGL.h
+                        GUITextureGL.h
+                        TextureGL.h)
+  endif()
+
+  if(TARGET ${APP_NAME_LC}::OpenGLES)
+    list(APPEND SOURCES GUIFontTTFGLES.cpp
+                        GUITextureGLES.cpp
+                        TextureGLES.cpp)
+    list(APPEND HEADERS GUIFontTTFGLES.h
+                        GUITextureGLES.h
+                        TextureGLES.h)
+  endif()
+
 endif()
 
-if(OPENGLES_FOUND)
-  list(APPEND SOURCES GUIFontTTFGL.cpp
-                      GUIShader.cpp
-                      GUITextureGLES.cpp
-                      MatrixGLES.cpp
-                      TextureGL.cpp)
-  list(APPEND HEADERS GUIFontTTFGL.h
-                      GUIShader.h
-                      GUITextureGLES.h
-                      MatrixGLES.h
-                      TextureGL.h)
-endif()
-
-if(CORE_PLATFORM_NAME_LC STREQUAL rbpi)
-  list(APPEND SOURCES TexturePi.cpp)
-  list(APPEND HEADERS TexturePi.h)
-endif()
-
-if(CORE_SYSTEM_NAME STREQUAL windows)
+if(CORE_SYSTEM_NAME STREQUAL windows OR CORE_SYSTEM_NAME STREQUAL windowsstore)
   list(APPEND SOURCES D3DResource.cpp
                       DirectXGraphics.cpp
                       GUIFontTTFDX.cpp
@@ -208,7 +209,7 @@ endif()
 
 core_add_library(guilib)
 
-if(CORE_SYSTEM_NAME STREQUAL windows)
+if(CORE_SYSTEM_NAME STREQUAL windows OR CORE_SYSTEM_NAME STREQUAL windowsstore)
   set(SHADERS_VERTEX guishader_vert.hlsl)
   set(SHADERS_PIXEL guishader_checkerboard_right.hlsl
                     guishader_checkerboard_left.hlsl
@@ -217,13 +218,16 @@ if(CORE_SYSTEM_NAME STREQUAL windows)
                     guishader_interlaced_right.hlsl
                     guishader_interlaced_left.hlsl
                     guishader_multi_texture_blend.hlsl
+                    guishader_multi_texture_blend_nearest.hlsl
                     guishader_texture.hlsl
+                    guishader_texture_nearest.hlsl
                     guishader_texture_noblend.hlsl)
   foreach(shader ${SHADERS_VERTEX})
     get_filename_component(file ${shader} NAME_WE)
     add_custom_command(OUTPUT ${file}.h
-                       COMMAND ${FXC} /Fh ${file}.h /E VS /T vs_4_0_level_9_1 /Vn ${file} /Qstrip_reflect
-                                      ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
+                       COMMAND windows::FXC
+                       ARGS /Fh ${file}.h /E VS /T vs_4_0_level_9_1 /Vn ${file} /Qstrip_reflect
+                            ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
                        DEPENDS ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
                        COMMENT "FX compile vertex shader ${shader}"
                        VERBATIM)
@@ -232,8 +236,9 @@ if(CORE_SYSTEM_NAME STREQUAL windows)
   foreach(shader ${SHADERS_PIXEL})
     get_filename_component(file ${shader} NAME_WE)
     add_custom_command(OUTPUT ${file}.h
-                       COMMAND ${FXC} /Fh ${file}.h /E PS /T ps_4_0_level_9_1 /Vn ${file} /Qstrip_reflect
-                                      ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
+                       COMMAND windows::FXC
+                       ARGS /Fh ${file}.h /E PS /T ps_4_0_level_9_1 /Vn ${file} /Qstrip_reflect
+                            ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
                        DEPENDS ${CMAKE_SOURCE_DIR}/system/shaders/${shader}
                        COMMENT "FX compile pixel shader ${shader}"
                        VERBATIM)

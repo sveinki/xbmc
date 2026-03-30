@@ -1,30 +1,16 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#ifndef GUILIB_GUICONTROLPROFILER_H__
-#define GUILIB_GUICONTROLPROFILER_H__
 #pragma once
 
-#include <vector>
-
 #include "GUIControl.h"
+
+#include <vector>
 
 class CGUIControlProfiler;
 class TiXmlElement;
@@ -39,10 +25,10 @@ public:
   std::string m_strDescription;
   int m_controlID;
   CGUIControl::GUICONTROLTYPES m_ControlType;
-  unsigned int m_visTime;
-  unsigned int m_renderTime;
-  int64_t m_i64VisStart;
-  int64_t m_i64RenderStart;
+  unsigned int m_visTime = 0;
+  unsigned int m_renderTime = 0;
+  int64_t m_i64VisStart = 0;
+  int64_t m_i64RenderStart = 0;
 
   CGUIControlProfilerItem(CGUIControlProfiler *pProfiler, CGUIControlProfilerItem *pParent, CGUIControl *pControl);
   ~CGUIControlProfilerItem(void);
@@ -53,7 +39,7 @@ public:
   void BeginRender(void);
   void EndRender(void);
   void SaveToXML(TiXmlElement *parent);
-  unsigned int GetTotalTime(void) const { return m_visTime + m_renderTime; };
+  unsigned int GetTotalTime(void) const { return m_visTime + m_renderTime; }
 
   CGUIControlProfilerItem *AddControl(CGUIControl *pControl);
   CGUIControlProfilerItem *FindOrAddControl(CGUIControl *pControl, bool recurse);
@@ -71,19 +57,19 @@ public:
   void EndVisibility(CGUIControl *pControl);
   void BeginRender(CGUIControl *pControl);
   void EndRender(CGUIControl *pControl);
-  int GetMaxFrameCount(void) const { return m_iMaxFrameCount; };
-  void SetMaxFrameCount(int iMaxFrameCount) { m_iMaxFrameCount = iMaxFrameCount; };
-  void SetOutputFile(const std::string &strOutputFile) { m_strOutputFile = strOutputFile; };
-  const std::string &GetOutputFile(void) const { return m_strOutputFile; };
+  int GetMaxFrameCount(void) const { return m_iMaxFrameCount; }
+  void SetMaxFrameCount(int iMaxFrameCount) { m_iMaxFrameCount = iMaxFrameCount; }
+  void SetOutputFile(const std::string& strOutputFile) { m_strOutputFile = strOutputFile; }
+  const std::string& GetOutputFile(void) const { return m_strOutputFile; }
   bool SaveResults(void);
-  unsigned int GetTotalTime(void) const { return m_ItemHead.GetTotalTime(); };
+  unsigned int GetTotalTime(void) const { return m_ItemHead.GetTotalTime(); }
 
   float m_fPerfScale;
 private:
   CGUIControlProfiler(void);
   ~CGUIControlProfiler(void) = default;
-  CGUIControlProfiler(const CGUIControlProfiler &that);
-  CGUIControlProfiler &operator=(const CGUIControlProfiler &that);
+  CGUIControlProfiler(const CGUIControlProfiler &that) = delete;
+  CGUIControlProfiler &operator=(const CGUIControlProfiler &that) = delete;
 
   CGUIControlProfilerItem m_ItemHead;
   CGUIControlProfilerItem *m_pLastItem;
@@ -91,8 +77,8 @@ private:
 
   static bool m_bIsRunning;
   std::string m_strOutputFile;
-  int m_iMaxFrameCount;
-  int m_iFrameCount;
+  int m_iMaxFrameCount = 200;
+  int m_iFrameCount = 0;
 };
 
 #define GUIPROFILER_VISIBILITY_BEGIN(x) { if (CGUIControlProfiler::IsRunning()) CGUIControlProfiler::Instance().BeginVisibility(x); }
@@ -100,4 +86,3 @@ private:
 #define GUIPROFILER_RENDER_BEGIN(x) { if (CGUIControlProfiler::IsRunning()) CGUIControlProfiler::Instance().BeginRender(x); }
 #define GUIPROFILER_RENDER_END(x) { if (CGUIControlProfiler::IsRunning()) CGUIControlProfiler::Instance().EndRender(x); }
 
-#endif

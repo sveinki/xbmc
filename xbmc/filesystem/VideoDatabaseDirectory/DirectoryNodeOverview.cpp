@@ -1,65 +1,56 @@
 /*
- *      Copyright (C) 2016 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DirectoryNodeOverview.h"
 
-#include <utility>
-
 #include "FileItem.h"
+#include "FileItemList.h"
 #include "ServiceBroker.h"
-#include "guilib/LocalizeStrings.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
 #include "video/VideoDatabase.h"
+
+#include <utility>
 
 using namespace XFILE::VIDEODATABASEDIRECTORY;
 
 Node OverviewChildren[] = {
-                            { NODE_TYPE_MOVIES_OVERVIEW,            "movies",                   342 },
-                            { NODE_TYPE_TVSHOWS_OVERVIEW,           "tvshows",                  20343 },
-                            { NODE_TYPE_MUSICVIDEOS_OVERVIEW,       "musicvideos",              20389 },
-                            { NODE_TYPE_RECENTLY_ADDED_MOVIES,      "recentlyaddedmovies",      20386 },
-                            { NODE_TYPE_RECENTLY_ADDED_EPISODES,    "recentlyaddedepisodes",    20387 },
-                            { NODE_TYPE_RECENTLY_ADDED_MUSICVIDEOS, "recentlyaddedmusicvideos", 20390 },
-                            { NODE_TYPE_INPROGRESS_TVSHOWS,         "inprogresstvshows",        626 },
-                          };
+    {NodeType::MOVIES_OVERVIEW, "movies", 342},
+    {NodeType::TVSHOWS_OVERVIEW, "tvshows", 20343},
+    {NodeType::MUSICVIDEOS_OVERVIEW, "musicvideos", 20389},
+    {NodeType::RECENTLY_ADDED_MOVIES, "recentlyaddedmovies", 20386},
+    {NodeType::RECENTLY_ADDED_EPISODES, "recentlyaddedepisodes", 20387},
+    {NodeType::RECENTLY_ADDED_MUSICVIDEOS, "recentlyaddedmusicvideos", 20390},
+    {NodeType::INPROGRESS_TVSHOWS, "inprogresstvshows", 626},
+};
 
 CDirectoryNodeOverview::CDirectoryNodeOverview(const std::string& strName, CDirectoryNode* pParent)
-  : CDirectoryNode(NODE_TYPE_OVERVIEW, strName, pParent)
+  : CDirectoryNode(NodeType::OVERVIEW, strName, pParent)
 {
 
 }
 
-NODE_TYPE CDirectoryNodeOverview::GetChildType() const
+NodeType CDirectoryNodeOverview::GetChildType() const
 {
-  for (unsigned int i = 0; i < sizeof(OverviewChildren) / sizeof(Node); ++i)
-    if (GetName() == OverviewChildren[i].id)
-      return OverviewChildren[i].node;
+  for (const Node& node : OverviewChildren)
+    if (GetName() == node.id)
+      return node.node;
 
-  return NODE_TYPE_NONE;
+  return NodeType::NONE;
 }
 
 std::string CDirectoryNodeOverview::GetLocalizedName() const
 {
-  for (unsigned int i = 0; i < sizeof(OverviewChildren) / sizeof(Node); ++i)
-    if (GetName() == OverviewChildren[i].id)
-      return g_localizeStrings.Get(OverviewChildren[i].label);
+  for (const Node& node : OverviewChildren)
+    if (GetName() == node.id)
+      return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(node.label);
   return "";
 }
 
@@ -67,47 +58,48 @@ bool CDirectoryNodeOverview::GetContent(CFileItemList& items) const
 {
   CVideoDatabase database;
   database.Open();
-  bool hasMovies = database.HasContent(VIDEODB_CONTENT_MOVIES);
-  bool hasTvShows = database.HasContent(VIDEODB_CONTENT_TVSHOWS);
-  bool hasMusicVideos = database.HasContent(VIDEODB_CONTENT_MUSICVIDEOS);
+  bool hasMovies = database.HasContent(VideoDbContentType::MOVIES);
+  bool hasTvShows = database.HasContent(VideoDbContentType::TVSHOWS);
+  bool hasMusicVideos = database.HasContent(VideoDbContentType::MUSICVIDEOS);
   std::vector<std::pair<const char*, int> > vec;
   if (hasMovies)
   {
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
-      vec.push_back(std::make_pair("movies/titles", 342));
+    if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
+      vec.emplace_back("movies/titles", 342);
     else
-      vec.push_back(std::make_pair("movies", 342));   // Movies
+      vec.emplace_back("movies", 342); // Movies
   }
   if (hasTvShows)
   {
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
-      vec.push_back(std::make_pair("tvshows/titles", 20343));
+    if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
+      vec.emplace_back("tvshows/titles", 20343);
     else
-      vec.push_back(std::make_pair("tvshows", 20343)); // TV Shows
+      vec.emplace_back("tvshows", 20343); // TV Shows
   }
   if (hasMusicVideos)
   {
-    if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
-      vec.push_back(std::make_pair("musicvideos/titles", 20389));
+    if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_MYVIDEOS_FLATTEN))
+      vec.emplace_back("musicvideos/titles", 20389);
     else
-      vec.push_back(std::make_pair("musicvideos", 20389)); // Music Videos
+      vec.emplace_back("musicvideos", 20389); // Music Videos
   }
   {
     if (hasMovies)
-      vec.push_back(std::make_pair("recentlyaddedmovies", 20386));  // Recently Added Movies
+      vec.emplace_back("recentlyaddedmovies", 20386); // Recently Added Movies
     if (hasTvShows)
     {
-      vec.push_back(std::make_pair("recentlyaddedepisodes", 20387)); // Recently Added Episodes
-      vec.push_back(std::make_pair("inprogresstvshows", 626)); // InProgress TvShows
+      vec.emplace_back("recentlyaddedepisodes", 20387); // Recently Added Episodes
+      vec.emplace_back("inprogresstvshows", 626); // InProgress TvShows
     }
     if (hasMusicVideos)
-      vec.push_back(std::make_pair("recentlyaddedmusicvideos", 20390)); // Recently Added Music Videos
+      vec.emplace_back("recentlyaddedmusicvideos", 20390); // Recently Added Music Videos
   }
   std::string path = BuildPath();
   for (unsigned int i = 0; i < vec.size(); ++i)
   {
     CFileItemPtr pItem(new CFileItem(path + vec[i].first + "/", true));
-    pItem->SetLabel(g_localizeStrings.Get(vec[i].second));
+    pItem->SetLabel(
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(vec[i].second));
     pItem->SetLabelPreformatted(true);
     pItem->SetCanQueue(false);
     items.Add(pItem);

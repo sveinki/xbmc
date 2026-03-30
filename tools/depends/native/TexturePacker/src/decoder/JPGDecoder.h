@@ -19,17 +19,16 @@
  */
 
 #pragma once
+
 #include "IDecoder.h"
 
 class JPGDecoder : public IDecoder
 {
   public:
+    JPGDecoder();
     ~JPGDecoder() override = default;
     bool CanDecode(const std::string &filename) override;
-    bool LoadFile(const std::string &filename, DecodedFrames &frames) override;
-    void FreeDecodedFrames(DecodedFrames &frames) override;
+    bool LoadFile(const std::string& filename, DecodedFrames& frames) override;
     const char* GetImageFormatName() override { return "JPG"; }
     const char* GetDecoderName() override { return "libjpeg"; }
-  protected:
-    void FillSupportedExtensions() override;
 };

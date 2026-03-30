@@ -1,31 +1,27 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
+
+#include "interfaces/IAnnouncer.h"
+#include "utils/logtypes.h"
+
+#include <map>
+#include <memory>
+#include <string>
 #include <utility>
+
 #include <Platinum/Source/Devices/MediaConnect/PltMediaConnect.h>
 
-#include "FileItem.h"
-#include "interfaces/IAnnouncer.h"
-
-class CVariant;
+class CFileItem;
+class CFileItemList;
 class CThumbLoader;
+class CVariant;
 class PLT_MediaObject;
 class PLT_HttpRequestContext;
 
@@ -39,7 +35,10 @@ class CUPnPServer : public PLT_MediaConnect,
 public:
     CUPnPServer(const char* friendly_name, const char* uuid = NULL, int port = 0);
     ~CUPnPServer() override;
-    void Announce(ANNOUNCEMENT::AnnouncementFlag flag, const char *sender, const char *message, const CVariant &data) override;
+    void Announce(ANNOUNCEMENT::AnnouncementFlag flag,
+                  const std::string& sender,
+                  const std::string& message,
+                  const CVariant& data) override;
 
     // PLT_MediaServer methods
     NPT_Result OnBrowseMetadata(PLT_ActionReference&          action,
@@ -89,7 +88,11 @@ public:
                                     const char*        host,
                                     const char*        file_path);
 
-    void AddSafeResourceUri(PLT_MediaObject* object, const NPT_HttpUrl& rooturi, NPT_List<NPT_IpAddress> ips, const char* file_path, const NPT_String& info)
+    void AddSafeResourceUri(PLT_MediaObject* object,
+                            const NPT_HttpUrl& rooturi,
+                            const NPT_List<NPT_IpAddress>& ips,
+                            const char* file_path,
+                            const NPT_String& info)
     {
         PLT_MediaItemResource res;
         for(NPT_List<NPT_IpAddress>::Iterator ip = ips.GetFirstItem(); ip; ++ip) {
@@ -101,19 +104,20 @@ public:
 
     /* Samsung's devices get subtitles from header in response (for movie file), not from didl.
        It's a way to store subtitle uri generated when building didl, to use later in http response*/
-    NPT_Result AddSubtitleUriForSecResponse(NPT_String movie_md5, NPT_String subtitle_uri);
+    NPT_Result AddSubtitleUriForSecResponse(const NPT_String& movie_md5,
+                                            const NPT_String& subtitle_uri);
 
 
-private:
+  private:
     void OnScanCompleted(int type);
     void UpdateContainer(const std::string& id);
     void PropagateUpdates();
 
-    PLT_MediaObject* Build(CFileItemPtr                  item,
-                           bool                          with_count,
+    PLT_MediaObject* Build(const std::shared_ptr<CFileItem>& item,
+                           bool with_count,
                            const PLT_HttpRequestContext& context,
-                           NPT_Reference<CThumbLoader>&  thumbLoader,
-                           const char*                   parent_id = NULL);
+                           NPT_Reference<CThumbLoader>& thumbLoader,
+                           const char* parent_id = NULL);
     NPT_Result BuildResponse(PLT_ActionReference&          action,
                              CFileItemList&                items,
                              const char*                   filter,
@@ -124,14 +128,17 @@ private:
                              const char*                   parent_id /* = NULL */);
 
     // class methods
-    static bool SortItems(CFileItemList& items, const char* sort_criteria);
     static void DefaultSortItems(CFileItemList& items);
-    static NPT_String GetParentFolder(NPT_String file_path) {
-        int index = file_path.ReverseFind("\\");
-        if (index == -1) return "";
+    static NPT_String GetParentFolder(const NPT_String& file_path)
+    {
+      int index = file_path.ReverseFind("\\");
+      if (index == -1)
+        return "";
 
-        return file_path.Left(index);
+      return file_path.Left(index);
     }
+
+    static int GetRequiredVideoDbDetails(const NPT_String& filter);
 
     NPT_Mutex m_CacheMutex;
 
@@ -140,7 +147,10 @@ private:
 
     std::map<std::string, std::pair<bool, unsigned long> > m_UpdateIDs;
     bool m_scanning;
-public:
+
+    Logger m_logger;
+
+  public:
     // class members
     static NPT_UInt32 m_MaxReturnedItems;
 };

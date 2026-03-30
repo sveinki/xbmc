@@ -1,30 +1,21 @@
 /*
- * Copyright (C) 2000-2008 the xine project
+ *  Copyright (C) 2008-2020 Team Kodi
  *
- * Copyright (C) Christian Vogler
- *               cvogler@gradient.cis.upenn.edu - December 2001
+ *  Copyright (C) 2000-2008 the xine project
  *
- * This file is part of xine, a free video player.
+ *  Copyright (C) Christian Vogler
+ *                cvogler@gradient.cis.upenn.edu - December 2001
  *
- * xine is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ *  This file is part of xine, a free video player.
  *
- * xine is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *  stuff needed to provide closed captioning decoding and display
  *
- * stuff needed to provide closed captioning decoding and display
- *
- * Some small bits and pieces of the EIA-608 captioning decoder were
- * adapted from CCDecoder 0.9.1 by Mike Baker. The latest version is
- * available at http://sourceforge.net/projects/ccdecoder/.
+ *  Some small bits and pieces of the EIA-608 captioning decoder were
+ *  adapted from CCDecoder 0.9.1 by Mike Baker. The latest version is
+ *  available at http://sourceforge.net/projects/ccdecoder/.
  */
 
 #include <stdio.h>
@@ -39,30 +30,248 @@ extern "C" {
 
 #include "cc_decoder.h"
 
-/* colors specified by the EIA 608 standard */
-enum { WHITE, GREEN, BLUE, CYAN, RED, YELLOW, MAGENTA, BLACK };
-
 /* --------------------- misc. EIA 608 definitions -------------------*/
-
-#define TRANSP_SPACE 0x19   /* code for transparent space, essentially 
-			                       arbitrary */
 
 /* mapping from PAC row code to actual CC row */
 static int  rowdata[] = {10, -1, 0, 1, 2, 3, 11, 12, 13, 14, 4, 5, 6, 7, 8, 9};
-/* FIXME: do real TM */
-/* must be mapped as a music note in the captioning font */ 
-
-static unsigned char specialchar[] = {0xAE,0xB0,0xBD,0xBF,0x54,0xA2,0xA3,0xB6,0xA0,
-                                      TRANSP_SPACE,0xA8,0xA2,0xAA,0xAE,0xB4,0xBB};
-
-/* character translation table - EIA 608 codes are not all the same as ASCII */
-static unsigned char chartbl[128];
 
 /* CC codes use odd parity for error detection, since they originally were */
 /* transmitted via noisy video signals */
 static int parity_table[256];
 
 static cc_buffer_t* active_ccbuffer(cc_decoder_t* dec);
+
+/* --------------------- EIA 608 charsets -----------------------------*/
+// for all charsets, CC codes are essentially identical to ASCII apart for a few exceptions
+// see https://en.wikipedia.org/wiki/EIA-608#Characters for reference
+
+enum cc_charset
+{
+  CCSET_BASIC_AMERICAN = 0,
+  CCSET_SPECIAL_AMERICAN,
+  CCSET_EXTENDED_SPANISH_FRENCH_MISC,
+  CCSET_EXTENDED_PORTUGUESE_GERMAN_DANISH
+};
+
+const char* get_char_override(uint8_t charset, uint8_t c)
+{
+  if (charset == CCSET_BASIC_AMERICAN)
+  {
+    switch (c)
+    {
+      case 0x27:
+        return "\u2019";
+      case 0x2a:
+        return "\u00e1";
+      case 0x5c:
+        return "\u00e9";
+      case 0x5e:
+        return "\u00ed";
+      case 0x5f:
+        return "\u00f3";
+      case 0x60:
+        return "\u00fa";
+      case 0x7b:
+        return "\u00e7";
+      case 0x7c:
+        return "\u00f7";
+      case 0x7d:
+        return "\u00d1";
+      case 0x7e:
+        return "\u00f1";
+      case 0x7f:
+        return "\u2588";
+      default:
+        break;
+    }
+  }
+  else if (charset == CCSET_SPECIAL_AMERICAN)
+  {
+    switch (c)
+    {
+      case 0x30:
+        return "\u00ae";
+      case 0x31:
+        return "\u00b0";
+      case 0x32:
+        return "\u00bd";
+      case 0x33:
+        return "\u00bf";
+      case 0x34:
+        return "\u2122";
+      case 0x35:
+        return "\u00a2";
+      case 0x36:
+        return "\u00a3";
+      case 0x37:
+        return "\u266a";
+      case 0x38:
+        return "\u00e0";
+      case 0x39:
+        return "\u00A0";
+      case 0x3a:
+        return "\u00e8";
+      case 0x3b:
+        return "\u00e2";
+      case 0x3c:
+        return "\u00ea";
+      case 0x3d:
+        return "\u00ee";
+      case 0x3e:
+        return "\u00f4";
+      case 0x3f:
+        return "\u00fb";
+      default:
+        break;
+    }
+  }
+  else if (charset == CCSET_EXTENDED_SPANISH_FRENCH_MISC)
+  {
+    switch (c)
+    {
+      case 0x20:
+        return "\u00c1";
+      case 0x21:
+        return "\u00c9";
+      case 0x22:
+        return "\u00d3";
+      case 0x23:
+        return "\u00da";
+      case 0x24:
+        return "\u00dc";
+      case 0x25:
+        return "\u00fc";
+      case 0x26:
+        return "\u00b4";
+      case 0x27:
+        return "\u00a1";
+      case 0x28:
+        return "*";
+      case 0x29:
+        return "\u2018";
+      case 0x2a:
+        return "-";
+      case 0x2b:
+        return "\u00a9";
+      case 0x2c:
+        return "\u2120";
+      case 0x2d:
+        return "\u00b7";
+      case 0x2e:
+        return "\u201c";
+      case 0x2f:
+        return "\u201d";
+      case 0x30:
+        return "\u00c0";
+      case 0x31:
+        return "\u00c2";
+      case 0x32:
+        return "\u00c7";
+      case 0x33:
+        return "\u00c8";
+      case 0x34:
+        return "\u00ca";
+      case 0x35:
+        return "\u00cb";
+      case 0x36:
+        return "\u00eb";
+      case 0x37:
+        return "\u00ce";
+      case 0x38:
+        return "\u00cf";
+      case 0x39:
+        return "\u00ef";
+      case 0x3a:
+        return "\u00d4";
+      case 0x3b:
+        return "\u00d9";
+      case 0x3c:
+        return "\u00f9";
+      case 0x3d:
+        return "\u00db";
+      case 0x3e:
+        return "\u00ab";
+      case 0x3f:
+        return "\u00bb";
+      default:
+        break;
+    }
+  }
+  else if (charset == CCSET_EXTENDED_PORTUGUESE_GERMAN_DANISH)
+  {
+    switch (c)
+    {
+      case 0x20:
+        return "\u00c3";
+      case 0x21:
+        return "\u00e3";
+      case 0x22:
+        return "\u00cd";
+      case 0x23:
+        return "\u00cc";
+      case 0x24:
+        return "\u00ec";
+      case 0x25:
+        return "\u00d2";
+      case 0x26:
+        return "\u00f2";
+      case 0x27:
+        return "\u00d5";
+      case 0x28:
+        return "\u00f5";
+      case 0x29:
+        return "{";
+      case 0x2a:
+        return "}";
+      case 0x2b:
+        return "\\";
+      case 0x2c:
+        return "^";
+      case 0x2d:
+        return "_";
+      case 0x2e:
+        return "|";
+      case 0x2f:
+        return "~";
+      case 0x30:
+        return "\u00c4";
+      case 0x31:
+        return "\u00e4";
+      case 0x32:
+        return "\u00d6";
+      case 0x33:
+        return "\u00f6";
+      case 0x34:
+        return "\u00df";
+      case 0x35:
+        return "\u00a5";
+      case 0x36:
+        return "\u00a4";
+      case 0x37:
+        return "\u00a6";
+      case 0x38:
+        return "\u00c5";
+      case 0x39:
+        return "\u00e5";
+      case 0x3a:
+        return "\u00d8";
+      case 0x3b:
+        return "\u00f8";
+      case 0x3c:
+        return "\u250c";
+      case 0x3d:
+        return "\u2510";
+      case 0x3e:
+        return "\u2514";
+      case 0x3f:
+        return "\u2518";
+      default:
+        break;
+    }
+  }
+  // regular ascii char
+  return NULL;
+}
 
 /*---------------- general utility functions ---------------------*/
 
@@ -98,26 +307,7 @@ static int good_parity(uint16_t data)
   return ret;
 }
 
-static void build_char_table(void)
-{
-  int i;
-  /* first the normal ASCII codes */
-  for (i = 0; i < 128; i++)
-   chartbl[i] = (char) i;
- /* now the special codes */
- chartbl[0x2a] = 0xA1;
- chartbl[0x5c] = 0xA9;
- chartbl[0x5e] = 0xAD;
- chartbl[0x5f] = 0xB3;
- chartbl[0x60] = 0xAA;
- chartbl[0x7b] = 0xA7;
- chartbl[0x7c] = 0xb7;
- chartbl[0x7d] = 0x91;
- chartbl[0x7e] = 0xB1;
- chartbl[0x7f] = 0xA4;    /* FIXME: this should be a solid block */
-}
-
-static void ccbuf_add_char(cc_buffer_t *buf, uint8_t c)
+static void ccbuf_add_char(cc_buffer_t* buf, uint8_t c, uint8_t charset)
 {
   cc_row_t *rowbuf = &buf->rows[buf->rowpos];
   int pos = rowbuf->pos;
@@ -138,6 +328,7 @@ static void ccbuf_add_char(cc_buffer_t *buf, uint8_t c)
   }
 
   rowbuf->cells[pos].c = c;
+  rowbuf->cells[pos].charset = charset;
   rowbuf->cells[pos].midrow_attr = rowbuf->attr_chg;
   rowbuf->pos++;
 
@@ -149,7 +340,7 @@ static void ccbuf_add_char(cc_buffer_t *buf, uint8_t c)
 }
 
 
-static void ccbuf_set_cursor(cc_buffer_t *buf, int row, int column, 
+static void ccbuf_set_cursor(cc_buffer_t *buf, int row, int column,
 			     int underline, int italics, int color)
 {
   cc_row_t *rowbuf = &buf->rows[row];
@@ -163,7 +354,7 @@ static void ccbuf_set_cursor(cc_buffer_t *buf, int row, int column,
   rowbuf->pac_attr = attr;
   rowbuf->pac_attr_chg = 1;
 
-  buf->rowpos = row; 
+  buf->rowpos = row;
   rowbuf->pos = column;
   rowbuf->attr_chg = 0;
 }
@@ -173,11 +364,11 @@ static void ccbuf_apply_attribute(cc_buffer_t *buf, cc_attribute_t *attr)
 {
   cc_row_t *rowbuf = &buf->rows[buf->rowpos];
   int pos = rowbuf->pos;
-  
+
   rowbuf->attr_chg = 1;
   rowbuf->cells[pos].attributes = *attr;
   /* A midrow attribute always counts as a space */
-  ccbuf_add_char(buf, chartbl[(unsigned int) ' ']);
+  ccbuf_add_char(buf, (unsigned int)' ', CCSET_BASIC_AMERICAN);
 }
 
 
@@ -185,7 +376,7 @@ static void ccbuf_tab(cc_buffer_t *buf, int tabsize)
 {
   cc_row_t *rowbuf = &buf->rows[buf->rowpos];
   rowbuf->pos += tabsize;
-  if (rowbuf->pos > CC_COLUMNS) 
+  if (rowbuf->pos > CC_COLUMNS)
   {
     rowbuf->pos = CC_COLUMNS;
     return;
@@ -225,6 +416,41 @@ static void ccmem_exit(cc_memory_t *buf)
 /*FIXME: anything to deallocate?*/
 }
 
+static void cea608_process_style_modifiers(cc_decoder_t* dec)
+{
+  const int channel_no = dec->on_buf->channel_no;
+  const int row_pos = dec->on_buf->channel[channel_no].rowpos;
+  const cc_row_t current_row = dec->on_buf->channel[channel_no].rows[row_pos];
+  // ANSI CTA-608E:
+  // If, when a displayable character is received, it overwrites an existing PAC
+  // or mid-row code, and there are already characters to the right of the new character,
+  // these existing characters shall assume the same attributes as the new character.
+  // This adoption can result in a whole caption row suddenly changing color,
+  // underline, italics, and/or flash attributes.
+  const int cursor_position = current_row.pos;
+  // default style: white, black background, no italic, no underline
+  cc_attribute_t textattr = {0, 0, WHITE, BLACK};
+  for (int pos = cursor_position; pos >= 0 && pos <= CC_COLUMNS; pos--)
+  {
+    const cc_attribute_t ccAttribute = current_row.cells[pos].attributes;
+    if (ccAttribute.italic > 0)
+    {
+      // italics resets color to white
+      textattr.foreground = WHITE;
+      textattr.italic = 1;
+    }
+    if (ccAttribute.underline > 0)
+    {
+      textattr.underline = 1;
+    }
+    if (ccAttribute.foreground > WHITE && ccAttribute.foreground <= BLACK && textattr.italic == 0)
+    {
+      textattr.foreground = ccAttribute.foreground;
+    }
+  }
+  dec->textattr = textattr;
+}
+
 void ccmem_tobuf(cc_decoder_t *dec)
 {
   cc_buffer_t *buf = &dec->on_buf->channel[dec->on_buf->channel_no];
@@ -261,12 +487,40 @@ void ccmem_tobuf(cc_decoder_t *dec)
         if (buf->rows[i].cells[l].c != ' ')
           break;
       for (j = f; j <= l; j++)
-        dec->text[dec->textlen++] = buf->rows[i].cells[j].c;
+      {
+        const char* chbytes =
+            get_char_override(buf->rows[i].cells[j].charset, buf->rows[i].cells[j].c);
+        if (chbytes != NULL)
+        {
+          for (; *chbytes != '\0'; chbytes++)
+          {
+            dec->text[dec->textlen++] = *chbytes;
+          }
+        }
+        else
+        {
+          // ascii char
+          dec->text[dec->textlen++] = (unsigned char)buf->rows[i].cells[j].c;
+        }
+      }
       dec->text[dec->textlen++] = '\n';
     }
   }
-  dec->text[dec->textlen++] = '\n';
-  dec->text[dec->textlen++] = '\0';
+
+  // FIXME: the end-of-string char is often wrong cause unexpected behaviours
+  if (dec->textlen > 0)
+  {
+    if (dec->text[dec->textlen - 1] == '\n' && dec->text[dec->textlen] != '\0')
+    {
+      dec->text[dec->textlen] = '\0';
+    }
+    else if (dec->text[dec->textlen] != '\0')
+    {
+      dec->text[dec->textlen++] = '\n';
+      dec->text[dec->textlen++] = '\0';
+    }
+  }
+  cea608_process_style_modifiers(dec);
   dec->callback(0, dec->userdata);
 }
 
@@ -283,12 +537,21 @@ static cc_buffer_t *active_ccbuffer(cc_decoder_t *dec)
   return &mem->channel[mem->channel_no];
 }
 
+static void cc_hide_displayed(cc_decoder_t* dec)
+{
+  for (int i = 0; i < CC_ROWS * CC_COLUMNS + 1; i++)
+  {
+    dec->text[i] = '\0';
+  }
+  dec->callback(0, dec->userdata);
+}
+
 static void cc_swap_buffers(cc_decoder_t *dec)
 {
   cc_memory_t *temp;
 
   /* hide caption in displayed memory */
-  /* cc_hide_displayed(dec); */
+  cc_hide_displayed(dec);
 
   temp = dec->on_buf;
   dec->on_buf = dec->off_buf;
@@ -323,10 +586,10 @@ static void cc_decode_standard_char(cc_decoder_t *dec, uint8_t c1, uint8_t c2)
 {
   cc_buffer_t *buf = active_ccbuffer(dec);
   /* c1 always is a valid character */
-  ccbuf_add_char(buf, chartbl[c1]);
+  ccbuf_add_char(buf, c1, CCSET_BASIC_AMERICAN);
   /* c2 might not be a printable character, even if c1 was */
   if (c2 & 0x60)
-    ccbuf_add_char(buf, chartbl[c2]);
+    ccbuf_add_char(buf, c2, CCSET_BASIC_AMERICAN);
 }
 
 
@@ -362,25 +625,21 @@ static void cc_decode_PAC(cc_decoder_t *dec, int channel,
   ccbuf_set_cursor(buf, row, column, underline, italics, color);
 }
 
-
-static void cc_decode_ext_attribute(cc_decoder_t *dec, int channel,
-				    uint8_t c1, uint8_t c2)
+static void cc_decode_ext_attribute(cc_decoder_t* dec, int channel)
 {
   cc_set_channel(dec, channel);
 }
 
-static void cc_decode_special_char(cc_decoder_t *dec, int channel,
-				   uint8_t c1, uint8_t c2)
+static void cc_decode_special_char(cc_decoder_t* dec, int channel, uint8_t charset, uint8_t c2)
 {
   cc_buffer_t *buf;
 
   cc_set_channel(dec, channel);
   buf = active_ccbuffer(dec);
-  ccbuf_add_char(buf, specialchar[c2 & 0xf]);
+  ccbuf_add_char(buf, c2, charset);
 }
 
-static void cc_decode_midrow_attr(cc_decoder_t *dec, int channel,
-				  uint8_t c1, uint8_t c2)
+static void cc_decode_midrow_attr(cc_decoder_t* dec, int channel, uint8_t c2)
 {
   cc_buffer_t *buf;
   cc_attribute_t attr;
@@ -404,13 +663,12 @@ static void cc_decode_midrow_attr(cc_decoder_t *dec, int channel,
 }
 
 
-static void cc_decode_misc_control_code(cc_decoder_t *dec, int channel,
-					uint8_t c1, uint8_t c2)
+static void cc_decode_misc_control_code(cc_decoder_t* dec, int channel, uint8_t c2)
 {
   cc_set_channel(dec, channel);
   cc_buffer_t *buf;
 
-  switch (c2) 
+  switch (c2)
   {          /* 0x20 <= c2 <= 0x2f */
   case 0x20:             /* RCL */
     dec->style = CC_POPON;
@@ -458,7 +716,7 @@ static void cc_decode_misc_control_code(cc_decoder_t *dec, int channel,
     break;
 
   case 0x2c:             /* EDM - erase displayed memory */
-    /* cc_hide_displayed(dec); */
+    cc_hide_displayed(dec);
     ccmem_clear(dec->on_buf);
     break;
 
@@ -485,8 +743,7 @@ static void cc_decode_misc_control_code(cc_decoder_t *dec, int channel,
   }
 }
 
-static void cc_decode_tab(cc_decoder_t *dec, int channel,
-			  uint8_t c1, uint8_t c2)
+static void cc_decode_tab(cc_decoder_t* dec, int channel, uint8_t c2)
 {
   cc_buffer_t *buf;
 
@@ -512,8 +769,9 @@ static void cc_decode_EIA608(cc_decoder_t *dec, uint16_t data)
     }
   }
   else if (c1 & 0x10)
-  {                            /* control code or special character */
-                               /* 0x10 <= c1 <= 0x1f */
+  {
+    /* control code or special character */
+    /* 0x10 <= c1 <= 0x1f */
     int channel = (c1 & 0x08) >> 3;
     c1 &= ~0x08;
 
@@ -527,50 +785,70 @@ static void cc_decode_EIA608(cc_decoder_t *dec, uint16_t data)
       }
       else
       {
-	      switch (c1)
+        switch (c1)
         {
-	    	case 0x10:             /* extended background attribute code */
-	        cc_decode_ext_attribute(dec, channel, c1, c2);
-	        break;
+          case 0x10: /* extended background attribute code */
+            cc_decode_ext_attribute(dec, channel);
+            break;
 
-	      case 0x11:             /* attribute or special character */
-          if (dec->style == CC_NOTSET)
-            return;
-	        if ((c2 & 0x30) == 0x30)
-          { /* special char: 0x30 <= c2 <= 0x3f  */
-	          cc_decode_special_char(dec, channel, c1, c2);
+          case 0x11: /* attribute or special character */
+            if (dec->style == CC_NOTSET)
+              return;
+
+            if ((c2 & 0x30) == 0x30)
+            {
+              /* special char: 0x30 <= c2 <= 0x3f  */
+              /*       CCSET_SPECIAL_AMERICAN      */
+              cc_decode_special_char(dec, channel, CCSET_SPECIAL_AMERICAN, c2);
+              if (dec->style == CC_ROLLUP)
+              {
+                ccmem_tobuf(dec);
+              }
+            }
+            else if (c2 & 0x20)
+            {
+              /* midrow attribute: 0x20 <= c2 <= 0x2f */
+              cc_decode_midrow_attr(dec, channel, c2);
+            }
+            break;
+
+          case 0x12: /* CCSET_EXTENDED_SPANISH_FRENCH_MISC */
+            cc_decode_special_char(dec, channel, CCSET_EXTENDED_SPANISH_FRENCH_MISC, c2);
             if (dec->style == CC_ROLLUP)
             {
               ccmem_tobuf(dec);
             }
-	        }
-	        else if (c2 & 0x20)
-          {     /* midrow attribute: 0x20 <= c2 <= 0x2f */
-	          cc_decode_midrow_attr(dec, channel, c1, c2);
-	        }
-	        break;
+            break;
 
-	      case 0x14:             /* possibly miscellaneous control code */
-	        cc_decode_misc_control_code(dec, channel, c1, c2);
-	        break;
+          case 0x13: /* CCSET_EXTENDED_PORTUGUESE_GERMAN_DANISH */
+            cc_decode_special_char(dec, channel, CCSET_EXTENDED_PORTUGUESE_GERMAN_DANISH, c2);
+            if (dec->style == CC_ROLLUP)
+            {
+              ccmem_tobuf(dec);
+            }
+            break;
 
-	      case 0x17:            /* possibly misc. control code TAB offset */
-	                            /* 0x21 <= c2 <= 0x23 */
-	        if (c2 >= 0x21 && c2 <= 0x23)
-          {
-	          cc_decode_tab(dec, channel, c1, c2);
-	        }
-	        break;
-	      }
+          case 0x14: /* possibly miscellaneous control code */
+            cc_decode_misc_control_code(dec, channel, c2);
+            break;
+
+          case 0x17: /* possibly misc. control code TAB offset */
+            /* 0x21 <= c2 <= 0x23 */
+            if (c2 >= 0x21 && c2 <= 0x23)
+            {
+              cc_decode_tab(dec, channel, c2);
+            }
+            break;
+        }
       }
     }
   }
-  
+
   dec->lastcode = data;
 }
 
 
-void decode_cc(cc_decoder_t *dec, uint8_t *buffer, uint32_t buf_len)
+void decode_cc(cc_decoder_t *dec, const uint8_t *buffer, uint32_t buf_len)
 {
   uint32_t i;
   for (i = 0; i<buf_len; i += 3)
@@ -579,7 +857,7 @@ void decode_cc(cc_decoder_t *dec, uint8_t *buffer, uint32_t buf_len)
 
     uint8_t data1 = buffer[i + 1];
     uint8_t data2 = buffer[i + 2];
-    
+
     switch (cc_type)
     {
     case 0:
@@ -588,10 +866,10 @@ void decode_cc(cc_decoder_t *dec, uint8_t *buffer, uint32_t buf_len)
         cc_decode_EIA608(dec, data1 | (data2 << 8));
       }
       break;
-      
+
     case 1:
       break;
-      
+
     default:
       break;
     }
@@ -629,7 +907,6 @@ void cc_decoder_close(cc_decoder_t *dec)
 void cc_decoder_init(void)
 {
   build_parity_table();
-  build_char_table();
 }
 
 #ifdef __cplusplus

@@ -1,33 +1,27 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "windowing/VideoSync.h"
+#pragma once
+
 #include "guilib/DispResource.h"
 #include "threads/Event.h"
+#include "windowing/VideoSync.h"
+
+#include <dxgi1_5.h>
 
 class CVideoSyncD3D : public CVideoSync, IDispResource
 {
 public:
-  CVideoSyncD3D(void *clock) : CVideoSync(clock), m_displayLost(false), m_displayReset(false), m_lastUpdateTime(0) { };
-  bool Setup(PUPDATECLOCK func) override;
+  CVideoSyncD3D(CVideoReferenceClock* clock)
+    : CVideoSync(clock), m_displayLost(false), m_displayReset(false)
+  {
+  }
+  bool Setup() override;
   void Run(CEvent& stopEvent) override;
   void Cleanup() override;
   float GetFps() override;
@@ -40,6 +34,7 @@ private:
   volatile bool m_displayLost;
   volatile bool m_displayReset;
   CEvent m_lostEvent;
-  int64_t m_lastUpdateTime;
+  DXGI_OUTPUT_DESC m_outputDesc{};
+  Microsoft::WRL::ComPtr<IDXGIFactory2> m_factory;
 };
 

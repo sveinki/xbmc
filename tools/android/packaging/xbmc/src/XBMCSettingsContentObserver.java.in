@@ -11,7 +11,7 @@ public class XBMCSettingsContentObserver extends ContentObserver
 {
   native void _onVolumeChanged(int newVolume);
 
-  private static final String TAG = "@APP_NAME_LC@";
+  private static final String TAG = "@APP_NAME@";
 
   int previousVolume;
   Context context;
@@ -31,7 +31,7 @@ public class XBMCSettingsContentObserver extends ContentObserver
   @Override
   public void onChange(boolean selfChange)
   {
-      onChange(selfChange, null);
+    onChange(selfChange, null);
   }
 
   // Implement the onChange(boolean, Uri) method to take advantage of the new Uri argument.
@@ -39,15 +39,15 @@ public class XBMCSettingsContentObserver extends ContentObserver
   {
     super.onChange(selfChange);
 
-    Log.d(TAG, "Setting changed: " + uri.toString());
+    Log.d(TAG, "XBMCSettingsContentObserver: Setting changed: " + uri.toString());
 
     if (
-        uri.compareTo(Uri.parse("content://settings/system/volume_music_speaker")) == 0 ||
-        uri.compareTo(Uri.parse("content://settings/system/volume_music_hdmi")) == 0
-        )
+            uri.compareTo(Uri.parse("content://settings/system/volume_music_speaker")) == 0 ||
+                    uri.compareTo(Uri.parse("content://settings/system/volume_music_hdmi")) == 0
+            )
     {
       AudioManager audio = (AudioManager) context
-          .getSystemService(Context.AUDIO_SERVICE);
+              .getSystemService(Context.AUDIO_SERVICE);
       int currentVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
 
       if (currentVolume != previousVolume)
@@ -59,7 +59,7 @@ public class XBMCSettingsContentObserver extends ContentObserver
         }
         catch (UnsatisfiedLinkError e)
         {
-          Log.e("XBMCSettingsContentObserver", "Native not registered");
+          Log.e(TAG, "XBMCSettingsContentObserver: Native not registered");
         }
       }
     }

@@ -1,28 +1,19 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "InfoLoader.h"
-#include "settings/lib/ISubSettings.h"
+#include "jobs/Job.h"
+#include "settings/ISubSettings.h"
+
 #include <string>
+#include <vector>
 
 #define KB  (1024)          // 1 KiloByte (1KB)   1024 Byte (2^10 Byte)
 #define MB  (1024*KB)       // 1 MegaByte (1MB)   1024 KB (2^10 KB)
@@ -31,6 +22,9 @@
 
 #define MAX_KNOWN_ATTRIBUTES  46
 
+#define REG_CURRENT_VERSION L"Software\\Microsoft\\Windows NT\\CurrentVersion"
+
+class TiXmlNode;
 
 class CSysData
 {
@@ -53,6 +47,11 @@ public:
   std::string cpuFrequency;
   std::string osVersionInfo;
   std::string macAddress;
+  std::string ipAddress;
+  std::string netMask;
+  std::string gatewayAddress;
+  std::string networkLinkState;
+  std::vector<std::string> dnsServers;
   std::string batteryLevel;
 };
 
@@ -67,12 +66,15 @@ public:
   static CSysData::INTERNET_STATE GetInternetState();
 private:
   static bool SystemUpTime(int iInputMinutes, int &iMinutes, int &iHours, int &iDays);
-  static double GetCPUFrequency();
   static std::string GetSystemUpTime(bool bTotalUptime);
-  static std::string GetCPUFreqInfo();
   static std::string GetMACAddress();
+  static std::string GetIPAddress();
+  static std::string GetNetMask();
+  static std::string GetGatewayAddress();
+  static std::string GetNetworkLinkState();
   static std::string GetVideoEncoder();
   static std::string GetBatteryLevel();
+  static std::vector<std::string> GetDNSServers();
 
   CSysData m_info;
 };
@@ -82,13 +84,40 @@ class CSysInfo : public CInfoLoader, public ISubSettings
 public:
   enum WindowsVersion
   {
+    // clang-format off
     WindowsVersionUnknown = -1, // Undetected, unsupported Windows version or OS in not Windows
-    WindowsVersionWin7,         // Windows 7, Windows Server 2008 R2
-    WindowsVersionWin8,         // Windows 8, Windows Server 2012
-    WindowsVersionWin8_1,       // Windows 8.1
-    WindowsVersionWin10,        // windows 10
+    WindowsVersionWin8_1,       // Windows 8.1, Windows Server 2012 R2
+    WindowsVersionWin10,        // Windows 10
+    WindowsVersionWin10_1607,   // Windows 10 1607
+    WindowsVersionWin10_1703,   // Windows 10 1703 - Creators Update
+    WindowsVersionWin10_1709,   // Windows 10 1709 - Fall Creators Update
+    WindowsVersionWin10_1803,   // Windows 10 1803
+    WindowsVersionWin10_1809,   // Windows 10 1809
+    WindowsVersionWin10_1903,   // Windows 10 1903
+    WindowsVersionWin10_1909,   // Windows 10 1909
+    WindowsVersionWin10_2004,   // Windows 10 2004
+    WindowsVersionWin10_20H2,   // Windows 10 20H2
+    WindowsVersionWin10_21H1,   // Windows 10 21H1
+    WindowsVersionWin10_21H2,   // Windows 10 21H2
+    WindowsVersionWin10_22H2,   // Windows 10 22H2
+    WindowsVersionWin10_Future, // Windows 10 future build
+    WindowsVersionWin11_21H2,   // Windows 11 21H2 - Sun Valley
+    WindowsVersionWin11_22H2,   // Windows 11 22H2 - Sun Valley 2
+    WindowsVersionWin11_23H2,   // Windows 11 23H2 - Sun Valley 3
+    WindowsVersionWin11_24H2,   // Windows 11 24H2 - Hudson Valley
+    WindowsVersionWin11_Future, // Windows 11 future build
     /* Insert new Windows versions here, when they'll be known */
     WindowsVersionFuture = 100  // Future Windows version, not known to code
+    // clang-format on
+  };
+  enum WindowsDeviceFamily
+  {
+    Mobile = 1,
+    Desktop = 2,
+    IoT = 3,
+    Xbox = 4,
+    Surface = 5,
+    Other = 100
   };
 
   CSysInfo(void);
@@ -111,23 +140,18 @@ public:
   static std::string GetDeviceName();
   static std::string GetVersion();
   static std::string GetVersionShort();
+  static std::string GetVersionCode();
+  static std::string GetVersionGit();
   static std::string GetBuildDate();
 
   bool HasInternet();
-  bool HasVideoToolBoxDecoder();
   bool IsAeroDisabled();
-  bool HasHW3DInterlaced();
   static bool IsWindowsVersion(WindowsVersion ver);
   static bool IsWindowsVersionAtLeast(WindowsVersion ver);
   static WindowsVersion GetWindowsVersion();
   static int GetKernelBitness(void);
   static int GetXbmcBitness(void);
   static const std::string& GetKernelCpuFamily(void);
-  std::string GetCPUModel();
-  std::string GetCPUBogoMips();
-  std::string GetCPUHardware();
-  std::string GetCPURevision();
-  std::string GetCPUSerial();
   static std::string GetManufacturerName(void);
   static std::string GetModelName(void);
   bool GetDiskSpace(std::string drive,int& iTotal, int& iTotalFree, int& iTotalUsed, int& iPercentFree, int& iPercentUsed);
@@ -144,6 +168,8 @@ public:
 
   static std::string GetUsedCompilerNameAndVer(void);
   std::string GetPrivacyPolicy();
+
+  static WindowsDeviceFamily GetWindowsDeviceFamily();
 
 protected:
   CJob *GetJob() const override;

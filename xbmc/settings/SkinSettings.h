@@ -1,30 +1,20 @@
-#pragma once
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <set>
-#include <string>
+#pragma once
 
 #include "addons/Skin.h"
-#include "settings/lib/ISubSettings.h"
+#include "settings/ISubSettings.h"
 #include "threads/CriticalSection.h"
+
+#include <memory>
+#include <set>
+#include <string>
 
 class TiXmlNode;
 
@@ -37,23 +27,33 @@ public:
   bool Save(TiXmlNode *settings) const override;
   void Clear() override;
 
-  void MigrateSettings(const ADDON::SkinPtr& skin);
+  void MigrateSettings(const std::shared_ptr<ADDON::CSkinInfo>& skin);
 
-  int TranslateString(const std::string &setting);
+  int TranslateString(const std::string& setting) const;
   const std::string& GetString(int setting) const;
-  void SetString(int setting, const std::string &label);
+  void SetString(int setting, const std::string& label) const;
 
-  int TranslateBool(const std::string &setting);
+  int TranslateBool(const std::string& setting) const;
   bool GetBool(int setting) const;
-  void SetBool(int setting, bool set);
+  void SetBool(int setting, bool set) const;
 
-  void Reset(const std::string &setting);
-  void Reset();
+  /*! \brief Get the skin setting value as an integer value
+   * \param setting - the setting id
+   * \return the setting value as an integer, -1 if no conversion is possible
+   */
+  int GetInt(int setting) const;
+
+  std::set<ADDON::CSkinSettingPtr> GetSettings() const;
+  ADDON::CSkinSettingPtr GetSetting(const std::string& settingId);
+  std::shared_ptr<const ADDON::CSkinSetting> GetSetting(const std::string& settingId) const;
+
+  void Reset(const std::string& setting) const;
+  void Reset() const;
 
 protected:
   CSkinSettings();
-  CSkinSettings(const CSkinSettings&);
-  CSkinSettings& operator=(CSkinSettings const&);
+  CSkinSettings(const CSkinSettings&) = delete;
+  CSkinSettings& operator=(CSkinSettings const&) = delete;
   ~CSkinSettings() override;
 
 private:

@@ -1,47 +1,46 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
-
-# lib name, version
-LIBNAME=libmicrohttpd
-VERSION=0.9.55
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.gz
+include ../../Makefile.include LIBMICROHTTPD-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile LIBMICROHTTPD-VERSION ../../download-files.include \
+                                  01-win-cmake.patch
 
 # configuration settings
 CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
-          ./configure --prefix=$(PREFIX) --disable-shared \
-            --disable-doc --disable-examples --disable-curl \
-            --disable-spdy
+          ./configure --prefix=$(PREFIX) \
+                      --disable-shared \
+                      --disable-doc \
+                      --disable-examples \
+                      --disable-curl \
+                      --enable-https
 
-# internal memmem sym collides with internal gnutils memmem
-# when built on 10.6.8, strip it.
-ifeq ($(OS), osx)
-STRIP_MEMMEM=-$(AR) d $(PLATFORM)/src/daemon/.libs/libmicrohttpd.a memmem.o
+ifeq ($(DEBUG_BUILD), yes)
+  CONFIGURE+= --enable-asserts
 endif
 
+ifeq ($(findstring apple-darwin, $(HOST)), apple-darwin)
+  # blanket disable timespec_get use for apple platforms. timespec_get was introduced in
+  # __API_AVAILABLE(macosx(10.15), ios(13.0), tvos(13.0), watchos(6.0)) but older platforms
+  # are failing to run.
+  CONFIGURE+= mhd_cv_func_timespec_get=no
+endif
 
-LIBDYLIB=$(PLATFORM)/src/daemon/.libs/$(LIBNAME).a
+LIBDYLIB=$(PLATFORM)/src/microhttpd/.libs/$(LIBNAME).a
 
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
+export PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig
 
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM)/*; mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	cd $(PLATFORM); $(CONFIGURE)
+ifeq ($(OS),windows)
+	cd $(PLATFORM); patch -p1 -i ../01-win-cmake.patch
+endif
 
 $(LIBDYLIB): $(PLATFORM)
-	$(MAKE) -C $(PLATFORM)/src/microhttpd
-	$(MAKE) -C $(PLATFORM)/src/include install
-	$(STRIP_MEMMEM)
+	cd $(PLATFORM); $(CONFIGURE)
+	$(MAKE) -C $(PLATFORM)
 
 .installed-$(PLATFORM): $(LIBDYLIB)
-	rm -f $(PREFIX)/lib/libmicrohttpd.so $(PREFIX)/lib/libmicrohttpd.so.5 $(PREFIX)/lib/libmicrohttpd.so.5.2.1
-	$(MAKE) -C $(PLATFORM)/src/microhttpd install
+	$(MAKE) -C $(PLATFORM) install
 	touch $@
 
 clean:
@@ -50,4 +49,3 @@ clean:
 
 distclean::
 	rm -rf $(PLATFORM) .installed-$(PLATFORM)
-

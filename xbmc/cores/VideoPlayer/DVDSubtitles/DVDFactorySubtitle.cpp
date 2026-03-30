@@ -1,38 +1,35 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDFactorySubtitle.h"
 
-#include "DVDSubtitleStream.h"
-#include "DVDSubtitleParserSubrip.h"
-#include "DVDSubtitleParserMicroDVD.h"
 #include "DVDSubtitleParserMPL2.h"
-#include "DVDSubtitleParserSami.h"
+#include "DVDSubtitleParserMicroDVD.h"
 #include "DVDSubtitleParserSSA.h"
+#include "DVDSubtitleParserSami.h"
+#include "DVDSubtitleParserSubrip.h"
 #include "DVDSubtitleParserVplayer.h"
+#include "DVDSubtitleStream.h"
+#include "SubtitleParserWebVTT.h"
+#include "utils/StringUtils.h"
 
+#include <cstring>
 #include <memory>
+#include <regex>
+
+namespace
+{
+constexpr const char* ASS_SCRIPT_TYPE_RE = "^ScriptType:\\s*v4\\.00\\+?";
+}
 
 CDVDSubtitleParser* CDVDFactorySubtitle::CreateParser(std::string& strFile)
 {
-  char line[1024];
+  std::string line;
   int i;
 
   std::unique_ptr<CDVDSubtitleStream> pStream(new CDVDSubtitleStream());
@@ -41,34 +38,44 @@ CDVDSubtitleParser* CDVDFactorySubtitle::CreateParser(std::string& strFile)
     return nullptr;
   }
 
+  const std::regex reAssScriptType{ASS_SCRIPT_TYPE_RE};
+
   for (int t = 0; t < 256; t++)
   {
-    if (pStream->ReadLine(line, sizeof(line)))
+    if (pStream->ReadLine(line))
     {
-      if ((sscanf (line, "{%d}{}", &i)==1) ||
-          (sscanf (line, "{%d}{%d}", &i, &i)==2))
+      if ((sscanf(line.c_str(), "{%d}{}", &i) == 1) ||
+          (sscanf(line.c_str(), "{%d}{%d}", &i, &i) == 2))
       {
-        return new CDVDSubtitleParserMicroDVD(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserMicroDVD(std::move(pStream), strFile);
       }
-      else if (sscanf(line, "[%d][%d]", &i, &i) == 2)
+      else if (sscanf(line.c_str(), "[%d][%d]", &i, &i) == 2)
       {
-        return new CDVDSubtitleParserMPL2(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserMPL2(std::move(pStream), strFile);
       }
-      else if (sscanf(line, "%d:%d:%d%*c%d --> %d:%d:%d%*c%d", &i, &i, &i, &i, &i, &i, &i, &i) == 8)
+      else if (sscanf(line.c_str(), "%d:%d:%d%*c%d --> %d:%d:%d%*c%d", &i, &i, &i, &i, &i, &i, &i,
+                      &i) == 8)
       {
-        return new CDVDSubtitleParserSubrip(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserSubrip(std::move(pStream), strFile);
       }
-      else if (sscanf(line, "%d:%d:%d:", &i, &i, &i) == 3)
+      else if (sscanf(line.c_str(), "%d:%d:%d:", &i, &i, &i) == 3)
       {
-        return new CDVDSubtitleParserVplayer(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserVplayer(std::move(pStream), strFile);
       }
-      else if ((!memcmp(line, "Dialogue: Marked", 16)) || (!memcmp(line, "Dialogue: ", 10)))
+      else if (!StringUtils::CompareNoCase(line, "!: This is a Sub Station Alpha v", 32) ||
+               std::regex_match(line, reAssScriptType) ||
+               !StringUtils::CompareNoCase(line, "[Events]", 8) ||
+               !StringUtils::CompareNoCase(line, "Dialogue:", 9))
       {
-        return new CDVDSubtitleParserSSA(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserSSA(std::move(pStream), strFile);
       }
-      else if (strstr (line, "<SAMI>"))
+      else if (line == "<SAMI>")
       {
-        return new CDVDSubtitleParserSami(std::move(pStream), strFile.c_str());
+        return new CDVDSubtitleParserSami(std::move(pStream), strFile);
+      }
+      else if (!StringUtils::CompareNoCase(line, "WEBVTT", 6))
+      {
+        return new CSubtitleParserWebVTT(std::move(pStream), strFile);
       }
     }
     else

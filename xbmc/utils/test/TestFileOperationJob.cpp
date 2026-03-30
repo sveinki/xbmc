@@ -1,31 +1,18 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "utils/FileOperationJob.h"
-#include "filesystem/File.h"
 #include "filesystem/Directory.h"
+#include "filesystem/File.h"
+#include "test/TestUtils.h"
+#include "utils/FileOperationJob.h"
 #include "utils/URIUtils.h"
 
-#include "test/TestUtils.h"
-
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
 TEST(TestFileOperationJob, ActionCopy)
 {
@@ -40,7 +27,7 @@ TEST(TestFileOperationJob, ActionCopy)
 
   CFileItemPtr item(new CFileItem(tmpfilepath));
   item->SetPath(tmpfilepath);
-  item->m_bIsFolder = false;
+  item->SetFolder(false);
   item->Select(true);
   items.Add(item);
 
@@ -74,7 +61,7 @@ TEST(TestFileOperationJob, ActionMove)
 
   CFileItemPtr item(new CFileItem(tmpfilepath));
   item->SetPath(tmpfilepath);
-  item->m_bIsFolder = false;
+  item->SetFolder(false);
   item->Select(true);
   items.Add(item);
 
@@ -93,6 +80,8 @@ TEST(TestFileOperationJob, ActionMove)
 
   EXPECT_TRUE(XFILE::CFile::Delete(destfile));
   EXPECT_TRUE(XFILE::CDirectory::Remove(destpath));
+
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(tmpfile));
 }
 
 TEST(TestFileOperationJob, ActionDelete)
@@ -108,7 +97,7 @@ TEST(TestFileOperationJob, ActionDelete)
 
   CFileItemPtr item(new CFileItem(tmpfilepath));
   item->SetPath(tmpfilepath);
-  item->m_bIsFolder = false;
+  item->SetFolder(false);
   item->Select(true);
   items.Add(item);
 
@@ -133,7 +122,7 @@ TEST(TestFileOperationJob, ActionDelete)
   items.Clear();
   CFileItemPtr item2(new CFileItem(destfile));
   item2->SetPath(destfile);
-  item2->m_bIsFolder = false;
+  item2->SetFolder(false);
   item2->Select(true);
   items.Add(item2);
 
@@ -143,6 +132,8 @@ TEST(TestFileOperationJob, ActionDelete)
   EXPECT_TRUE(job.DoWork());
   EXPECT_FALSE(XFILE::CFile::Exists(destfile));
   EXPECT_TRUE(XFILE::CDirectory::Remove(destpath));
+
+  EXPECT_FALSE(XBMC_DELETETEMPFILE(tmpfile));
 }
 
 TEST(TestFileOperationJob, ActionReplace)
@@ -158,7 +149,7 @@ TEST(TestFileOperationJob, ActionReplace)
 
   CFileItemPtr item(new CFileItem(tmpfilepath));
   item->SetPath(tmpfilepath);
-  item->m_bIsFolder = false;
+  item->SetFolder(false);
   item->Select(true);
   items.Add(item);
 
@@ -206,7 +197,7 @@ TEST(TestFileOperationJob, ActionCreateFolder)
 
   CFileItemPtr item(new CFileItem(destpath));
   item->SetPath(destpath);
-  item->m_bIsFolder = true;
+  item->SetFolder(true);
   item->Select(true);
   items.Add(item);
 
@@ -242,7 +233,7 @@ TEST(TestFileOperationJob, ActionDeleteFolder)
 
   CFileItemPtr item(new CFileItem(destpath));
   item->SetPath(destpath);
-  item->m_bIsFolder = true;
+  item->SetFolder(true);
   item->Select(true);
   items.Add(item);
 
@@ -274,7 +265,7 @@ TEST(TestFileOperationJob, GetFunctions)
 
   CFileItemPtr item(new CFileItem(tmpfilepath));
   item->SetPath(tmpfilepath);
-  item->m_bIsFolder = false;
+  item->SetFolder(false);
   item->Select(true);
   items.Add(item);
 

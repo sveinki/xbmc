@@ -1,47 +1,32 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "IStorageProvider.h"
+#include "MediaSource.h" // for std::vector<CMediaSource>
+#include "jobs/IJobCallback.h"
+#include "storage/discs/IDiscDriveHandler.h"
+#include "threads/CriticalSection.h"
+#include "utils/DiscsUtils.h"
+
 #include <map>
+#include <memory>
 #include <vector>
 
-#include "MediaSource.h" // for VECSOURCES
-#include "utils/Job.h"
-#include "IStorageProvider.h"
-#include "threads/CriticalSection.h"
+#include "PlatformDefs.h"
 
-#define TRAY_OPEN     16
-#define TRAY_CLOSED_NO_MEDIA  64
-#define TRAY_CLOSED_MEDIA_PRESENT 96
-
-#define DRIVE_OPEN      0 // Open...
-#define DRIVE_NOT_READY     1 // Opening.. Closing...
-#define DRIVE_READY      2
-#define DRIVE_CLOSED_NO_MEDIA   3 // CLOSED...but no media in drive
-#define DRIVE_CLOSED_MEDIA_PRESENT  4 // Will be send once when the drive just have closed
-#define DRIVE_NONE  5 // system doesn't have an optical drive
+class CFileItem;
 
 class CNetworkLocation
 {
 public:
-  CNetworkLocation() { id = 0; };
+  CNetworkLocation() { id = 0; }
   int id;
   std::string path;
 };
@@ -49,17 +34,24 @@ public:
 class CMediaManager : public IStorageEventsCallback, public IJobCallback
 {
 public:
+  enum class HasBlurayPlaylist : uint8_t
+  {
+    YES,
+    NO,
+    UNKNOWN
+  };
+
   CMediaManager();
 
   void Initialize();
   void Stop();
 
-  bool LoadSources();
+  void LoadSources();
   bool SaveSources();
 
-  void GetLocalDrives(VECSOURCES &localDrives, bool includeQ = true);
-  void GetRemovableDrives(VECSOURCES &removableDrives);
-  void GetNetworkLocations(VECSOURCES &locations, bool autolocations = true);
+  void GetLocalDrives(std::vector<CMediaSource>& localDrives, bool includeQ = true);
+  void GetRemovableDrives(std::vector<CMediaSource>& removableDrives);
+  void GetNetworkLocations(std::vector<CMediaSource>& locations, bool autolocations = true);
 
   bool AddNetworkLocation(const std::string &path);
   bool HasLocation(const std::string& path) const;
@@ -72,12 +64,27 @@ public:
   bool IsAudio(const std::string& devicePath="");
   bool HasOpticalDrive();
   std::string TranslateDevicePath(const std::string& devicePath, bool bReturnAsDevice=false);
-  DWORD GetDriveStatus(const std::string& devicePath="");
-#ifdef HAS_DVD_DRIVE
+  DriveState GetDriveStatus(const std::string& devicePath = "");
+#ifdef HAS_OPTICAL_DRIVE
   MEDIA_DETECT::CCdInfo* GetCdInfo(const std::string& devicePath="");
   bool RemoveCdInfo(const std::string& devicePath="");
   std::string GetDiskLabel(const std::string& devicePath="");
   std::string GetDiskUniqueId(const std::string& devicePath="");
+  bool HasMediaBlurayPlaylist(const std::string& devicePath = "");
+
+  /*! \brief Reset flag for removable bluray playlist status
+   * This is needed as HasMediaBlurayPlaylist() is called every screen refresh when
+   * the disc node is highlighted.
+   * It needs to be reset whenever a disc is ejected or played (as a playlist may have been selected).
+  */
+  void ResetBlurayPlaylistStatus();
+
+  /*! \brief Gets the platform disc drive handler
+  * @todo this likely doesn't belong here but in some discsupport component owned by media manager
+  * let's keep it here for now
+  * \return The platform disc drive handler
+  */
+  std::shared_ptr<IDiscDriveHandler> GetDiscDriveHandler();
 #endif
   std::string GetDiscPath();
   void SetHasOpticalDrive(bool bstatus);
@@ -91,38 +98,69 @@ public:
 
   std::vector<std::string> GetDiskUsage();
 
-  void OnStorageAdded(const std::string &label, const std::string &path) override;
-  void OnStorageSafelyRemoved(const std::string &label) override;
-  void OnStorageUnsafelyRemoved(const std::string &label) override;
+  /*! \brief Callback executed when a new storage device is added
+    * \sa IStorageEventsCallback
+    * @param device the storage device
+  */
+  void OnStorageAdded(const MEDIA_DETECT::STORAGE::StorageDevice& device) override;
+
+  /*! \brief Callback executed when a new storage device is safely removed
+    * \sa IStorageEventsCallback
+    * @param device the storage device
+  */
+  void OnStorageSafelyRemoved(const MEDIA_DETECT::STORAGE::StorageDevice& device) override;
+
+  /*! \brief Callback executed when a new storage device is unsafely removed
+    * \sa IStorageEventsCallback
+    * @param device the storage device
+  */
+  void OnStorageUnsafelyRemoved(const MEDIA_DETECT::STORAGE::StorageDevice& device) override;
 
   void OnJobComplete(unsigned int jobID, bool success, CJob *job) override { }
+
+  bool playStubFile(const CFileItem& item);
+
+  UTILS::DISCS::DiscInfo GetDiscInfo(const std::string& mediaPath);
+
 protected:
   std::vector<CNetworkLocation> m_locations;
 
   CCriticalSection m_muAutoSource, m_CritSecStorageProvider;
-#ifdef HAS_DVD_DRIVE
+#ifdef HAS_OPTICAL_DRIVE
   std::map<std::string,MEDIA_DETECT::CCdInfo*> m_mapCdInfo;
 #endif
   bool m_bhasoptical;
   std::string m_strFirstAvailDrive;
 
 private:
-  IStorageProvider *m_platformStorage;
-  
-  struct DiscInfo
-  {
-    std::string name;
-    std::string serial;
-    std::string type;
+  /*! \brief Loads the addon sources for the different supported browsable addon types
+   */
+  void LoadAddonSources() const;
 
-    bool empty()
-    {
-      return (name.empty() && serial.empty());
-    }
-  };
+  /*! \brief Get the addons root source for the given content type
+   \param type the type of addon content desired
+   \return the given CMediaSource for the addon root directory
+   */
+  CMediaSource GetRootAddonTypeSource(const std::string& type) const;
 
-  DiscInfo GetDiscInfo(const std::string& mediaPath);
+  /*! \brief Generate the addons source for the given content type
+   \param type the type of addon content desired
+   \param label the name of the addons source
+   \param thumb image to use as the icon
+   \return the given CMediaSource for the addon root directory
+   */
+  CMediaSource ComputeRootAddonTypeSource(const std::string& type,
+                                          const std::string& label,
+                                          const std::string& thumb) const;
+
+  std::unique_ptr<IStorageProvider> m_platformStorage;
+#ifdef HAS_OPTICAL_DRIVE
+  std::shared_ptr<IDiscDriveHandler> m_platformDiscDriveHander;
+#endif
+
+  void RemoveDiscInfo(const std::string& devicePath);
+  std::map<std::string, UTILS::DISCS::DiscInfo> m_mapDiscInfo;
+#ifdef HAVE_LIBBLURAY
+  HasBlurayPlaylist m_hasBlurayPlaylist{HasBlurayPlaylist::UNKNOWN};
+#endif
 };
-
-extern class CMediaManager g_mediaManager;
-

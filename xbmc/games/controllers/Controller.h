@@ -1,27 +1,16 @@
 /*
- *      Copyright (C) 2015-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
-#include "ControllerFeature.h"
 #include "ControllerTypes.h"
 #include "addons/Addon.h"
+#include "games/controllers/input/PhysicalFeature.h"
 #include "input/joysticks/JoystickTypes.h"
 
 #include <map>
@@ -34,26 +23,40 @@ namespace KODI
 namespace GAME
 {
 class CControllerLayout;
+class CPhysicalTopology;
 
 using JOYSTICK::FEATURE_TYPE;
 
+/*!
+ * \ingroup games
+ */
 class CController : public ADDON::CAddon
 {
 public:
-  static std::unique_ptr<CController> FromExtension(ADDON::CAddonInfo addonInfo, const cp_extension_t* ext);
+  explicit CController(const ADDON::AddonInfoPtr& addonInfo);
 
-  CController(ADDON::CAddonInfo addonInfo);
-
-  virtual ~CController();
+  ~CController() override;
 
   static const ControllerPtr EmptyPtr;
+
+  // Implementation of IAddon
+  bool CanHaveAddonOrInstanceSettings() override { return true; }
 
   /*!
    * \brief Get all controller features
    *
    * \return The features
    */
-  const std::vector<CControllerFeature>& Features(void) const { return m_features; }
+  const std::vector<CPhysicalFeature>& Features(void) const { return m_features; }
+
+  /*!
+   * \brief Get a feature by its name
+   *
+   * \param name The feature name
+   *
+   * \return The feature, or a feature of type FEATURE_TYPE::UNKNOWN if the name is invalid
+   */
+  const CPhysicalFeature& GetFeature(const std::string& name) const;
 
   /*!
    * \brief Get the count of controller features matching the specified types
@@ -71,7 +74,8 @@ public:
    *
    * \param type The feature type, or FEATURE_TYPE::UNKNOWN to get all features
    */
-  void GetFeatures(std::vector<std::string>& features, FEATURE_TYPE type = FEATURE_TYPE::UNKNOWN) const;
+  void GetFeatures(std::vector<std::string>& features,
+                   FEATURE_TYPE type = FEATURE_TYPE::UNKNOWN) const;
 
   /*!
    * \brief Get the type of the specified feature
@@ -80,7 +84,7 @@ public:
    *
    * \return The feature type, or FEATURE_TYPE::UNKNOWN if an invalid feature was specified
    */
-  FEATURE_TYPE FeatureType(const std::string &feature) const;
+  FEATURE_TYPE FeatureType(const std::string& feature) const;
 
   /*!
    * \brief Get the input type of the specified feature
@@ -99,36 +103,24 @@ public:
   bool LoadLayout(void);
 
   /*!
-   * \brief Get the primary layout
-   *
-   * \return The layout of the primary controller model
+   * \brief Get the controller layout
    */
   const CControllerLayout& Layout(void) const { return *m_layout; }
 
   /*!
-   * \brief Get the models defined by this controller
+   * \brief Get the controller's physical topology
    *
-   * \return The models, or empty if no models are defined
+   * This defines how controllers physically connect to each other.
+   *
+   * \return The physical topology of the controller
    */
-  std::vector<std::string> Models() const;
-
-  /*!
-   * \brief Get the layout for the specified model
-   *
-   * \param model The model name
-   *
-   * \return The model layout, or the primary layout if the model name is invalid
-   */
-  const CControllerLayout& GetModel(const std::string& model) const;
+  const CPhysicalTopology& Topology() const;
 
 private:
-  void LoadModels(const std::string &modelXmlPath);
-
   std::unique_ptr<CControllerLayout> m_layout;
-  std::map<std::string, std::unique_ptr<CControllerLayout>> m_models;
-  std::vector<CControllerFeature> m_features;
+  std::vector<CPhysicalFeature> m_features;
   bool m_bLoaded = false;
 };
 
-}
-}
+} // namespace GAME
+} // namespace KODI

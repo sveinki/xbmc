@@ -1,47 +1,38 @@
 /*
- *      Copyright (C) 2007-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2007-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-
-#if defined(TARGET_ANDROID)
 
 #include "RendererMediaCodecSurface.h"
 
 #include "../RenderCapture.h"
-#include "guilib/GraphicContext.h"
+#include "../RenderFactory.h"
+#include "../RenderFlags.h"
+#include "DVDCodecs/Video/DVDVideoCodecAndroidMediaCodec.h"
+#include "ServiceBroker.h"
 #include "rendering/RenderSystem.h"
 #include "settings/MediaSettings.h"
-#include "platform/android/activity/XBMCApp.h"
-#include "DVDCodecs/Video/DVDVideoCodecAndroidMediaCodec.h"
+#include "utils/TimeUtils.h"
 #include "utils/log.h"
-#include "../RenderFactory.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
 
-#include <thread>
+#include "platform/android/activity/XBMCApp.h"
+
 #include <chrono>
+#include <thread>
 
 CRendererMediaCodecSurface::CRendererMediaCodecSurface()
- : m_bConfigured(false)
 {
-  CLog::Log(LOGNOTICE, "Instancing CRendererMediaCodecSurface");
+  CLog::Log(LOGINFO, "Instancing CRendererMediaCodecSurface");
 }
 
 CRendererMediaCodecSurface::~CRendererMediaCodecSurface()
 {
+  Reset();
 }
 
 CBaseRenderer* CRendererMediaCodecSurface::Create(CVideoBuffer *buffer)
@@ -57,22 +48,34 @@ bool CRendererMediaCodecSurface::Register()
   return true;
 }
 
-bool CRendererMediaCodecSurface::Configure(const VideoPicture &picture, float fps, unsigned flags, unsigned int orientation)
+bool CRendererMediaCodecSurface::Configure(const VideoPicture &picture, float fps, unsigned int orientation)
 {
-  CLog::Log(LOGNOTICE, "CRendererMediaCodecSurface::Configure");
+  CLog::Log(LOGINFO, "CRendererMediaCodecSurface::Configure");
 
   m_sourceWidth = picture.iWidth;
   m_sourceHeight = picture.iHeight;
   m_renderOrientation = orientation;
 
-  // Save the flags.
-  m_iFlags = flags;
+  m_iFlags = GetFlagsChromaPosition(picture.chroma_position) |
+             GetFlagsColorMatrix(picture.color_space, picture.iWidth, picture.iHeight) |
+             GetFlagsColorPrimaries(picture.color_primaries) |
+             GetFlagsStereoMode(picture.stereoMode);
 
   // Calculate the input frame aspect ratio.
   CalculateFrameAspectRatio(picture.iDisplayWidth, picture.iDisplayHeight);
-  SetViewMode(CMediaSettings::GetInstance().GetCurrentVideoSettings().m_ViewMode);
+  SetViewMode(m_videoSettings.m_ViewMode);
 
-  m_bConfigured = true;
+  // Configure GUI/OSD for HDR PQ when display is in HDR PQ mode
+  if (picture.color_transfer == AVCOL_TRC_SMPTE2084)
+  {
+    if (CServiceBroker::GetWinSystem()->IsHDRDisplay())
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetTransferPQ(true);
+  }
+  else if (picture.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
+  {
+    if (CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities().SupportsDolbyVision())
+      CServiceBroker::GetWinSystem()->GetGfxContext().SetTransferPQ(true);
+  }
 
   return true;
 }
@@ -80,40 +83,57 @@ bool CRendererMediaCodecSurface::Configure(const VideoPicture &picture, float fp
 CRenderInfo CRendererMediaCodecSurface::GetRenderInfo()
 {
   CRenderInfo info;
-  info.max_buffer_size = info.optimal_buffer_size = 4;
+  info.max_buffer_size = 4;
   return info;
 }
 
-bool CRendererMediaCodecSurface::RenderCapture(CRenderCapture* capture)
+bool CRendererMediaCodecSurface::RenderCapture(int index, CRenderCapture* capture)
 {
   capture->BeginRender();
   capture->EndRender();
   return true;
 }
 
-void CRendererMediaCodecSurface::AddVideoPicture(const VideoPicture &picture, int index, double currentClock)
+void CRendererMediaCodecSurface::AddVideoPicture(const VideoPicture &picture, int index)
 {
-  int64_t nanodiff(static_cast<int64_t>((picture.pts - currentClock) * 1000));
+  ReleaseBuffer(index);
 
-  if (dynamic_cast<CMediaCodecVideoBuffer*>(picture.videoBuffer))
-    dynamic_cast<CMediaCodecVideoBuffer*>(picture.videoBuffer)->RenderUpdate(m_surfDestRect,
-      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() + nanodiff);
+  BUFFER &buf(m_buffers[index]);
+  if (picture.videoBuffer)
+  {
+    buf.videoBuffer = picture.videoBuffer;
+    buf.videoBuffer->Acquire();
+  }
+}
+
+void CRendererMediaCodecSurface::ReleaseVideoBuffer(int idx, bool render)
+{
+  BUFFER &buf(m_buffers[idx]);
+  if (buf.videoBuffer)
+  {
+    CMediaCodecVideoBuffer *mcvb(dynamic_cast<CMediaCodecVideoBuffer*>(buf.videoBuffer));
+    if (mcvb)
+    {
+      if (render && m_bConfigured)
+        mcvb->RenderUpdate(m_surfDestRect, CXBMCApp::Get().GetNextFrameTime());
+      else
+        mcvb->ReleaseOutputBuffer(render, 0);
+    }
+    buf.videoBuffer->Release();
+    buf.videoBuffer = nullptr;
+  }
 }
 
 void CRendererMediaCodecSurface::ReleaseBuffer(int idx)
 {
+  ReleaseVideoBuffer(idx, false);
 }
 
-void CRendererMediaCodecSurface::FlipPage(int source)
+bool CRendererMediaCodecSurface::Supports(ERENDERFEATURE feature) const
 {
-}
-
-bool CRendererMediaCodecSurface::Supports(ERENDERFEATURE feature)
-{
-  if (feature == RENDERFEATURE_ZOOM ||
-    feature == RENDERFEATURE_STRETCH ||
-    feature == RENDERFEATURE_PIXEL_RATIO ||
-    feature == RENDERFEATURE_ROTATION)
+  if (feature == RENDERFEATURE_ZOOM || feature == RENDERFEATURE_STRETCH ||
+      feature == RENDERFEATURE_PIXEL_RATIO || feature == RENDERFEATURE_VERTICAL_SHIFT ||
+      feature == RENDERFEATURE_ROTATION)
     return true;
 
   return false;
@@ -121,41 +141,56 @@ bool CRendererMediaCodecSurface::Supports(ERENDERFEATURE feature)
 
 void CRendererMediaCodecSurface::Reset()
 {
+  for (int i = 0 ; i < 4 ; ++i)
+    ReleaseVideoBuffer(i, false);
+  m_lastIndex = -1;
+
+  CServiceBroker::GetWinSystem()->GetGfxContext().SetTransferPQ(false);
 }
 
-void CRendererMediaCodecSurface::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
+void CRendererMediaCodecSurface::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
 {
-  CXBMCApp::get()->WaitVSync(100);
+  m_bConfigured = true;
+
+  // this hack is needed to get the 2D mode of a 3D movie going
+  RenderStereoMode stereo_mode = CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoMode();
+  if (stereo_mode != RenderStereoMode::OFF)
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetStereoView(RenderStereoView::LEFT);
+
   ManageRenderArea();
+
+  if (stereo_mode != RenderStereoMode::OFF)
+    CServiceBroker::GetWinSystem()->GetGfxContext().SetStereoView(RenderStereoView::OFF);
+
+  m_surfDestRect = m_destRect;
+  switch (stereo_mode)
+  {
+    case RenderStereoMode::SPLIT_HORIZONTAL:
+      m_surfDestRect.y2 *= 2.0;
+      break;
+    case RenderStereoMode::SPLIT_VERTICAL:
+      m_surfDestRect.x2 *= 2.0;
+      break;
+    case RenderStereoMode::MONO:
+      if (CONF_FLAGS_STEREO_MODE_MASK(m_iFlags) == CONF_FLAGS_STEREO_MODE_TAB)
+        m_surfDestRect.y2 = m_surfDestRect.y2 * 2.0f;
+      else
+        m_surfDestRect.x2 = m_surfDestRect.x2 * 2.0f;
+      break;
+    default:
+      break;
+  }
+
+  if (index != m_lastIndex)
+  {
+    ReleaseVideoBuffer(index, true);
+    m_lastIndex = index;
+  }
 }
 
 void CRendererMediaCodecSurface::ReorderDrawPoints()
 {
   CBaseRenderer::ReorderDrawPoints();
-
-  // this hack is needed to get the 2D mode of a 3D movie going
-  RENDER_STEREO_MODE stereo_mode = g_graphicsContext.GetStereoMode();
-  if (stereo_mode)
-    g_graphicsContext.SetStereoView(RENDER_STEREO_VIEW_LEFT);
-
-  if (stereo_mode)
-    g_graphicsContext.SetStereoView(RENDER_STEREO_VIEW_OFF);
-
-  m_surfDestRect = m_destRect;
-  CRect srcRect(m_sourceRect);
-  switch (stereo_mode)
-  {
-    case RENDER_STEREO_MODE_SPLIT_HORIZONTAL:
-      m_surfDestRect.y2 *= 2.0;
-      srcRect.y2 *= 2.0;
-      break;
-    case RENDER_STEREO_MODE_SPLIT_VERTICAL:
-      m_surfDestRect.x2 *= 2.0;
-      srcRect.x2 *= 2.0;
-      break;
-    default:
-      break;
-  }
 
   // Handle orientation
   switch (m_renderOrientation)
@@ -163,13 +198,13 @@ void CRendererMediaCodecSurface::ReorderDrawPoints()
     case 90:
     case 270:
     {
-      double scale = (double)m_surfDestRect.Height() / m_surfDestRect.Width();
-      int diff = (int) ((m_surfDestRect.Height()*scale - m_surfDestRect.Width()) / 2);
+      double scale = static_cast<double>(m_surfDestRect.Height() / m_surfDestRect.Width());
+      int diff = static_cast<int>(static_cast<double>(m_surfDestRect.Height()) * scale -
+                                  static_cast<double>(m_surfDestRect.Width())) /
+                 2;
       m_surfDestRect = CRect(m_surfDestRect.x1 - diff, m_surfDestRect.y1, m_surfDestRect.x2 + diff, m_surfDestRect.y2);
     }
     default:
       break;
   }
 }
-
-#endif

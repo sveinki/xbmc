@@ -1,9 +1,11 @@
-set(SOURCES MouseWindowingButtonMap.cpp)
+set(SOURCES MouseStat.cpp
+            MouseTranslator.cpp
+)
 
-set(HEADERS IMouseButtonMap.h
-            IMouseDriverHandler.h
-            IMouseInputHandler.h
-            IMouseInputProvider.h
-            MouseWindowingButtonMap.h)
+set(HEADERS MouseEvent.h
+            MouseStat.h
+            MouseTranslator.h
+            MouseTypes.h
+)
 
 core_add_library(input_mouse)

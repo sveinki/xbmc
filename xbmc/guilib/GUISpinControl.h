@@ -1,38 +1,23 @@
+/*
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#pragma once
+
 /*!
 \file GUISpinControl.h
 \brief
 */
 
-#ifndef GUILIB_SPINCONTROL_H
-#define GUILIB_SPINCONTROL_H
-
-#pragma once
-
-/*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
- *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
- */
+#include "GUIControl.h"
+#include "GUILabel.h"
+#include "GUITexture.h"
 
 #include <vector>
-
-#include "GUIControl.h"
-#include "GUITexture.h"
-#include "GUILabel.h"
 
 #define SPIN_CONTROL_TYPE_INT    1
 #define SPIN_CONTROL_TYPE_FLOAT  2
@@ -47,8 +32,8 @@ class CGUISpinControl : public CGUIControl
 {
 public:
   CGUISpinControl(int parentID, int controlID, float posX, float posY, float width, float height, const CTextureInfo& textureUp, const CTextureInfo& textureDown, const CTextureInfo& textureUpFocus, const CTextureInfo& textureDownFocus, const CTextureInfo& textureUpDisabled, const CTextureInfo& textureDownDisabled, const CLabelInfo& labelInfo, int iType);
-  ~CGUISpinControl(void) override;
-  CGUISpinControl *Clone() const override { return new CGUISpinControl(*this); };
+  ~CGUISpinControl() override = default;
+  CGUISpinControl* Clone() const override { return new CGUISpinControl(*this); }
 
   void Process(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
   void Render() override;
@@ -79,13 +64,17 @@ public:
   void SetReverse(bool bOnOff);
   int GetMaximum() const;
   int GetMinimum() const;
-  void SetSpinAlign(uint32_t align, float offsetX) { m_label.GetLabelInfo().align = align; m_label.GetLabelInfo().offsetX = offsetX; };
-  void SetType(int iType) { m_iType = iType; };
-  float GetSpinWidth() const { return m_imgspinUp.GetWidth(); };
-  float GetSpinHeight() const { return m_imgspinUp.GetHeight(); };
+  void SetSpinAlign(uint32_t align, float offsetX)
+  {
+    m_label.GetLabelInfo().align = align;
+    m_label.GetLabelInfo().offsetX = offsetX;
+  }
+  void SetType(int iType) { m_iType = iType; }
+  float GetSpinWidth() const { return m_imgspinUp->GetWidth(); }
+  float GetSpinHeight() const { return m_imgspinUp->GetHeight(); }
   void SetFloatInterval(float fInterval);
   void SetShowRange(bool bOnoff) ;
-  void SetShowOnePage(bool showOnePage) { m_showOnePage = showOnePage; };
+  void SetShowOnePage(bool showOnePage) { m_showOnePage = showOnePage; }
   void Clear();
   std::string GetDescription() const override;
   bool IsFocusedOnUp() const;
@@ -93,8 +82,10 @@ public:
   bool IsVisible() const override;
 
 protected:
-  EVENT_RESULT OnMouseEvent(const CPoint &point, const CMouseEvent &event) override;
-  bool UpdateColors() override;
+  CGUISpinControl(const CGUISpinControl& control);
+
+  EVENT_RESULT OnMouseEvent(const CPoint& point, const KODI::MOUSE::CMouseEvent& event) override;
+  bool UpdateColors(const CGUIListItem* item) override;
   /*! \brief Render the spinner text
    \param posX position of the left edge of the text
    \param posY positing of the top edge of the text
@@ -123,12 +114,12 @@ protected:
   std::vector<std::string> m_vecLabels;
   std::vector<int> m_vecValues;
   std::vector<std::string> m_vecStrValues;
-  CGUITexture m_imgspinUp;
-  CGUITexture m_imgspinDown;
-  CGUITexture m_imgspinUpFocus;
-  CGUITexture m_imgspinDownFocus;
-  CGUITexture m_imgspinUpDisabled;
-  CGUITexture m_imgspinDownDisabled;
+  std::unique_ptr<CGUITexture> m_imgspinUp;
+  std::unique_ptr<CGUITexture> m_imgspinDown;
+  std::unique_ptr<CGUITexture> m_imgspinUpFocus;
+  std::unique_ptr<CGUITexture> m_imgspinDownFocus;
+  std::unique_ptr<CGUITexture> m_imgspinUpDisabled;
+  std::unique_ptr<CGUITexture> m_imgspinDownDisabled;
   CGUILabel   m_label;
   bool m_bShowRange;
   char m_szTyped[10];
@@ -139,4 +130,4 @@ protected:
   int m_numItems;
   bool m_showOnePage;
 };
-#endif
+

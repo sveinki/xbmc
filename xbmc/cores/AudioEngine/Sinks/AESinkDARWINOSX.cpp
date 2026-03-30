@@ -1,40 +1,34 @@
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "cores/AudioEngine/Engines/ActiveAE/ActiveAE.h"
 #include "cores/AudioEngine/Sinks/AESinkDARWINOSX.h"
-#include "cores/AudioEngine/Utils/AERingBuffer.h"
-#include "cores/AudioEngine/Sinks/osx/CoreAudioHelpers.h"
-#include "cores/AudioEngine/Sinks/osx/CoreAudioHardware.h"
+
+#include "ServiceBroker.h"
+#include "cores/AudioEngine/AESinkFactory.h"
+#include "cores/AudioEngine/Sinks/darwin/CoreAudioHelpers.h"
 #include "cores/AudioEngine/Sinks/osx/AEDeviceEnumerationOSX.h"
-#include "utils/log.h"
+#include "cores/AudioEngine/Sinks/osx/CoreAudioHardware.h"
+#include "cores/AudioEngine/Utils/AERingBuffer.h"
+#include "threads/SystemClock.h"
+#include "utils/MemUtils.h"
 #include "utils/StringUtils.h"
 #include "utils/TimeUtils.h"
-#include "linux/XMemUtils.h"
-#include "ServiceBroker.h"
+#include "utils/log.h"
 
+#include <mutex>
+
+using namespace std::chrono_literals;
 
 static void EnumerateDevices(CADeviceList &list)
 {
   std::string defaultDeviceName;
   CCoreAudioHardware::GetOutputDeviceName(defaultDeviceName);
+  AudioDeviceID defaultID = CCoreAudioHardware::GetDefaultOutputDevice();
 
   CoreAudioDeviceList deviceIDList;
   CCoreAudioHardware::GetOutputDevices(&deviceIDList);
@@ -54,7 +48,7 @@ static void EnumerateDevices(CADeviceList &list)
     //like that)
     //fixme taking the first stream device is wrong here
     //we rather might need the concatenation of all streams *sucks*
-    if(defaultDeviceName == devEnum.GetMasterDeviceName())
+    if(defaultID == deviceID && defaultDeviceName == devEnum.GetMasterDeviceName())
     {
       struct CADeviceInstance deviceInstance;
       deviceInstance.audioDeviceId = deviceID;
@@ -80,7 +74,7 @@ static void EnumerateDevices()
   CADeviceList devices;
   EnumerateDevices(devices);
   {
-    CSingleLock lock(s_devicesLock);
+    std::unique_lock lock(s_devicesLock);
     s_devices = devices;
   }
 }
@@ -89,7 +83,7 @@ static CADeviceList GetDevices()
 {
   CADeviceList list;
   {
-    CSingleLock lock(s_devicesLock);
+    std::unique_lock lock(s_devicesLock);
     list = s_devices;
   }
   return list;
@@ -129,7 +123,9 @@ OSStatus deviceChangedCB(AudioObjectID                       inObjectID,
   if  (deviceChanged)
   {
     CLog::Log(LOGDEBUG, "CoreAudio: audiodevicelist changed - reenumerating");
-    CServiceBroker::GetActiveAE().DeviceChange();
+    IAE* ae = CServiceBroker::GetActiveAE();
+    if (ae)
+      ae->DeviceChange();
     CLog::Log(LOGDEBUG, "CoreAudio: audiodevicelist changed - done");
   }
   return noErr;
@@ -137,16 +133,6 @@ OSStatus deviceChangedCB(AudioObjectID                       inObjectID,
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 CAESinkDARWINOSX::CAESinkDARWINOSX()
-: m_latentFrames(0),
-  m_outputBufferIndex(0),
-  m_outputBitstream(false),
-  m_planes(1),
-  m_frameSizePerPlane(0),
-  m_framesPerSecond(0),
-  m_buffer(NULL),
-  m_started(false),
-  m_render_tick(0),
-  m_render_delay(0.0)
 {
   // By default, kAudioHardwarePropertyRunLoop points at the process's main thread on SnowLeopard,
   // If your process lacks such a run loop, you can set kAudioHardwarePropertyRunLoop to NULL which
@@ -174,6 +160,24 @@ CAESinkDARWINOSX::~CAESinkDARWINOSX()
   CCoreAudioDevice::RegisterDefaultOutputDeviceChangedCB(false, deviceChangedCB, this);
 }
 
+void CAESinkDARWINOSX::Register()
+{
+  AE::AESinkRegEntry reg;
+  reg.sinkName = "DARWINOSX";
+  reg.createFunc = CAESinkDARWINOSX::Create;
+  reg.enumerateFunc = CAESinkDARWINOSX::EnumerateDevicesEx;
+  AE::CAESinkFactory::RegisterSink(reg);
+}
+
+std::unique_ptr<IAESink> CAESinkDARWINOSX::Create(std::string& device, AEAudioFormat& desiredFormat)
+{
+  auto sink = std::make_unique<CAESinkDARWINOSX>();
+  if (sink->Initialize(desiredFormat, device))
+    return sink;
+
+  return {};
+}
+
 bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
 {
   AudioDeviceID deviceID = 0;
@@ -193,7 +197,7 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
   {
     CCoreAudioHardware::GetOutputDeviceName(device);
     deviceID = CCoreAudioHardware::GetDefaultOutputDevice();
-    CLog::Log(LOGNOTICE, "%s: Opening default device %s", __PRETTY_FUNCTION__, device.c_str());
+    CLog::Log(LOGINFO, "{}: Opening default device {}", __PRETTY_FUNCTION__, device);
   }
   else
   {
@@ -206,9 +210,11 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
         requestedStreamIndex = deviceInstance.streamIndex;
         requestedSourceId = deviceInstance.sourceId;
         if (requestedStreamIndex != INT_MAX)
-          CLog::Log(LOGNOTICE, "%s pseudo device - requesting stream %d", __FUNCTION__, (unsigned int)requestedStreamIndex);
+          CLog::Log(LOGINFO, "{} pseudo device - requesting stream {}", __FUNCTION__,
+                    (unsigned int)requestedStreamIndex);
         if (requestedSourceId != INT_MAX)
-          CLog::Log(LOGNOTICE, "%s device - requesting audiosource %d", __FUNCTION__, (unsigned int)requestedSourceId);
+          CLog::Log(LOGINFO, "{} device - requesting audiosource {}", __FUNCTION__,
+                    (unsigned int)requestedSourceId);
         break;
       }
     }
@@ -216,12 +222,12 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
 
   if (!deviceID)
   {
-    CLog::Log(LOGERROR, "%s: Unable to find device %s", __FUNCTION__, device.c_str());
+    CLog::Log(LOGERROR, "{}: Unable to find device {}", __FUNCTION__, device);
     return false;
   }
 
   AEDeviceEnumerationOSX devEnum(deviceID);
-  AudioStreamBasicDescription outputFormat = { 0 };
+  AudioStreamBasicDescription outputFormat = {};
   AudioStreamID outputStream = 0;
   UInt32 numOutputChannels = 0;
   m_planes = 1;
@@ -234,16 +240,17 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
     {
       numOutputChannels = std::min((size_t)format.m_channelLayout.Count(), (size_t)devEnum.GetNumPlanes());
       m_planes = numOutputChannels;
-      CLog::Log(LOGDEBUG, "%s Found planar audio with %u channels using %u of them.", __FUNCTION__, (unsigned int)devEnum.GetNumPlanes(), (unsigned int)numOutputChannels);
+      CLog::Log(LOGDEBUG, "{} Found planar audio with {} channels using {} of them.", __FUNCTION__,
+                (unsigned int)devEnum.GetNumPlanes(), (unsigned int)numOutputChannels);
     }
   }
   else
   {
-    CLog::Log(LOGERROR, "%s, Unable to find suitable stream", __FUNCTION__);
+    CLog::Log(LOGERROR, "{}, Unable to find suitable stream", __FUNCTION__);
     return false;
   }
 
-  AudioStreamBasicDescription outputFormatVirt = { 0 };
+  AudioStreamBasicDescription outputFormatVirt = {};
   AudioStreamID outputStreamVirt = 0;
   UInt32 numOutputChannelsVirt = 0;
   if (passthrough)
@@ -254,7 +261,7 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
     }
     else
     {
-      CLog::Log(LOGERROR, "%s, Unable to find suitable virtual stream", __FUNCTION__);
+      CLog::Log(LOGERROR, "{}, Unable to find suitable virtual stream", __FUNCTION__);
       //return false;
       numOutputChannelsVirt = 0;
     }
@@ -262,20 +269,24 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
 
   /* Update our AE format */
   format.m_sampleRate    = outputFormat.mSampleRate;
-  
+
   m_outputBufferIndex = requestedStreamIndex;
-  
+
   // if we are in passthrough but didn't have a matching
   // virtual format - enable bitstream which deals with
   // backconverting from float to 16bit
   if (passthrough && numOutputChannelsVirt == 0)
   {
     m_outputBitstream = true;
-    CLog::Log(LOGDEBUG, "%s: Bitstream passthrough with float -> int16 conversion enabled", __FUNCTION__);
+    CLog::Log(LOGDEBUG, "{}: Bitstream passthrough with float -> int16 conversion enabled",
+              __FUNCTION__);
   }
 
   std::string formatString;
-  CLog::Log(LOGDEBUG, "%s: Selected stream[%u] - id: 0x%04X, Physical Format: %s %s", __FUNCTION__, (unsigned int)m_outputBufferIndex, (unsigned int)outputStream, StreamDescriptionToString(outputFormat, formatString), passthrough ? "passthrough" : "");
+  CLog::Log(LOGDEBUG, "{}: Selected stream[{}] - id: {:#04X}, Physical Format: {} {}", __FUNCTION__,
+            (unsigned int)m_outputBufferIndex, (unsigned int)outputStream,
+            StreamDescriptionToString(outputFormat, formatString),
+            passthrough ? "passthrough" : "");
 
   m_device.Open(deviceID);
   SetHogMode(passthrough);
@@ -286,26 +297,30 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
   AudioStreamBasicDescription virtualFormat, previousPhysicalFormat;
   m_outputStream.GetVirtualFormat(&virtualFormat);
   m_outputStream.GetPhysicalFormat(&previousPhysicalFormat);
-  CLog::Log(LOGDEBUG, "%s: Previous Virtual Format: %s", __FUNCTION__, StreamDescriptionToString(virtualFormat, formatString));
-  CLog::Log(LOGDEBUG, "%s: Previous Physical Format: %s", __FUNCTION__, StreamDescriptionToString(previousPhysicalFormat, formatString));
+  CLog::Log(LOGDEBUG, "{}: Previous Virtual Format: {}", __FUNCTION__,
+            StreamDescriptionToString(virtualFormat, formatString));
+  CLog::Log(LOGDEBUG, "{}: Previous Physical Format: {}", __FUNCTION__,
+            StreamDescriptionToString(previousPhysicalFormat, formatString));
 
   m_outputStream.SetPhysicalFormat(&outputFormat); // Set the active format (the old one will be reverted when we close)
   if (passthrough && numOutputChannelsVirt > 0)
     m_outputStream.SetVirtualFormat(&outputFormatVirt);
 
   m_outputStream.GetVirtualFormat(&virtualFormat);
-  CLog::Log(LOGDEBUG, "%s: New Virtual Format: %s", __FUNCTION__, StreamDescriptionToString(virtualFormat, formatString));
-  CLog::Log(LOGDEBUG, "%s: New Physical Format: %s", __FUNCTION__, StreamDescriptionToString(outputFormat, formatString));
+  CLog::Log(LOGDEBUG, "{}: New Virtual Format: {}", __FUNCTION__,
+            StreamDescriptionToString(virtualFormat, formatString));
+  CLog::Log(LOGDEBUG, "{}: New Physical Format: {}", __FUNCTION__,
+            StreamDescriptionToString(outputFormat, formatString));
 
   if (requestedSourceId != INT_MAX && !m_device.SetDataSource(requestedSourceId))
-    CLog::Log(LOGERROR, "%s: Error setting requested audio source.", __FUNCTION__);
+    CLog::Log(LOGERROR, "{}: Error setting requested audio source.", __FUNCTION__);
 
   m_latentFrames = m_device.GetNumLatencyFrames();
   m_latentFrames += m_outputStream.GetNumLatencyFrames();
 
   // update the channel map based on the new stream format
   devEnum.GetAEChannelMap(format.m_channelLayout, numOutputChannels);
-   
+
   //! @todo Should we use the virtual format to determine our data format?
   format.m_frameSize     = format.m_channelLayout.Count() * (CAEUtil::DataFormatToBits(format.m_dataFormat) >> 3);
   format.m_frames        = m_device.GetBufferSize();
@@ -315,7 +330,8 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
 
   unsigned int num_buffers = 4;
   m_buffer = new AERingBuffer(num_buffers * format.m_frames * m_frameSizePerPlane, m_planes);
-  CLog::Log(LOGDEBUG, "%s: using buffer size: %u (%f ms)", __FUNCTION__, m_buffer->GetMaxSize(), (float)m_buffer->GetMaxSize() / (m_framesPerSecond * m_frameSizePerPlane));
+  CLog::Log(LOGDEBUG, "{}: using buffer size: {} ({:f} ms)", __FUNCTION__, m_buffer->GetMaxSize(),
+            (float)m_buffer->GetMaxSize() / (m_framesPerSecond * m_frameSizePerPlane));
 
   if (!passthrough)
     format.m_dataFormat = (m_planes > 1) ? AE_FMT_FLOATP : AE_FMT_FLOAT;
@@ -329,7 +345,7 @@ bool CAESinkDARWINOSX::Initialize(AEAudioFormat &format, std::string &device)
 void CAESinkDARWINOSX::SetHogMode(bool on)
 {
   //! @todo Auto hogging sets this for us. Figure out how/when to turn it off or use it
-  //! It appears that leaving this set will aslo restore the previous stream format when the
+  //! It appears that leaving this set will also restore the previous stream format when the
   //! Application exits. If auto hogging is set and we try to set hog mode, we will deadlock
   //! From the SDK docs: "If the AudioDevice is in a non-mixable mode, the HAL will automatically take hog mode on behalf of the first process to start an IOProc."
   //!
@@ -342,8 +358,10 @@ void CAESinkDARWINOSX::SetHogMode(bool on)
     // Handle this on our own until it is fixed.
     CCoreAudioHardware::SetAutoHogMode(false);
     bool autoHog = CCoreAudioHardware::GetAutoHogMode();
-    CLog::Log(LOGDEBUG, " CoreAudioRenderer::InitializeEncoded: "
-              "Auto 'hog' mode is set to '%s'.", autoHog ? "On" : "Off");
+    CLog::Log(LOGDEBUG,
+              " CoreAudioRenderer::InitializeEncoded: "
+              "Auto 'hog' mode is set to '{}'.",
+              autoHog ? "On" : "Off");
     if (autoHog)
       return;
   }
@@ -405,19 +423,19 @@ unsigned int CAESinkDARWINOSX::AddPackets(uint8_t **data, unsigned int frames, u
 {
   if (m_buffer->GetWriteSize() < frames * m_frameSizePerPlane)
   { // no space to write - wait for a bit
-    CSingleLock lock(mutex);
-    unsigned int timeout = 900 * frames / m_framesPerSecond;
+    std::unique_lock lock(mutex);
+    auto timeout = std::chrono::milliseconds(900 * frames / m_framesPerSecond);
     if (!m_started)
-      timeout = 4500;
+      timeout = 4500ms;
 
     // we are using a timer here for being sure for timeouts
     // condvar can be woken spuriously as signaled
-    XbmcThreads::EndTime timer(timeout);
+    XbmcThreads::EndTime<> timer(timeout);
     condVar.wait(mutex, timeout);
     if (!m_started && timer.IsTimePast())
     {
-      CLog::Log(LOGERROR, "%s engine didn't start in %d ms!", __FUNCTION__, timeout);
-      return INT_MAX;    
+      CLog::Log(LOGERROR, "{} engine didn't start in {} ms!", __FUNCTION__, timeout.count());
+      return INT_MAX;
     }
   }
 
@@ -435,11 +453,11 @@ void CAESinkDARWINOSX::Drain()
   int bytes = m_buffer->GetReadSize();
   int totalBytes = bytes;
   int maxNumTimeouts = 3;
-  unsigned int timeout = 900 * bytes / (m_framesPerSecond * m_frameSizePerPlane);
+  auto timeout = std::chrono::milliseconds(900 * bytes / (m_framesPerSecond * m_frameSizePerPlane));
   while (bytes && maxNumTimeouts > 0)
   {
-    CSingleLock lock(mutex);
-    XbmcThreads::EndTime timer(timeout);
+    std::unique_lock lock(mutex);
+    XbmcThreads::EndTime<> timer(timeout);
     condVar.wait(mutex, timeout);
 
     bytes = m_buffer->GetReadSize();
@@ -466,9 +484,10 @@ inline void LogLevel(unsigned int got, unsigned int wanted)
   {
     if (got != lastReported)
     {
-      CLog::Log(LOGWARNING, "DARWINOSX: %sflow (%u vs %u bytes)", got > wanted ? "over" : "under", got, wanted);
+      CLog::Log(LOGWARNING, "DARWINOSX: {}flow ({} vs {} bytes)", got > wanted ? "over" : "under",
+                got, wanted);
       lastReported = got;
-    }    
+    }
   }
   else
     lastReported = INT_MAX; // indicate we were good at least once
@@ -485,7 +504,7 @@ OSStatus CAESinkDARWINOSX::renderCallback(AudioDeviceID inDevice, const AudioTim
     //planar always starts at outputbuffer/streamidx 0
     unsigned int startIdx = sink->m_buffer->NumPlanes() == 1 ? sink->m_outputBufferIndex : 0;
     unsigned int endIdx = startIdx + sink->m_buffer->NumPlanes();
-    
+
     /* NOTE: We assume that the buffers are all the same size... */
     if (sink->m_outputBitstream)
     {
@@ -499,7 +518,7 @@ OSStatus CAESinkDARWINOSX::renderCallback(AudioDeviceID inDevice, const AudioTim
       {
         for (unsigned int i = startIdx; i < endIdx; i++)
         {
-          int16_t src;
+          int16_t src = 0;
           sink->m_buffer->Read((unsigned char *)&src, sizeof(int16_t), i);
           if (i < outOutputData->mNumberBuffers && outOutputData->mBuffers[i].mData)
           {

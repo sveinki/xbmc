@@ -1,31 +1,17 @@
 /*
- *      Copyright (C) 2005-2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "InputStreamMultiSource.h"
+
 #include "DVDFactoryInputStream.h"
-#include "filesystem/File.h"
-#include "filesystem/IFile.h"
-#include "settings/AdvancedSettings.h"
 #include "utils/log.h"
-#include "utils/StringUtils.h"
-#include<map>
+
+#include <map>
 
 using namespace XFILE;
 
@@ -42,7 +28,7 @@ CInputStreamMultiSource::~CInputStreamMultiSource()
 
 void CInputStreamMultiSource::Abort()
 {
-  for (auto iter : m_InputStreams)
+  for (const auto& iter : m_InputStreams)
     iter->Abort();
 }
 
@@ -70,7 +56,7 @@ bool CInputStreamMultiSource::GetCacheStatus(XFILE::SCacheStatus *status)
 int64_t CInputStreamMultiSource::GetLength()
 {
   int64_t length = 0;
-  for (auto iter : m_InputStreams)
+  for (const auto& iter : m_InputStreams)
   {
     length = std::max(length, iter->GetLength());
   }
@@ -83,7 +69,7 @@ bool CInputStreamMultiSource::IsEOF()
   if (m_InputStreams.empty())
     return true;
 
-  for (auto iter : m_InputStreams)
+  for (const auto& iter : m_InputStreams)
   {
     if (!(iter->IsEOF()))
       return false;
@@ -100,7 +86,7 @@ CDVDInputStream::ENextStream CInputStreamMultiSource::NextStream()
 
 
   CDVDInputStream::ENextStream next;
-  for (auto iter : m_InputStreams)
+  for (const auto& iter : m_InputStreams)
   {
     next = iter->NextStream();
     if (next != NEXTSTREAM_NONE)
@@ -122,13 +108,15 @@ bool CInputStreamMultiSource::Open()
     InputStreamPtr inputstream(CDVDFactoryInputStream::CreateInputStream(m_pPlayer, fileitem));
     if (!inputstream)
     {
-      CLog::Log(LOGERROR, "CDVDPlayer::OpenInputStream - unable to create input stream for file [%s]", m_filenames[i].c_str());
+      CLog::Log(LOGERROR,
+                "CDVDPlayer::OpenInputStream - unable to create input stream for file [{}]",
+                m_filenames[i]);
       continue;
     }
 
     if (!inputstream->Open())
     {
-      CLog::Log(LOGERROR, "CDVDPlayer::OpenInputStream - error opening file [%s]", m_filenames[i].c_str());
+      CLog::Log(LOGERROR, "CDVDPlayer::OpenInputStream - error opening file [{}]", m_filenames[i]);
       continue;
     }
     m_InputStreams.push_back(inputstream);
@@ -146,8 +134,8 @@ int64_t CInputStreamMultiSource::Seek(int64_t offset, int whence)
   return -1;
 }
 
-void CInputStreamMultiSource::SetReadRate(unsigned rate)
+void CInputStreamMultiSource::SetReadRate(uint32_t rate)
 {
-  for (auto iter : m_InputStreams)
+  for (const auto& iter : m_InputStreams)
     iter->SetReadRate(rate);
 }

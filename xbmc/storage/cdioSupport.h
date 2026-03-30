@@ -1,22 +1,12 @@
 /*
- *      Copyright (C) 2005-2015 Team XBMC
- *      http://kodi.tv/
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 //  CCdInfo   -  Information about media type of an inserted cd
 //  CCdIoSupport -  Wrapper class for libcdio with the interface of CIoSupport
@@ -25,17 +15,16 @@
 // by Bobbin007 in 2003
 //  CD-Text support by Mog - Oct 2004
 
-#pragma once
+#include "threads/CriticalSection.h"
 
-#include "system.h" // for HAS_DVD_DRIVE
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
 
-#ifdef HAS_DVD_DRIVE
+#include "PlatformDefs.h" // for ssize_t typedef, used by cdio
 
 #include <cdio/cdio.h>
-#include "threads/CriticalSection.h"
-#include <memory>
-#include <map>
-#include <string>
 
 namespace MEDIA_DETECT
 {
@@ -108,6 +97,19 @@ typedef struct TRACKINFO
 }
 trackinfo;
 
+/*! \brief Helper enum class for the MMC tray state
+*/
+enum class CdioTrayStatus
+{
+  /* The MMC tray state is reported closed */
+  CLOSED,
+  /* The MMC tray state is reported open */
+  OPEN,
+  /* The MMC tray status operation is not supported */
+  UNKNOWN,
+  /* Generic driver error */
+  DRIVER_ERROR
+};
 
 class CCdInfo
 {
@@ -119,7 +121,7 @@ public:
   }
 
   trackinfo GetTrackInformation( int nTrack ) { return m_ti[nTrack -1]; }
-  xbmc_cdtext_t GetDiscCDTextInformation() { return m_cdtext; }
+  const xbmc_cdtext_t& GetDiscCDTextInformation() const { return m_cdtext; }
 
   bool HasDataTracks() { return (m_nNumData > 0); }
   bool HasAudioTracks() { return (m_nNumAudio > 0); }
@@ -131,7 +133,7 @@ public:
   int GetAudioTrackCount() { return m_nNumAudio; }
   uint32_t GetCddbDiscId() { return m_ulCddbDiscId; }
   int GetDiscLength() { return m_nLength; }
-  std::string GetDiscLabel(){ return m_strDiscLabel; }
+  const std::string& GetDiscLabel() const { return m_strDiscLabel; }
 
   // CD-ROM with ISO 9660 filesystem
   bool IsIso9660( int nTrack ) { return ((m_ti[nTrack - 1].nfsInfo & FS_MASK) == FS_ISO_9660); }
@@ -218,8 +220,12 @@ public:
   void SetFirstDataTrack( int nTrack ) { m_nFirstData = nTrack; }
   void SetDataTrackCount( int nCount ) { m_nNumData = nCount; }
   void SetAudioTrackCount( int nCount ) { m_nNumAudio = nCount; }
-  void SetTrackInformation( int nTrack, trackinfo nInfo ) { if ( nTrack > 0 && nTrack <= 99 ) m_ti[nTrack - 1] = nInfo; }
-  void SetDiscCDTextInformation( xbmc_cdtext_t cdtext ) { m_cdtext = cdtext; }
+  void SetTrackInformation(int nTrack, trackinfo nInfo)
+  {
+    if (nTrack > 0 && nTrack <= 99)
+      m_ti[nTrack - 1] = std::move(nInfo);
+  }
+  void SetDiscCDTextInformation(xbmc_cdtext_t cdtext) { m_cdtext = std::move(cdtext); }
 
   void SetCddbDiscId( uint32_t ulCddbDiscId ) { m_ulCddbDiscId = ulCddbDiscId; }
   void SetDiscLength( int nLength ) { m_nLength = nLength; }
@@ -258,12 +264,14 @@ public:
   CdIo_t* cdio_open_win32(const char *psz_source);
   void cdio_destroy(CdIo_t *p_cdio);
   discmode_t cdio_get_discmode(CdIo_t *p_cdio);
-  int mmc_get_tray_status(const CdIo_t *p_cdio);
-  int cdio_eject_media(CdIo_t **p_cdio);
+  CdioTrayStatus mmc_get_tray_status(const CdIo_t* p_cdio);
+  driver_return_code_t cdio_eject_media(CdIo_t** p_cdio);
   track_t cdio_get_last_track_num(const CdIo_t *p_cdio);
   lsn_t cdio_get_track_lsn(const CdIo_t *p_cdio, track_t i_track);
   lsn_t cdio_get_track_last_lsn(const CdIo_t *p_cdio, track_t i_track);
   driver_return_code_t cdio_read_audio_sectors(const CdIo_t *p_cdio, void *p_buf, lsn_t i_lsn, uint32_t i_blocks);
+  driver_return_code_t cdio_close_tray(const char* psz_source, driver_id_t* driver_id);
+  const char* cdio_driver_errmsg(driver_return_code_t drc);
 
   char* GetDeviceFileName();
 
@@ -284,10 +292,10 @@ public:
 
   HANDLE OpenCDROM();
   HANDLE OpenIMAGE( std::string& strFilename );
-  INT ReadSector(HANDLE hDevice, DWORD dwSector, LPSTR lpczBuffer);
-  INT ReadSectorMode2(HANDLE hDevice, DWORD dwSector, LPSTR lpczBuffer);
-  INT ReadSectorCDDA(HANDLE hDevice, DWORD dwSector, LPSTR lpczBuffer);
-  VOID CloseCDROM(HANDLE hDevice);
+  int ReadSector(HANDLE hDevice, DWORD dwSector, char* lpczBuffer);
+  int ReadSectorMode2(HANDLE hDevice, DWORD dwSector, char* lpczBuffer);
+  int ReadSectorCDDA(HANDLE hDevice, DWORD dwSector, char* lpczBuffer);
+  void CloseCDROM(HANDLE hDevice);
 
   void PrintAnalysis(int fs, int num_audio);
 
@@ -307,12 +315,12 @@ protected:
 
   uint32_t CddbDiscId();
   int CddbDecDigitSum(int n);
-  UINT MsfSeconds(msf_t *msf);
+  unsigned int MsfSeconds(msf_t *msf);
 
 private:
   char buffer[7][CDIO_CD_FRAMESIZE_RAW];  /* for CD-Data */
   static signature_t sigs[17];
-  int i, j;                               /* index */
+  int i = 0, j = 0;                               /* index */
   int m_nStartTrack;                      /* first sector of track */
   int m_nIsofsSize;                       /* size of session */
   int m_nJolietLevel;
@@ -323,8 +331,8 @@ private:
   int m_nUDFVerMajor;
 
   CdIo* cdio;
-  track_t m_nNumTracks;
-  track_t m_nFirstTrackNum;
+  track_t m_nNumTracks = CDIO_INVALID_TRACK;
+  track_t m_nFirstTrackNum = CDIO_INVALID_TRACK;
 
   std::string m_strDiscLabel;
 
@@ -337,5 +345,3 @@ private:
 };
 
 }
-
-#endif

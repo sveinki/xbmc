@@ -1,30 +1,21 @@
 /*
- *      Copyright (C) 2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2017-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialogIgnoreInput.h"
-#include "guilib/LocalizeStrings.h"
-#include "input/joysticks/IButtonMap.h"
-#include "input/joysticks/IButtonMapCallback.h"
+
+#include "ServiceBroker.h"
 #include "input/joysticks/JoystickTranslator.h"
-#include "utils/log.h"
+#include "input/joysticks/interfaces/IButtonMap.h"
+#include "input/joysticks/interfaces/IButtonMapCallback.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "utils/StringUtils.h"
+#include "utils/log.h"
 
 #include <algorithm>
 #include <iterator>
@@ -32,47 +23,62 @@
 using namespace KODI;
 using namespace GAME;
 
+bool CGUIDialogIgnoreInput::AcceptsPrimitive(JOYSTICK::PRIMITIVE_TYPE type) const
+{
+  switch (type)
+  {
+    case JOYSTICK::PRIMITIVE_TYPE::BUTTON:
+    case JOYSTICK::PRIMITIVE_TYPE::SEMIAXIS:
+      return true;
+    default:
+      break;
+  }
+
+  return false;
+}
+
 std::string CGUIDialogIgnoreInput::GetDialogText()
 {
   // "Some controllers have buttons and axes that interfere with mapping. Press
   // these now to disable them:[CR]%s"
-  std::string dialogText = g_localizeStrings.Get(35014);
+  const std::string& dialogText =
+      CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(35014);
 
   std::vector<std::string> primitives;
 
-  std::transform(m_capturedPrimitives.begin(), m_capturedPrimitives.end(), std::back_inserter(primitives),
-    [](const JOYSTICK::CDriverPrimitive& primitive)
-    {
-      return JOYSTICK::CJoystickTranslator::GetPrimitiveName(primitive);
-    });
+  std::ranges::transform(m_capturedPrimitives, std::back_inserter(primitives),
+                         [](const JOYSTICK::CDriverPrimitive& primitive)
+                         { return JOYSTICK::CJoystickTranslator::GetPrimitiveName(primitive); });
 
-  return StringUtils::Format(dialogText.c_str(), StringUtils::Join(primitives, " | ").c_str());
+  return StringUtils::Format(dialogText, StringUtils::Join(primitives, " | "));
 }
 
 std::string CGUIDialogIgnoreInput::GetDialogHeader()
 {
-  
-  return g_localizeStrings.Get(35019); // "Ignore input"
+
+  return CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(35019); // "Ignore input"
 }
 
 bool CGUIDialogIgnoreInput::MapPrimitiveInternal(JOYSTICK::IButtonMap* buttonMap,
-                                                 IKeymap* keymap,
+                                                 KEYMAP::IKeymap* keymap,
                                                  const JOYSTICK::CDriverPrimitive& primitive)
 {
   // Check if we have already started capturing primitives for a device
-  const bool bHasDevice = !m_deviceName.empty();
+  const bool bHasDevice = !m_location.empty();
 
   // If a primitive comes from a different device, ignore it
-  if (bHasDevice && m_deviceName != buttonMap->DeviceName())
+  if (bHasDevice && m_location != buttonMap->Location())
   {
-    CLog::Log(LOGDEBUG, "%s: ignoring input from device %s", buttonMap->ControllerID().c_str(), buttonMap->DeviceName().c_str());
+    CLog::Log(LOGDEBUG, "{}: ignoring input from device {}", buttonMap->ControllerID(),
+              buttonMap->Location());
     return false;
   }
 
   if (!bHasDevice)
   {
-    CLog::Log(LOGDEBUG, "%s: capturing input for device %s", buttonMap->ControllerID().c_str(), buttonMap->DeviceName().c_str());
-    m_deviceName = buttonMap->DeviceName();
+    CLog::Log(LOGDEBUG, "{}: capturing input for device {}", buttonMap->ControllerID(),
+              buttonMap->Location());
+    m_location = buttonMap->Location();
   }
 
   if (AddPrimitive(primitive))
@@ -92,10 +98,10 @@ void CGUIDialogIgnoreInput::OnClose(bool bAccepted)
     {
       // See documentation of IButtonMapCallback::ResetIgnoredPrimitives()
       // for why this call is needed
-      if (m_deviceName.empty())
+      if (m_location.empty())
         callback.second->ResetIgnoredPrimitives();
 
-      if (m_deviceName.empty() || m_deviceName == callback.first)
+      if (m_location.empty() || m_location == callback.first)
         callback.second->SaveButtonMap();
     }
     else
@@ -111,12 +117,10 @@ bool CGUIDialogIgnoreInput::AddPrimitive(const JOYSTICK::CDriverPrimitive& primi
       primitive.Type() == JOYSTICK::PRIMITIVE_TYPE::SEMIAXIS)
   {
     auto PrimitiveMatch = [&primitive](const JOYSTICK::CDriverPrimitive& other)
-      {
-        return primitive.Type() == other.Type() &&
-               primitive.Index() == other.Index();
-      };
+    { return primitive.Type() == other.Type() && primitive.Index() == other.Index(); };
 
-    bValid = std::find_if(m_capturedPrimitives.begin(), m_capturedPrimitives.end(), PrimitiveMatch) == m_capturedPrimitives.end();
+    bValid = std::find_if(m_capturedPrimitives.begin(), m_capturedPrimitives.end(),
+                          PrimitiveMatch) == m_capturedPrimitives.end();
   }
 
   if (bValid)

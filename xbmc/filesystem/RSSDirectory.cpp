@@ -1,42 +1,33 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "RSSDirectory.h"
 
-#include <climits>
-#include <utility>
-
 #include "CurlFile.h"
 #include "FileItem.h"
+#include "FileItemList.h"
 #include "ServiceBroker.h"
+#include "URL.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
-#include "threads/SingleLock.h"
-#include "URL.h"
+#include "settings/SettingsComponent.h"
+#include "utils/FileExtensionProvider.h"
 #include "utils/HTMLUtil.h"
-#include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
-#include "utils/XBMCTinyXML.h"
+#include "utils/XBMCTinyXML2.h"
 #include "utils/XMLUtils.h"
+#include "utils/log.h"
 #include "video/VideoInfoTag.h"
+
+#include <climits>
+#include <mutex>
+#include <utility>
 
 using namespace XFILE;
 using namespace MUSIC_INFO;
@@ -45,23 +36,15 @@ namespace {
 
   struct SResource
   {
-    SResource()
-      : width(0)
-      , height(0)
-      , bitrate(0)
-      , duration(0)
-      , size(0)
-    {}
-
     std::string tag;
     std::string path;
     std::string mime;
     std::string lang;
-    int        width;
-    int        height;
-    int        bitrate;
-    int        duration;
-    int64_t    size;
+    int        width = 0;
+    int        height = 0;
+    int        bitrate = 0;
+    int        duration = 0;
+    int64_t    size = 0;
   };
 
   typedef std::vector<SResource> SResources;
@@ -87,9 +70,9 @@ bool CRSSDirectory::ContainsFiles(const CURL& url)
 static bool IsPathToMedia(const std::string& strPath )
 {
   return URIUtils::HasExtension(strPath,
-                              g_advancedSettings.m_videoExtensions + '|' +
-                              g_advancedSettings.GetMusicExtensions() + '|' +
-                              g_advancedSettings.GetPictureExtensions());
+                                CServiceBroker::GetFileExtensionProvider().GetVideoExtensions() + '|' +
+                                CServiceBroker::GetFileExtensionProvider().GetMusicExtensions() + '|' +
+                                CServiceBroker::GetFileExtensionProvider().GetPictureExtensions());
 }
 
 static bool IsPathToThumbnail(const std::string& strPath )
@@ -97,27 +80,35 @@ static bool IsPathToThumbnail(const std::string& strPath )
   // Currently just check if this is an image, maybe we will add some
   // other checks later
   return URIUtils::HasExtension(strPath,
-                                    g_advancedSettings.GetPictureExtensions());
+                                CServiceBroker::GetFileExtensionProvider().GetPictureExtensions());
 }
 
 static time_t ParseDate(const std::string & strDate)
 {
-  struct tm pubDate = {0};
+  struct tm pubDate = {};
   //! @todo Handle time zone
   strptime(strDate.c_str(), "%a, %d %b %Y %H:%M:%S", &pubDate);
   // Check the difference between the time of last check and time of the item
   return mktime(&pubDate);
 }
-static void ParseItem(CFileItem* item, SResources& resources, TiXmlElement* root, const std::string& path);
+static void ParseItem(CFileItem* item,
+                      SResources& resources,
+                      tinyxml2::XMLElement* root,
+                      const std::string& path);
 
-static std::string GetValue(TiXmlElement *element)
+static std::string GetValue(tinyxml2::XMLElement* element)
 {
   if (element && !element->NoChildren())
-    return element->FirstChild()->ValueStr();
+    return element->FirstChild()->Value();
   return "";
 }
 
-static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* item_child, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemMRSS(CFileItem* item,
+                          SResources& resources,
+                          tinyxml2::XMLElement* item_child,
+                          const std::string& name,
+                          const std::string& xmlns,
+                          const std::string& path)
 {
   CVideoInfoTag* vtag = item->GetVideoInfoTag();
   std::string text = GetValue(item_child);
@@ -128,12 +119,12 @@ static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* 
     res.tag = "media:content";
     res.mime    = XMLUtils::GetAttribute(item_child, "type");
     res.path    = XMLUtils::GetAttribute(item_child, "url");
-    item_child->Attribute("width", &res.width);
-    item_child->Attribute("height", &res.height);
-    item_child->Attribute("bitrate", &res.bitrate);
-    item_child->Attribute("duration", &res.duration);
+    res.width = item_child->IntAttribute("width");
+    res.height = item_child->IntAttribute("height");
+    res.bitrate = item_child->IntAttribute("bitrate");
+    res.duration = item_child->IntAttribute("duration");
     if(item_child->Attribute("fileSize"))
-      res.size     = _atoi64(item_child->Attribute("fileSize"));
+      res.size = std::atoll(item_child->Attribute("fileSize"));
 
     resources.push_back(res);
     ParseItem(item, resources, item_child, path);
@@ -144,8 +135,8 @@ static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* 
   }
   else if(name == "thumbnail")
   {
-    if(!item_child->NoChildren() && IsPathToThumbnail(item_child->FirstChild()->ValueStr()))
-      item->SetArt("thumb", item_child->FirstChild()->ValueStr());
+    if (!item_child->NoChildren() && IsPathToThumbnail(item_child->FirstChild()->Value()))
+      item->SetArt("thumb", item_child->FirstChild()->Value());
     else
     {
       const char * url = item_child->Attribute("url");
@@ -158,8 +149,8 @@ static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* 
     if(text.empty())
       return;
 
-    if(text.length() > item->m_strTitle.length())
-      item->m_strTitle = text;
+    if (text.length() > item->GetTitle().length())
+      item->SetTitle(text);
   }
   else if(name == "description")
   {
@@ -193,13 +184,13 @@ static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* 
     else if(scheme == "urn:boxee:season")
       vtag->m_iSeason  = atoi(text.c_str());
     else if(scheme == "urn:boxee:show-title")
-      vtag->m_strShowTitle = text.c_str();
+      vtag->m_strShowTitle = text;
     else if(scheme == "urn:boxee:view-count")
       vtag->SetPlayCount(atoi(text.c_str()));
     else if(scheme == "urn:boxee:source")
       item->SetProperty("boxee:provider_source", text);
     else
-      vtag->m_genre = StringUtils::Split(text, g_advancedSettings.m_videoItemSeparator);
+      vtag->m_genre = StringUtils::Split(text, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoItemSeparator);
   }
   else if(name == "rating")
   {
@@ -225,13 +216,18 @@ static void ParseItemMRSS(CFileItem* item, SResources& resources, TiXmlElement* 
     }
   }
   else if(name == "copyright")
-    vtag->m_studio = StringUtils::Split(text, g_advancedSettings.m_videoItemSeparator);
+    vtag->m_studio = StringUtils::Split(text, CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_videoItemSeparator);
   else if(name == "keywords")
     item->SetProperty("keywords", text);
 
 }
 
-static void ParseItemItunes(CFileItem* item, SResources& resources, TiXmlElement* item_child, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemItunes(CFileItem* item,
+                            SResources& resources,
+                            tinyxml2::XMLElement* item_child,
+                            const std::string& name,
+                            const std::string& xmlns,
+                            const std::string& path)
 {
   CVideoInfoTag* vtag = item->GetVideoInfoTag();
   std::string text = GetValue(item_child);
@@ -256,18 +252,22 @@ static void ParseItemItunes(CFileItem* item, SResources& resources, TiXmlElement
     item->SetProperty("keywords", text);
 }
 
-static void ParseItemRSS(CFileItem* item, SResources& resources, TiXmlElement* item_child, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemRSS(CFileItem* item,
+                         SResources& resources,
+                         tinyxml2::XMLElement* item_child,
+                         const std::string& name,
+                         const std::string& xmlns,
+                         const std::string& path)
 {
   std::string text = GetValue(item_child);
   if (name == "title")
   {
-    if(text.length() > item->m_strTitle.length())
-      item->m_strTitle = text;
+    if (text.length() > item->GetTitle().length())
+      item->SetTitle(text);
   }
   else if (name == "pubDate")
   {
-    CDateTime pubDate(ParseDate(text));
-    item->m_dateTime = pubDate;
+    item->SetDateTime(ParseDate(text));
   }
   else if (name == "link")
   {
@@ -285,7 +285,7 @@ static void ParseItemRSS(CFileItem* item, SResources& resources, TiXmlElement* i
     res.path = XMLUtils::GetAttribute(item_child, "url");
     res.mime = XMLUtils::GetAttribute(item_child, "type");
     if(len)
-      res.size = _atoi64(len);
+      res.size = std::atoll(len);
 
     resources.push_back(res);
   }
@@ -307,7 +307,12 @@ static void ParseItemRSS(CFileItem* item, SResources& resources, TiXmlElement* i
   }
 }
 
-static void ParseItemVoddler(CFileItem* item, SResources& resources, TiXmlElement* element, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemVoddler(CFileItem* item,
+                             SResources& resources,
+                             tinyxml2::XMLElement* element,
+                             const std::string& name,
+                             const std::string& xmlns,
+                             const std::string& path)
 {
   CVideoInfoTag* vtag = item->GetVideoInfoTag();
   std::string text = GetValue(element);
@@ -338,7 +343,12 @@ static void ParseItemVoddler(CFileItem* item, SResources& resources, TiXmlElemen
   }
 }
 
-static void ParseItemBoxee(CFileItem* item, SResources& resources, TiXmlElement* element, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemBoxee(CFileItem* item,
+                           SResources& resources,
+                           tinyxml2::XMLElement* element,
+                           const std::string& name,
+                           const std::string& xmlns,
+                           const std::string& path)
 {
   CVideoInfoTag* vtag = item->GetVideoInfoTag();
   std::string text = GetValue(element);
@@ -363,7 +373,12 @@ static void ParseItemBoxee(CFileItem* item, SResources& resources, TiXmlElement*
     item->SetProperty("boxee:releasedate", text);
 }
 
-static void ParseItemZink(CFileItem* item, SResources& resources, TiXmlElement* element, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemZink(CFileItem* item,
+                          SResources& resources,
+                          tinyxml2::XMLElement* element,
+                          const std::string& name,
+                          const std::string& xmlns,
+                          const std::string& path)
 {
   CVideoInfoTag* vtag = item->GetVideoInfoTag();
   std::string text = GetValue(element);
@@ -383,7 +398,12 @@ static void ParseItemZink(CFileItem* item, SResources& resources, TiXmlElement* 
     vtag->SetDuration(StringUtils::TimeStringToSeconds(text));
 }
 
-static void ParseItemSVT(CFileItem* item, SResources& resources, TiXmlElement* element, const std::string& name, const std::string& xmlns, const std::string& path)
+static void ParseItemSVT(CFileItem* item,
+                         SResources& resources,
+                         tinyxml2::XMLElement* element,
+                         const std::string& name,
+                         const std::string& xmlns,
+                         const std::string& path)
 {
   std::string text = GetValue(element);
   if     (name == "xmllink")
@@ -408,9 +428,12 @@ static void ParseItemSVT(CFileItem* item, SResources& resources, TiXmlElement* e
   }
 }
 
-static void ParseItem(CFileItem* item, SResources& resources, TiXmlElement* root, const std::string& path)
+static void ParseItem(CFileItem* item,
+                      SResources& resources,
+                      tinyxml2::XMLElement* root,
+                      const std::string& path)
 {
-  for (TiXmlElement* child = root->FirstChildElement(); child; child = child->NextSiblingElement())
+  for (auto* child = root->FirstChildElement(); child; child = child->NextSiblingElement())
   {
     std::string name = child->Value();
     std::string xmlns;
@@ -438,17 +461,17 @@ static void ParseItem(CFileItem* item, SResources& resources, TiXmlElement* root
   }
 }
 
-static bool FindMime(SResources resources, std::string mime)
+static bool FindMime(const SResources& resources, const std::string& mime)
 {
-  for(SResources::iterator it = resources.begin(); it != resources.end(); it++)
+  for (const auto& it : resources)
   {
-    if(StringUtils::StartsWithNoCase(it->mime, mime))
+    if (StringUtils::StartsWithNoCase(it.mime, mime))
       return true;
   }
   return false;
 }
 
-static void ParseItem(CFileItem* item, TiXmlElement* root, const std::string& path)
+static void ParseItem(CFileItem* item, tinyxml2::XMLElement* root, const std::string& path)
 {
   SResources resources;
   ParseItem(item, resources, root, path);
@@ -465,14 +488,14 @@ static void ParseItem(CFileItem* item, TiXmlElement* root, const std::string& pa
   else if(FindMime(resources, "image/"))
     mime = "image/";
 
-  int maxrate = CServiceBroker::GetSettings().GetInt(CSettings::SETTING_NETWORK_BANDWIDTH);
+  int maxrate = CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_NETWORK_BANDWIDTH);
   if(maxrate == 0)
     maxrate = INT_MAX;
 
   SResources::iterator best = resources.end();
   for(const char** type = prio; *type && best == resources.end(); type++)
   {
-    for(SResources::iterator it = resources.begin(); it != resources.end(); it++)
+    for (SResources::iterator it = resources.begin(); it != resources.end(); ++it)
     {
       if(!StringUtils::StartsWith(it->mime, mime))
         continue;
@@ -512,23 +535,28 @@ static void ParseItem(CFileItem* item, TiXmlElement* root, const std::string& pa
   {
     item->SetMimeType(best->mime);
     item->SetPath(best->path);
-    item->m_dwSize  = best->size;
+    item->SetSize(best->size);
 
     if(best->duration)
-      item->SetProperty("duration", StringUtils::SecondsToTimeString(best->duration));    
+      item->SetProperty("duration", StringUtils::SecondsToTimeString(best->duration));
 
-    /* handling of mimetypes fo directories are sub optimal at best */
+    /* handling of mimetypes for directories are sub optimal at best */
     if(best->mime == "application/rss+xml" && StringUtils::StartsWithNoCase(item->GetPath(), "http://"))
       item->SetPath("rss://" + item->GetPath().substr(7));
 
-    if(StringUtils::StartsWithNoCase(item->GetPath(), "rss://"))
-      item->m_bIsFolder = true;
+    if(best->mime == "application/rss+xml" && StringUtils::StartsWithNoCase(item->GetPath(), "https://"))
+      item->SetPath("rsss://" + item->GetPath().substr(8));
+
+    if(StringUtils::StartsWithNoCase(item->GetPath(), "rss://")
+      || StringUtils::StartsWithNoCase(item->GetPath(), "rsss://"))
+      item->SetFolder(true);
     else
-      item->m_bIsFolder = false;
+      item->SetFolder(false);
   }
 
-  if(!item->m_strTitle.empty())
-    item->SetLabel(item->m_strTitle);
+  const std::string& title{item->GetTitle()};
+  if (!title.empty())
+    item->SetLabel(title);
 
   if(item->HasVideoInfoTag())
   {
@@ -561,42 +589,38 @@ bool CRSSDirectory::GetDirectory(const CURL& url, CFileItemList &items)
   URIUtils::RemoveSlashAtEnd(strPath);
   std::map<std::string,CDateTime>::iterator it;
   items.SetPath(strPath);
-  CSingleLock lock(m_section);
+  std::unique_lock lock(m_section);
   if ((it=m_cache.find(strPath)) != m_cache.end())
   {
-    if (it->second > CDateTime::GetCurrentDateTime() && 
+    if (it->second > CDateTime::GetCurrentDateTime() &&
         items.Load())
       return true;
     m_cache.erase(it);
   }
-  lock.Leave();
+  lock.unlock();
 
-  CXBMCTinyXML xmlDoc;
+  CXBMCTinyXML2 xmlDoc;
   if (!xmlDoc.LoadFile(strPath))
   {
-    CLog::Log(LOGERROR,"failed to load xml from <%s>. error: <%d>", strPath.c_str(), xmlDoc.ErrorId());
-    return false;
-  }
-  if (xmlDoc.Error())
-  {
-    CLog::Log(LOGERROR,"error parsing xml doc from <%s>. error: <%d>", strPath.c_str(), xmlDoc.ErrorId());
+    CLog::Log(LOGERROR, "failed to load xml from <{}>. error: <{}>", strPath, xmlDoc.ErrorStr());
     return false;
   }
 
-  TiXmlElement* rssXmlNode = xmlDoc.RootElement();
+  auto* rssXmlNode = xmlDoc.RootElement();
 
   if (!rssXmlNode)
     return false;
 
-  TiXmlHandle docHandle( &xmlDoc );
-  TiXmlElement* channelXmlNode = docHandle.FirstChild( "rss" ).FirstChild( "channel" ).Element();
+  tinyxml2::XMLHandle docHandle(&xmlDoc);
+  auto* channelXmlNode =
+      docHandle.FirstChildElement("rss").FirstChildElement("channel").ToElement();
   if (channelXmlNode)
     ParseItem(&items, channelXmlNode, pathToUrl);
   else
     return false;
 
-  TiXmlElement* child = NULL;
-  for (child = channelXmlNode->FirstChildElement("item"); child; child = child->NextSiblingElement())
+  for (auto* child = channelXmlNode->FirstChildElement("item"); child;
+       child = child->NextSiblingElement())
   {
     // Create new item,
     CFileItemPtr item(new CFileItem());
@@ -611,20 +635,24 @@ bool CRSSDirectory::GetDirectory(const CURL& url, CFileItemList &items)
       items.Add(item);
   }
 
-  items.AddSortMethod(SortByNone   , 231, LABEL_MASKS("%L", "%D", "%L", ""));    // FileName, Duration | Foldername, empty
-  items.AddSortMethod(SortByLabel  , 551, LABEL_MASKS("%L", "%D", "%L", ""));    // FileName, Duration | Foldername, empty
-  items.AddSortMethod(SortBySize   , 553, LABEL_MASKS("%L", "%I", "%L", "%I"));  // FileName, Size | Foldername, Size
-  items.AddSortMethod(SortByDate   , 552, LABEL_MASKS("%L", "%J", "%L", "%J"));  // FileName, Date | Foldername, Date
+  items.AddSortMethod(SortBy::NONE, 231,
+                      LABEL_MASKS("%L", "%D", "%L", "")); // FileName, Duration | Foldername, empty
+  items.AddSortMethod(SortBy::LABEL, 551,
+                      LABEL_MASKS("%L", "%D", "%L", "")); // FileName, Duration | Foldername, empty
+  items.AddSortMethod(SortBy::SIZE, 553,
+                      LABEL_MASKS("%L", "%I", "%L", "%I")); // FileName, Size | Foldername, Size
+  items.AddSortMethod(SortBy::DATE, 552,
+                      LABEL_MASKS("%L", "%J", "%L", "%J")); // FileName, Date | Foldername, Date
 
   CDateTime time = CDateTime::GetCurrentDateTime();
   int mins = 60;
-  TiXmlElement* ttl = docHandle.FirstChild("rss").FirstChild("ttl").Element();
+  auto* ttl = docHandle.FirstChildElement("rss").FirstChildElement("ttl").ToElement();
   if (ttl)
     mins = strtol(ttl->FirstChild()->Value(),NULL,10);
   time += CDateTimeSpan(0,0,mins,0);
   items.SetPath(strPath);
   items.Save();
-  CSingleLock lock2(m_section);
+  std::unique_lock lock2(m_section);
   m_cache.insert(make_pair(strPath,time));
 
   return true;

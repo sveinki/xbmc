@@ -1,82 +1,95 @@
 /*
- *      Copyright (C) 2005-2016 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
-#include <memory>
 #include "platform/Platform.h"
 
-class CAppParamParser;
+#include <memory>
 
-namespace ADDON {
+namespace ADDON
+{
 class CAddonMgr;
 class CBinaryAddonManager;
 class CBinaryAddonCache;
 class CVFSAddonCache;
 class CServiceAddonManager;
 class CRepositoryUpdater;
-}
-
-namespace ActiveAE {
-class CActiveAE;
-}
-
-namespace ANNOUNCEMENT
-{
-class CAnnouncementManager;
-}
+} // namespace ADDON
 
 namespace PVR
 {
 class CPVRManager;
 }
 
-namespace PLAYLIST
+namespace KODI::PLAYLIST
 {
-  class CPlayListPlayer;
+class CPlayListPlayer;
 }
 
 class CContextMenuManager;
 #ifdef HAS_PYTHON
 class XBPython;
 #endif
+#if defined(HAS_FILESYSTEM_SMB)
+namespace WSDiscovery
+{
+class IWSDiscovery;
+}
+#endif
 class CDataCacheCore;
-class CSettings;
-class IAE;
 class CFavouritesService;
+class CNetworkBase;
+class CWinSystemBase;
+class CPowerManager;
+class CWeatherManager;
+class CSlideShowDelegator;
 
 namespace KODI
 {
+namespace ADDONS
+{
+class CExtsMimeSupportList;
+}
+
 namespace GAME
 {
-  class CControllerManager;
-  class CGameServices;
+class CControllerManager;
+class CGameServices;
+} // namespace GAME
+
+namespace RETRO
+{
+class CGUIGameRenderManager;
 }
+namespace UTILS::I18N
+{
+class CSubTagRegistryManager;
+} // namespace UTILS::I18N
+} // namespace KODI
+
+namespace MEDIA_DETECT
+{
+class CDetectDVDMedia;
 }
 
 namespace PERIPHERALS
 {
-  class CPeripherals;
+class CPeripherals;
 }
 
 class CInputManager;
+class CFileExtensionProvider;
+class CPlayerCoreFactory;
+class CDatabaseManager;
+class CProfileManager;
+class CEventLog;
+class CMediaManager;
 
 class CServiceManager
 {
@@ -84,27 +97,30 @@ public:
   CServiceManager();
   ~CServiceManager();
 
+  bool InitForTesting();
   bool InitStageOne();
-  bool InitStageTwo(const CAppParamParser &params);
-  bool CreateAudioEngine();
-  bool DestroyAudioEngine();
-  bool StartAudioEngine();
-  bool InitStageThree();
+  bool InitStageTwo(const std::string& profilesUserDataFolder);
+  bool InitStageThree(const std::shared_ptr<CProfileManager>& profileManager);
+  void DeinitTesting();
   void DeinitStageThree();
   void DeinitStageTwo();
   void DeinitStageOne();
+
   ADDON::CAddonMgr& GetAddonMgr();
   ADDON::CBinaryAddonManager& GetBinaryAddonManager();
   ADDON::CBinaryAddonCache& GetBinaryAddonCache();
+  KODI::ADDONS::CExtsMimeSupportList& GetExtsMimeSupportList();
   ADDON::CVFSAddonCache& GetVFSAddonCache();
   ADDON::CServiceAddonManager& GetServiceAddons();
   ADDON::CRepositoryUpdater& GetRepositoryUpdater();
-  ANNOUNCEMENT::CAnnouncementManager& GetAnnouncementManager();
+  CNetworkBase& GetNetwork();
 #ifdef HAS_PYTHON
   XBPython& GetXBPython();
 #endif
+#if defined(HAS_FILESYSTEM_SMB)
+  WSDiscovery::IWSDiscovery& GetWSDiscovery();
+#endif
   PVR::CPVRManager& GetPVRManager();
-  IAE& GetActiveAE();
   CContextMenuManager& GetContextMenuManager();
   CDataCacheCore& GetDataCacheCore();
   /**\brief Get the platform object. This is save to be called after Init1() was called
@@ -112,56 +128,68 @@ public:
   CPlatform& GetPlatform();
   KODI::GAME::CControllerManager& GetGameControllerManager();
   KODI::GAME::CGameServices& GetGameServices();
+  KODI::RETRO::CGUIGameRenderManager& GetGameRenderManager();
   PERIPHERALS::CPeripherals& GetPeripherals();
 
-  PLAYLIST::CPlayListPlayer& GetPlaylistPlayer();
+  KODI::PLAYLIST::CPlayListPlayer& GetPlaylistPlayer();
+  CSlideShowDelegator& GetSlideShowDelegator();
   int init_level = 0;
 
-  CSettings& GetSettings();
   CFavouritesService& GetFavouritesService();
-  CInputManager &GetInputManager();
+  CInputManager& GetInputManager();
+  CFileExtensionProvider& GetFileExtensionProvider();
+
+  CPowerManager& GetPowerManager();
+
+  CWeatherManager& GetWeatherManager();
+
+  CPlayerCoreFactory& GetPlayerCoreFactory();
+
+  CDatabaseManager& GetDatabaseManager();
+
+  CMediaManager& GetMediaManager();
+
+#if !defined(TARGET_WINDOWS) && defined(HAS_OPTICAL_DRIVE)
+  MEDIA_DETECT::CDetectDVDMedia& GetDetectDVDMedia();
+#endif
+
+  KODI::UTILS::I18N::CSubTagRegistryManager& GetSubTagRegistryManager();
 
 protected:
-  struct delete_dataCacheCore
-  {
-    void operator()(CDataCacheCore *p) const;
-  };
-
-  struct delete_contextMenuManager
-  {
-    void operator()(CContextMenuManager *p) const;
-  };
-
-  struct delete_activeAE
-  {
-    void operator()(ActiveAE::CActiveAE *p) const;
-  };
-
-  struct delete_favouritesService
-  {
-    void operator()(CFavouritesService *p) const;
-  };
-
   std::unique_ptr<ADDON::CAddonMgr> m_addonMgr;
   std::unique_ptr<ADDON::CBinaryAddonManager> m_binaryAddonManager;
   std::unique_ptr<ADDON::CBinaryAddonCache> m_binaryAddonCache;
+  std::unique_ptr<KODI::ADDONS::CExtsMimeSupportList> m_extsMimeSupportList;
   std::unique_ptr<ADDON::CVFSAddonCache> m_vfsAddonCache;
   std::unique_ptr<ADDON::CServiceAddonManager> m_serviceAddons;
   std::unique_ptr<ADDON::CRepositoryUpdater> m_repositoryUpdater;
-  std::unique_ptr<ANNOUNCEMENT::CAnnouncementManager> m_announcementManager;
+#if defined(HAS_FILESYSTEM_SMB)
+  std::unique_ptr<WSDiscovery::IWSDiscovery> m_WSDiscovery;
+#endif
 #ifdef HAS_PYTHON
   std::unique_ptr<XBPython> m_XBPython;
 #endif
   std::unique_ptr<PVR::CPVRManager> m_PVRManager;
-  std::unique_ptr<ActiveAE::CActiveAE, delete_activeAE> m_ActiveAE;
-  std::unique_ptr<CContextMenuManager, delete_contextMenuManager> m_contextMenuManager;
-  std::unique_ptr<CDataCacheCore, delete_dataCacheCore> m_dataCacheCore;
+  std::unique_ptr<CContextMenuManager> m_contextMenuManager;
+  std::unique_ptr<CDataCacheCore> m_dataCacheCore;
   std::unique_ptr<CPlatform> m_Platform;
-  std::unique_ptr<PLAYLIST::CPlayListPlayer> m_playlistPlayer;
-  std::unique_ptr<CSettings> m_settings;
+  std::unique_ptr<KODI::PLAYLIST::CPlayListPlayer> m_playlistPlayer;
   std::unique_ptr<KODI::GAME::CControllerManager> m_gameControllerManager;
   std::unique_ptr<KODI::GAME::CGameServices> m_gameServices;
+  std::unique_ptr<KODI::RETRO::CGUIGameRenderManager> m_gameRenderManager;
   std::unique_ptr<PERIPHERALS::CPeripherals> m_peripherals;
-  std::unique_ptr<CFavouritesService, delete_favouritesService> m_favouritesService;
+  std::unique_ptr<CFavouritesService> m_favouritesService;
   std::unique_ptr<CInputManager> m_inputManager;
+  std::unique_ptr<CFileExtensionProvider> m_fileExtensionProvider;
+  std::unique_ptr<CNetworkBase> m_network;
+  std::unique_ptr<CPowerManager> m_powerManager;
+  std::unique_ptr<CWeatherManager> m_weatherManager;
+  std::unique_ptr<CPlayerCoreFactory> m_playerCoreFactory;
+  std::unique_ptr<CDatabaseManager> m_databaseManager;
+  std::unique_ptr<CMediaManager> m_mediaManager;
+#if !defined(TARGET_WINDOWS) && defined(HAS_OPTICAL_DRIVE)
+  std::unique_ptr<MEDIA_DETECT::CDetectDVDMedia> m_DetectDVDType;
+#endif
+  std::unique_ptr<CSlideShowDelegator> m_slideShowDelegator;
+  std::unique_ptr<KODI::UTILS::I18N::CSubTagRegistryManager> m_subTagRegistryManager;
 };

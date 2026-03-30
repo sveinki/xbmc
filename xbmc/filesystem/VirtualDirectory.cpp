@@ -1,33 +1,24 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
 #include "VirtualDirectory.h"
+
+#include "Directory.h"
+#include "DirectoryFactory.h"
+#include "FileItem.h"
+#include "FileItemList.h"
+#include "ServiceBroker.h"
+#include "SourcesDirectory.h"
 #include "URL.h"
 #include "Util.h"
-#include "utils/URIUtils.h"
-#include "utils/StringUtils.h"
-#include "Directory.h"
-#include "SourcesDirectory.h"
 #include "storage/MediaManager.h"
-#include "FileItem.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
 
 using namespace XFILE;
 
@@ -38,19 +29,18 @@ CVirtualDirectory::CVirtualDirectory(void)
 {
   m_flags = DIR_FLAG_ALLOW_PROMPT;
   m_allowNonLocalSources = true;
-  m_allowThreads = true;
 }
 
 CVirtualDirectory::~CVirtualDirectory(void) = default;
 
 /*!
  \brief Add shares to the virtual directory
- \param VECSOURCES Shares to add
- \sa CMediaSource, VECSOURCES
+ \param std::vector<CMediaSource> Shares to add
+ \sa CMediaSource, std::vector<CMediaSource>
  */
-void CVirtualDirectory::SetSources(const VECSOURCES& vecSources)
+void CVirtualDirectory::SetSources(const std::vector<CMediaSource>& sources)
 {
-  m_vecSources = vecSources;
+  m_sources = sources;
 }
 
 /*!
@@ -64,16 +54,25 @@ void CVirtualDirectory::SetSources(const VECSOURCES& vecSources)
 
 bool CVirtualDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 {
-  return GetDirectory(url,items,true);
+  return GetDirectory(url, items, true, false);
 }
-bool CVirtualDirectory::GetDirectory(const CURL& url, CFileItemList &items, bool bUseFileDirectories)
+
+bool CVirtualDirectory::GetDirectory(const CURL& url, CFileItemList &items, bool bUseFileDirectories, bool keepImpl)
 {
   std::string strPath = url.Get();
   int flags = m_flags;
   if (!bUseFileDirectories)
     flags |= DIR_FLAG_NO_FILE_DIRS;
   if (!strPath.empty() && strPath != "files://")
-    return CDirectory::GetDirectory(strPath, items, m_strFileMask, flags, m_allowThreads);
+  {
+    CURL realURL = URIUtils::SubstitutePath(url);
+    if (!m_pDir)
+      m_pDir.reset(CDirectoryFactory::Create(realURL));
+    bool ret = CDirectory::GetDirectory(strPath, m_pDir, items, m_strFileMask, flags);
+    if (!keepImpl)
+      m_pDir.reset();
+    return ret;
+  }
 
   // if strPath is blank, clear the list (to avoid parent items showing up)
   if (strPath.empty())
@@ -83,10 +82,16 @@ bool CVirtualDirectory::GetDirectory(const CURL& url, CFileItemList &items, bool
   items.SetPath(strPath);
 
   // grab our shares
-  VECSOURCES shares;
+  std::vector<CMediaSource> shares;
   GetSources(shares);
   CSourcesDirectory dir;
   return dir.GetDirectory(shares, items);
+}
+
+void CVirtualDirectory::CancelDirectory()
+{
+  if (m_pDir)
+    m_pDir->CancelDirectory();
 }
 
 /*!
@@ -96,7 +101,9 @@ bool CVirtualDirectory::GetDirectory(const CURL& url, CFileItemList &items, bool
  \note The parameter \e strPath can not be a share with directory. Eg. "iso9660://dir" will return \e false.
     It must be "iso9660://".
  */
-bool CVirtualDirectory::IsSource(const std::string& strPath, VECSOURCES *sources, std::string *name) const
+bool CVirtualDirectory::IsSource(const std::string& strPath,
+                                 std::vector<CMediaSource>* sources,
+                                 std::string* name) const
 {
   std::string strPathCpy = strPath;
   StringUtils::TrimRight(strPathCpy, "/\\");
@@ -107,7 +114,7 @@ bool CVirtualDirectory::IsSource(const std::string& strPath, VECSOURCES *sources
   if(URIUtils::IsDOSPath(strPathCpy))
     StringUtils::Replace(strPathCpy, '/', '\\');
 
-  VECSOURCES shares;
+  std::vector<CMediaSource> shares;
   if (sources)
     shares = *sources;
   else
@@ -139,7 +146,7 @@ bool CVirtualDirectory::IsSource(const std::string& strPath, VECSOURCES *sources
 bool CVirtualDirectory::IsInSource(const std::string &path) const
 {
   bool isSourceName;
-  VECSOURCES shares;
+  std::vector<CMediaSource> shares;
   GetSources(shares);
   int iShare = CUtil::GetMatchingSource(path, shares, isSourceName);
   if (URIUtils::IsOnDVD(path))
@@ -158,22 +165,22 @@ bool CVirtualDirectory::IsInSource(const std::string &path) const
   return (iShare > -1);
 }
 
-void CVirtualDirectory::GetSources(VECSOURCES &shares) const
+void CVirtualDirectory::GetSources(std::vector<CMediaSource>& shares) const
 {
-  shares = m_vecSources;
+  shares = m_sources;
   // add our plug n play shares
 
   if (m_allowNonLocalSources)
-    g_mediaManager.GetRemovableDrives(shares);
+    CServiceBroker::GetMediaManager().GetRemovableDrives(shares);
 
-#ifdef HAS_DVD_DRIVE
+#ifdef HAS_OPTICAL_DRIVE
   // and update our dvd share
   for (unsigned int i = 0; i < shares.size(); ++i)
   {
     CMediaSource& share = shares[i];
-    if (share.m_iDriveType == CMediaSource::SOURCE_TYPE_DVD)
+    if (share.m_iDriveType == SourceType::OPTICAL_DISC)
     {
-      if(g_mediaManager.IsAudio(share.strPath))
+      if (CServiceBroker::GetMediaManager().IsAudio(share.strPath))
       {
         share.strStatus = "Audio-CD";
         share.strPath = "cdda://local/";
@@ -181,11 +188,11 @@ void CVirtualDirectory::GetSources(VECSOURCES &shares) const
       }
       else
       {
-        share.strStatus = g_mediaManager.GetDiskLabel(share.strPath);
-        share.strDiskUniqueId = g_mediaManager.GetDiskUniqueId(share.strPath);
-        if (!share.strPath.length()) // unmounted CD
+        share.strStatus = CServiceBroker::GetMediaManager().GetDiskLabel(share.strPath);
+        share.strDiskUniqueId = CServiceBroker::GetMediaManager().GetDiskUniqueId(share.strPath);
+        if (share.strPath.empty()) // unmounted CD
         {
-          if (g_mediaManager.GetDiscPath() == "iso9660://")
+          if (CServiceBroker::GetMediaManager().GetDiscPath() == "iso9660://")
             share.strPath = "iso9660://";
           else
             // share is unmounted and not iso9660, discard it

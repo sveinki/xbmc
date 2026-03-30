@@ -1,287 +1,361 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <map>
+#pragma once
 
-#include "XBDateTime.h"
+#include "addons/kodi-dev-kit/include/kodi/c-api/addon-instance/pvr/pvr_epg.h"
+#include "powermanagement/PowerState.h"
 #include "threads/CriticalSection.h"
+#include "threads/Event.h"
 #include "threads/Thread.h"
-#include "utils/Observer.h"
+#include "utils/EventStream.h"
 
-#include "pvr/PVRSettings.h"
-#include "pvr/epg/Epg.h"
-#include "pvr/epg/EpgDatabase.h"
+#include <atomic>
+#include <list>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
-class CFileItemList;
-class CGUIDialogProgressBarHandle;
+class CDateTime;
 
 namespace PVR
 {
-  struct SUpdateRequest
-  {
-    int clientID;
-    unsigned int channelID;
-  };
+class CEpgUpdateRequest;
+class CEpgTagStateChange;
+class CPVREpg;
+class CPVREpgChannelData;
+class CPVREpgDatabase;
+class CPVREpgInfoTag;
+class CPVREpgSearchFilter;
+class CPVRSettings;
 
-  class CPVREpgContainer : public Observer, public Observable, private CThread
-  {
-    friend class CPVREpgDatabase;
+enum class PVREvent;
 
-  public:
-    /*!
-     * @brief Create a new EPG table container.
-     */
-    CPVREpgContainer(void);
+struct PVREpgSearchData;
 
-    /*!
-     * @brief Destroy this instance.
-     */
-    ~CPVREpgContainer(void) override;
+class CPVREpgContainer : private CThread, public CPowerState
+{
+  friend class CPVREpgDatabase;
 
-    /*!
-     * @brief Get a pointer to the database instance.
-     * @return A pointer to the database instance.
-     */
-    CPVREpgDatabase *GetDatabase(void) { return &m_database; }
+public:
+  CPVREpgContainer() = delete;
 
-    /*!
-     * @brief Start the EPG update thread.
-     * @param bAsync Should the EPG container starts asynchronously
-     */
-    void Start(bool bAsync);
+  /*!
+   * @brief Create a new EPG table container.
+   */
+  explicit CPVREpgContainer(CEventSource<PVREvent>& eventSource);
 
-    /*!
-     * @brief Stop the EPG update thread.
-     * @return
-     */
-    bool Stop(void);
+  /*!
+   * @brief Destroy this instance.
+   */
+  ~CPVREpgContainer() override;
 
-    /*!
-     * @brief Clear all EPG entries.
-     * @param bClearDb Clear the database too if true.
-     */
-    void Clear(bool bClearDb = false);
+  /*!
+   * @brief Get a pointer to the database instance.
+   * @return A pointer to the database instance.
+   */
+  std::shared_ptr<CPVREpgDatabase> GetEpgDatabase() const;
 
-    /*!
-     * @brief Stop the update thread and unload all data.
-     */
-    void Unload(void);
+  /*!
+   * @brief Start the EPG update thread.
+   */
+  void Start();
 
-    /*!
-     * @brief Clear the EPG and all it's database entries.
-     */
-    void Reset(void) { Clear(true); }
+  /*!
+   * @brief Stop the EPG update thread.
+   */
+  void Stop();
 
-    /*!
-     * @brief Check whether the EpgContainer has fully started.
-     * @return True if started, false otherwise.
-     */
-    bool IsStarted(void) const;
+  /*!
+   * @brief Propagate event on system sleep
+   */
+  void OnSleep() override;
 
-    /*!
-     * @brief Delete an EPG table from this container.
-     * @param epg The table to delete.
-     * @param bDeleteFromDatabase Delete this table from the database too if true.
-     * @return
-     */
-    bool DeleteEpg(const CPVREpg &epg, bool bDeleteFromDatabase = false);
+  /*!
+   * @brief Propagate event on system wake
+   */
+  void OnWake() override;
 
-    /*!
-     * @brief Process a notification from an observable.
-     * @param obs The observable that sent the update.
-     * @param msg The update message.
-     */
-    void Notify(const Observable &obs, const ObservableMessage msg) override;
+  /*!
+   * @brief unload all EPG data.
+   */
+  void Unload();
 
-    CPVREpgPtr CreateChannelEpg(const PVR::CPVRChannelPtr &channel);
+  /*!
+   * @brief Queue the deletion of the given EPG tables from this container.
+   * @param epg The tables to delete.
+   * @return True on success, false otherwise.
+   */
+  bool QueueDeleteEpgs(const std::vector<std::shared_ptr<CPVREpg>>& epgs);
 
-    /*!
-     * @brief Get all EPG tables and apply a filter.
-     * @param results The fileitem list to store the results in.
-     * @param filter The filter to apply.
-     * @return The amount of entries that were added.
-     */
-    int GetEPGSearch(CFileItemList &results, const CPVREpgSearchFilter &filter);
+  /*!
+   * @brief CEventStream callback for PVR events.
+   * @param event The event.
+   */
+  void Notify(const PVREvent& event);
 
-    /*!
-     * @brief Get the start time of the first entry.
-     * @return The start time.
-     */
-    const CDateTime GetFirstEPGDate(void);
+  /*!
+   * @brief Create the EPg for a given channel.
+   * @param iEpgId The EPG id.
+   * @param strScraperName The scraper name.
+   * @param channelData The channel data.
+   * @return the created EPG
+   */
+  std::shared_ptr<CPVREpg> CreateChannelEpg(int iEpgId,
+                                            const std::string& strScraperName,
+                                            const std::shared_ptr<CPVREpgChannelData>& channelData);
 
-    /*!
-      * @brief Get the end time of the last entry.
-      * @return The end time.
-      */
-    const CDateTime GetLastEPGDate(void);
+  /*!
+   * @brief Get the start and end time across all EPGs.
+   * @return The times; first: start time, second: end time.
+   */
+  std::pair<CDateTime, CDateTime> GetFirstAndLastEPGDate() const;
 
-    /*!
-     * @brief Get an EPG table given it's ID.
-     * @param iEpgId The database ID of the table.
-     * @return The table or NULL if it wasn't found.
-     */
-    CPVREpgPtr GetById(int iEpgId) const;
+  /*!
+   * @brief Get all EPGs.
+   * @return The EPGs.
+   */
+  std::vector<std::shared_ptr<CPVREpg>> GetAllEpgs() const;
 
-    /*!
-     * @brief Get the EPG event with the given event id
-     * @param channel The channel to get the event for.
-     * @param iBroadcastId The event id to get
-     * @return The requested event, or an empty tag when not found
-     */
-    CPVREpgInfoTagPtr GetTagById(const PVR::CPVRChannelPtr &channel, unsigned int iBroadcastId) const;
+  /*!
+   * @brief Get an EPG given its ID.
+   * @param iEpgId The database ID of the table.
+   * @return The EPG or nullptr if it wasn't found.
+   */
+  std::shared_ptr<CPVREpg> GetById(int iEpgId) const;
 
-    /*!
-     * @brief Get the EPG events matching the given timer
-     * @param timer The timer to get the matching events for.
-     * @return The matching events, or an empty vector when no matching tag was found
-     */
-    std::vector<CPVREpgInfoTagPtr> GetEpgTagsForTimer(const PVR::CPVRTimerInfoTagPtr &timer) const;
+  /*!
+   * @brief Get an EPG given its client id and channel uid.
+   * @param iClientId the id of the pvr client providing the EPG
+   * @param iChannelUid the uid of the channel for the EPG
+   * @return The EPG or nullptr if it wasn't found.
+   */
+  std::shared_ptr<CPVREpg> GetByChannelUid(int iClientId, int iChannelUid) const;
 
-    /*!
-     * @brief Notify EPG table observers when the currently active tag changed.
-     * @return True if the check was done, false if it was not the right time to check
-     */
-    bool CheckPlayingEvents(void);
+  /*!
+   * @brief Get the EPG event with the given event id
+   * @param epg The epg to lookup the event.
+   * @param iBroadcastId The event id to lookup.
+   * @return The requested event, or an empty tag when not found
+   */
+  std::shared_ptr<CPVREpgInfoTag> GetTagById(const std::shared_ptr<const CPVREpg>& epg,
+                                             unsigned int iBroadcastId) const;
 
-    /*!
-     * @brief The next EPG ID to be given to a table when the db isn't being used.
-     * @return The next ID.
-     */
-    unsigned int NextEpgId(void);
+  /*!
+   * @brief Get the EPG event with the given database id
+   * @param iDatabaseId The id to lookup.
+   * @return The requested event, or an empty tag when not found
+   */
+  std::shared_ptr<CPVREpgInfoTag> GetTagByDatabaseId(int iDatabaseId) const;
 
-    /*!
-     * @brief Close the progress bar if it's visible.
-     */
-    void CloseProgressDialog(void);
+  /*!
+   * @brief Get the EPG event with the given path
+   * @param path The path
+   * @return The requested event, or an empty tag when not found
+   */
+  std::shared_ptr<CPVREpgInfoTag> GetTagByPath(const std::string& path) const;
 
-    /*!
-     * @brief Show the progress bar
-     * @param bUpdating True if updating epg entries, false if just loading them from db
-     */
-    void ShowProgressDialog(bool bUpdating = true);
+  /*!
+   * @brief Get all EPG tags matching the given search criteria.
+   * @param searchData The search criteria.
+   * @return The matching tags.
+   */
+  std::vector<std::shared_ptr<CPVREpgInfoTag>> GetTags(const PVREpgSearchData& searchData) const;
 
-    /*!
-     * @brief Update the progress bar.
-     * @param iCurrent The current position.
-     * @param iMax The maximum position.
-     * @param strText The text to display.
-     */
-    void UpdateProgressDialog(int iCurrent, int iMax, const std::string &strText);
+  /*!
+   * @brief Notify EPG container that there are pending manual EPG updates
+   * @param bHasPendingUpdates The new value
+   */
+  void SetHasPendingUpdates(bool bHasPendingUpdates = true);
 
-    /*!
-     * @return True to not to store EPG entries in the database.
-     */
-    bool IgnoreDB() const;
+  /*!
+   * @brief A client triggered an epg update request for a channel
+   * @param iClientID The id of the client which triggered the update request
+   * @param iUniqueChannelID The uid of the channel for which the epg shall be updated
+   */
+  void UpdateRequest(int iClientID, int iUniqueChannelID);
 
-    /*!
-     * @brief Wait for an EPG update to finish.
-     * @param bInterrupt True to interrupt a running update.
-     */
-    void WaitForUpdateFinish(bool bInterrupt = true);
+  /*!
+   * @brief A client announced an updated epg tag for a channel
+   * @param tag The epg tag containing the updated data
+   * @param eNewState The kind of change (CREATED, UPDATED, DELETED)
+   */
+  void UpdateFromClient(const std::shared_ptr<CPVREpgInfoTag>& tag, EPG_EVENT_STATE eNewState);
 
-    /*!
-     * @brief Set to true to prevent updates.
-     * @param bSetTo The new value.
-     */
-    void PreventUpdates(bool bSetTo = true) { m_bPreventUpdates = bSetTo;  }
+  /*!
+   * @brief Get the number of past days to show in the guide and to import from backends.
+   * @return the number of past epg days.
+   */
+  int GetPastDaysToDisplay() const;
 
-    /*!
-     * @brief Notify EPG container that there are pending manual EPG updates
-     * @param bHasPendingUpdates The new value
-     */
-    void SetHasPendingUpdates(bool bHasPendingUpdates = true);
+  /*!
+   * @brief Get the number of future days to show in the guide and to import from backends.
+   * @return the number of future epg days.
+   */
+  int GetFutureDaysToDisplay() const;
 
-    /*!
-     * @brief Call Persist() on each table
-     * @return True when they all were persisted, false otherwise.
-     */
-    bool PersistAll(void);
+  /*!
+   * @brief Inform the epg container that playback of an item just started.
+   */
+  void OnPlaybackStarted();
 
-    /*!
-     * @brief client can trigger an update request for a channel
-     */
-    void UpdateRequest(int clientID, unsigned int channelID);
+  /*!
+   * @brief Inform the epg container that playback of an item was stopped due to user interaction.
+   */
+  void OnPlaybackStopped();
 
-  private:
-    /*!
-     * @brief Load the EPG settings.
-     * @return True if the settings were loaded successfully, false otherwise.
-     */
-    bool LoadSettings(void);
+  /*!
+   * @brief Erase stale texture db entries and image files.
+   * @return number of cleaned up images.
+   */
+  int CleanupCachedImages();
 
-    /*!
-     * @brief Remove old EPG entries.
-     * @return True if the old entries were removed successfully, false otherwise.
-     */
-    bool RemoveOldEntries(void);
+  /*!
+   * @brief Get all saved searches from the database.
+   * @param bRadio Whether to fetch saved searches for radio or TV.
+   * @return The searches.
+   */
+  std::vector<std::shared_ptr<CPVREpgSearchFilter>> GetSavedSearches(bool bRadio) const;
 
-    /*!
-     * @brief Load and update the EPG data.
-     * @param bOnlyPending Only check and update EPG tables with pending manual updates
-     * @return True if the update has not been interrupted, false otherwise.
-     */
-    bool UpdateEPG(bool bOnlyPending = false);
+  /*!
+   * @brief Get the saved search matching the given id.
+   * @param bRadio Whether to fetch a TV or radio saved search.
+   * @param iId The id.
+   * @return The saved search or nullptr if not found.
+   */
+  std::shared_ptr<CPVREpgSearchFilter> GetSavedSearchById(bool bRadio, int iId) const;
 
-    /*!
-     * @return True if a running update should be interrupted, false otherwise.
-     */
-    bool InterruptUpdate(void) const;
+  /*!
+   * @brief Persist a saved search in the database.
+   * @param search The saved search.
+   * @return True on success, false otherwise.
+   */
+  bool PersistSavedSearch(CPVREpgSearchFilter& search);
 
-    /*!
-     * @brief EPG update thread
-     */
-    void Process(void) override;
+  /*!
+   * @brief Update time last executed for the given search.
+   * @param epgSearch The search.
+   * @return True on success, false otherwise.
+   */
+  bool UpdateSavedSearchLastExecuted(const CPVREpgSearchFilter& epgSearch) const;
 
-    /*!
-     * @brief Load all tables from the database
-     */
-    void LoadFromDB(void);
+  /*!
+   * @brief Delete a saved search from the database.
+   * @param search The saved search.
+   * @return True on success, false otherwise.
+   */
+  bool DeleteSavedSearch(const CPVREpgSearchFilter& search);
 
-    void InsertFromDatabase(int iEpgID, const std::string &strName, const std::string &strScraperName);
+private:
+  /*!
+   * @brief Notify EPG table observers when the currently active tag changed.
+   * @return True if the check was done, false if it was not the right time to check
+   */
+  bool CheckPlayingEvents();
 
-    CPVREpgDatabase m_database; /*!< the EPG database */
+  /*!
+   * @brief The next EPG ID to be given to a table when the db isn't being used.
+   * @return The next ID.
+   */
+  int NextEpgId();
 
-    /** @name Class state properties */
-    //@{
-    bool         m_bIsUpdating;            /*!< true while an update is running */
-    bool         m_bIsInitialising;        /*!< true while the epg manager hasn't loaded all tables */
-    bool         m_bStarted;               /*!< true if EpgContainer has fully started */
-    bool         m_bLoaded;                /*!< true after epg data is initially loaded from the database */
-    bool         m_bPreventUpdates;        /*!< true to prevent EPG updates */
-    int          m_pendingUpdates;         /*!< count of pending manual updates */
-    time_t       m_iLastEpgCleanup;        /*!< the time the EPG was cleaned up */
-    time_t       m_iNextEpgUpdate;         /*!< the time the EPG will be updated */
-    time_t       m_iNextEpgActiveTagCheck; /*!< the time the EPG will be checked for active tag updates */
-    unsigned int m_iNextEpgId;             /*!< the next epg ID that will be given to a new table when the db isn't being used */
-    EPGMAP       m_epgs;                   /*!< the EPGs in this container */
-    //@}
+  /*!
+   * @brief Wait for an EPG update to finish.
+   */
+  void WaitForUpdateFinish();
 
-    CGUIDialogProgressBarHandle *  m_progressHandle; /*!< the progress dialog that is visible when updating the first time */
-    CCriticalSection               m_critSection;    /*!< a critical section for changes to this container */
-    CEvent                         m_updateEvent;    /*!< trigger when an update finishes */
+  /*!
+   * @brief Call Persist() on each table
+   * @param iMaxTimeslice time in milliseconds for max processing. Return after this time
+   *        even if not all data was persisted, unless value is -1
+   * @return True when they all were persisted, false otherwise.
+   */
+  bool PersistAll(unsigned int iMaxTimeslice) const;
 
-    std::list<SUpdateRequest> m_updateRequests; /*!< list of update requests triggered by addon */
-    CCriticalSection m_updateRequestsLock;      /*!< protect update requests */
+  /*!
+   * @brief Remove old EPG entries.
+   * @return True if the old entries were removed successfully, false otherwise.
+   */
+  bool RemoveOldEntries();
 
-    bool m_bUpdateNotificationPending; /*!< true while an epg updated notification to observers is pending. */
-    CPVRSettings m_settings;
-  };
-}
+  /*!
+   * @brief Load and update the EPG data.
+   * @param bOnlyPending Only check and update EPG tables with pending manual updates
+   * @return True if the update has not been interrupted, false otherwise.
+   */
+  bool UpdateEPG(bool bOnlyPending = false);
+
+  /*!
+   * @brief Check whether a running update should be interrupted.
+   * @return True if a running update should be interrupted, false otherwise.
+   */
+  bool InterruptUpdate() const;
+
+  /*!
+   * @brief EPG update thread
+   */
+  void Process() override;
+
+  /*!
+   * @brief Load all tables from the database
+   */
+  void LoadFromDatabase();
+
+  /*!
+   * @brief Insert data from database
+   * @param newEpg the EPG containing the updated data.
+   */
+  void InsertFromDB(const std::shared_ptr<CPVREpg>& newEpg);
+
+  /*!
+   * @brief Queue the deletion of an EPG table from this container.
+   * @param epg The table to delete.
+   * @param database The database containing the epg data.
+   * @return True on success, false otherwise.
+   */
+  bool QueueDeleteEpg(const std::shared_ptr<const CPVREpg>& epg,
+                      const std::shared_ptr<CPVREpgDatabase>& database);
+
+  std::shared_ptr<CPVREpgDatabase> m_database; /*!< the EPG database */
+
+  bool m_bIsUpdating = false; /*!< true while an update is running */
+  std::atomic<bool> m_bIsInitialising = {
+      true}; /*!< true while the epg manager hasn't loaded all tables */
+  bool m_bLoaded = false; /*!< true after epg data is initially loaded from the database */
+  bool m_bPreventUpdates = false; /*!< true to prevent EPG updates */
+  bool m_bPlaying = false; /*!< true if Kodi is currently playing something */
+  int m_pendingUpdates = 0; /*!< count of pending manual updates */
+  time_t m_iLastEpgCleanup = 0; /*!< the time the EPG was cleaned up */
+  time_t m_iNextEpgUpdate = 0; /*!< the time the EPG will be updated */
+  time_t m_iNextEpgActiveTagCheck =
+      0; /*!< the time the EPG will be checked for active tag updates */
+  int m_iNextEpgId =
+      0; /*!< the next epg ID that will be given to a new table when the db isn't being used */
+
+  std::map<int, std::shared_ptr<CPVREpg>>
+      m_epgIdToEpgMap; /*!< the EPGs in this container. maps epg ids to epgs */
+  std::map<std::pair<int, int>, std::shared_ptr<CPVREpg>>
+      m_channelUidToEpgMap; /*!< the EPGs in this container. maps channel uids to epgs */
+
+  mutable CCriticalSection m_critSection; /*!< a critical section for changes to this container */
+  CEvent m_updateEvent; /*!< trigger when an update finishes */
+
+  std::list<CEpgUpdateRequest> m_updateRequests; /*!< list of update requests triggered by addon */
+  CCriticalSection m_updateRequestsLock; /*!< protect update requests */
+
+  std::list<CEpgTagStateChange> m_epgTagChanges; /*!< list of updated epg tags announced by addon */
+  CCriticalSection m_epgTagChangesLock; /*!< protect changed epg tags list */
+
+  bool m_bUpdateNotificationPending =
+      false; /*!< true while an epg updated notification to observers is pending. */
+  std::unique_ptr<CPVRSettings> m_settings;
+  CEventSource<PVREvent>& m_events;
+};
+} // namespace PVR

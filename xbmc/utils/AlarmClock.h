@@ -1,24 +1,12 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "Stopwatch.h"
 #include "threads/CriticalSection.h"
@@ -51,8 +39,8 @@ public:
     // note: strName should be lower case only here
     //       No point checking it at the moment due to it only being called
     //       from GUIInfoManager (which is always lowercase)
-    //    CLog::Log(LOGDEBUG,"checking for %s",strName.c_str());
-    return (m_event.find(strName) != m_event.end());
+    //    CLog::Log(LOGDEBUG,"checking for {}",strName);
+    return (m_event.contains(strName));
   }
 
   double GetRemaining(const std::string& strName)
@@ -60,10 +48,12 @@ public:
     std::map<std::string,SAlarmClockEvent>::iterator iter;
     if ((iter=m_event.find(strName)) != m_event.end())
     {
-      return iter->second.m_fSecs-(iter->second.watch.IsRunning() ? iter->second.watch.GetElapsedSeconds() : 0.f);
+      return iter->second.m_fSecs - static_cast<double>(iter->second.watch.IsRunning()
+                                                            ? iter->second.watch.GetElapsedSeconds()
+                                                            : 0.f);
     }
 
-    return 0.f;
+    return 0.0;
   }
 
   void Stop(const std::string& strName, bool bSilent = false);
@@ -72,7 +62,7 @@ private:
   std::map<std::string,SAlarmClockEvent> m_event;
   CCriticalSection m_events;
 
-  bool m_bIsRunning;
+  bool m_bIsRunning = false;
 };
 
 extern CAlarmClock g_alarmClock;

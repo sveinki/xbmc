@@ -1,10 +1,6 @@
-set(SOURCES EventScanRate.cpp
-            EventScanner.cpp
-            Peripherals.cpp)
+set(SOURCES Peripherals.cpp)
 
-set(HEADERS EventScanRate.h
-            EventScanner.h
-            Peripherals.h
+set(HEADERS Peripherals.h
             PeripheralTypes.h)
 
 core_add_library(peripherals)

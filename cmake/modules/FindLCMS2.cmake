@@ -3,46 +3,33 @@
 # -----------
 # Finds the LCMS Color Management library
 #
-# This will will define the following variables::
+# This will define the following target:
 #
-# LCMS2_FOUND - system has LCMS Color Management
-# LCMS2_INCLUDE_DIRS - the LCMS Color Management include directory
-# LCMS2_LIBRARIES - the LCMS Color Management libraries
-# LCMS2_DEFINITIONS - the LCMS Color Management definitions
-#
-# and the following imported targets::
-#
-#   LCMS2::LCMS2   - The LCMS Color Management library
+#   ${APP_NAME_LC}::LCMS2 - The LCMS Color Management library
 
-if(PKG_CONFIG_FOUND)
-  pkg_check_modules(PC_LCMS2 lcms2 QUIET)
-endif()
+if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
 
-find_path(LCMS2_INCLUDE_DIR NAMES lcms2.h
-                            PATHS ${PC_LCMS2_INCLUDEDIR})
-find_library(LCMS2_LIBRARY NAMES lcms2 liblcms2
-                           PATHS ${PC_LCMS2_LIBDIR})
+  include(cmake/scripts/common/ModuleHelpers.cmake)
 
-set(LCMS2_VERSION ${PC_LCMS2_VERSION})
+  set(${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC lcms2)
+  set(${${CMAKE_FIND_PACKAGE_NAME}_MODULE_LC}_DISABLE_VERSION ON)
 
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(LCMS2
-                                  REQUIRED_VARS LCMS2_LIBRARY LCMS2_INCLUDE_DIR
-                                  VERSION_VAR LCMS2_VERSION)
+  SETUP_BUILD_VARS()
 
-if(LCMS2_FOUND)
-  set(LCMS2_LIBRARIES ${LCMS2_LIBRARY})
-  set(LCMS2_INCLUDE_DIRS ${LCMS2_INCLUDE_DIR})
-  set(LCMS2_DEFINITIONS -DHAVE_LCMS2=1)
+  SETUP_FIND_SPECS()
 
-  if(NOT TARGET LCMS2::LCMS2)
-    add_library(LCMS2::LCMS2 UNKNOWN IMPORTED)
-    set_target_properties(LCMS2::LCMS2 PROPERTIES
-                                       IMPORTED_LOCATION "${LCMS2_LIBRARY}"
-                                       INTERFACE_INCLUDE_DIRECTORIES "${LCMS2_INCLUDE_DIR}"
-                                       INTERFACE_COMPILE_DEFINITIONS HAVE_LCMS2=1)
+  SEARCH_EXISTING_PACKAGES()
+
+  if(${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME}_FOUND)
+    if(TARGET PkgConfig::${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME_PC})
+      add_library(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} ALIAS PkgConfig::${${CMAKE_FIND_PACKAGE_NAME}_SEARCH_NAME_PC})
+    elseif(TARGET lcms2::lcms2)
+      # Kodi target - windows prebuilt lib
+      add_library(${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME} ALIAS lcms2::lcms2)
+    endif()
+
+    set(${${CMAKE_FIND_PACKAGE_NAME}_MODULE}_COMPILE_DEFINITIONS HAVE_LCMS2;CMS_NO_REGISTER_KEYWORD)
+
+    ADD_TARGET_COMPILE_DEFINITION()
   endif()
 endif()
-
-mark_as_advanced(LCMS2_INCLUDE_DIR LCMS2_LIBRARY)
-

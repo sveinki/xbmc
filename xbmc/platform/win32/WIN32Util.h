@@ -1,46 +1,37 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <vector>
+#pragma once
 
+#include "HDRStatus.h"
 #include "URL.h"
-#include "Cfgmgr32.h"
-#include "MediaSource.h"
-#include "guilib/Geometry.h"
-#include "powermanagement/PowerManager.h"
-#include "utils/Stopwatch.h"
+#include "utils/Geometry.h"
 
-enum Drive_Types
-{
-  ALL_DRIVES = 0,
-  LOCAL_DRIVES,
-  REMOVABLE_DRIVES,
-  DVD_DRIVES
-};
+#include <dxgi1_5.h>
 
 #define BONJOUR_EVENT             ( WM_USER + 0x100 )	// Message sent to the Window when a Bonjour event occurs.
 #define BONJOUR_BROWSER_EVENT     ( WM_USER + 0x110 )
+#define TRAY_ICON_NOTIFY          ( WM_USER + 0x120 )
 
-class CURL; // forward declaration
+struct VideoDriverInfo
+{
+  UINT vendorId;
+  int majorVersion;
+  int minorVersion;
+  bool valid;
+  std::string version;
+
+  void Log();
+};
+
+// forward declarations
+class CURL;
+enum class UserDirectoriesLocation;
 
 class CWIN32Util
 {
@@ -50,15 +41,11 @@ public:
 
   static char FirstDriveFromMask (ULONG unitmask);
   static int GetDriveStatus(const std::string &strPath, bool bStatusEx=false);
-  static bool PowerManagement(PowerState State);
-  static int BatteryLevel();
   static bool XBMCShellExecute(const std::string &strPath, bool bWaitForScriptExit=false);
-  static std::vector<std::string> GetDiskUsage();
   static std::string GetResInfoString();
-  static int GetDesktopColorDepth();
-  static std::string GetSpecialFolder(int csidl);
-  static std::string GetSystemPath();
-  static std::string GetProfilePath();
+  static size_t GetSystemMemorySize();
+
+  static std::string GetProfilePath(UserDirectoriesLocation loc);
   static std::string UncToSmb(const std::string &strPath);
   static std::string SmbToUnc(const std::string &strPath);
   static bool AddExtraLongPathPrefix(std::wstring& path);
@@ -76,29 +63,50 @@ public:
   static HRESULT ToggleTray(const char cDriveLetter='\0');
   static HRESULT EjectTray(const char cDriveLetter='\0');
   static HRESULT CloseTray(const char cDriveLetter='\0');
-  static bool EjectDrive(const char cDriveLetter='\0');
   static BOOL IsCurrentUserLocalAdministrator();
-  static void GetDrivesByType(VECSOURCES &localDrives, Drive_Types eDriveType=ALL_DRIVES, bool bonlywithmedia=false);
-  static std::string GetFirstOpticalDrive();
 
+#ifdef TARGET_WINDOWS_DESKTOP
+  static std::string GetAppDataFolder();
   static LONG UtilRegGetValue( const HKEY hKey, const char *const pcKey, DWORD *const pdwType, char **const ppcBuffer, DWORD *const pdwSizeBuff, const DWORD dwSizeAdd );
   static bool UtilRegOpenKeyEx( const HKEY hKeyParent, const char *const pcKey, const REGSAM rsAccessRights, HKEY *hKey, const bool bReadX64= false );
-
   static bool GetFocussedProcess(std::string &strProcessFile);
+#endif // TARGET_WINDOWS_DESKTOP
   static void CropSource(CRect& src, CRect& dst, CRect target, UINT rotation = 0);
 
-  static bool IsUsbDevice(const std::wstring &strWdrive);
-
   static std::string WUSysMsg(DWORD dwError);
-
   static bool SetThreadLocalLocale(bool enable = true);
-private:
-  static DEVINST GetDrivesDevInstByDiskNumber(long DiskNumber);
-};
 
+  // HDR display support
+  static HDR_STATUS ToggleWindowsHDR();
+  static HDR_STATUS GetWindowsHDRStatus();
+  static bool GetSystemSdrWhiteLevel(const std::wstring& gdiDeviceName, float* sdrWhiteLevel);
 
-class CWinIdleTimer : public CStopWatch
-{
-public:
-  void StartZero();
+  static void PlatformSyslog();
+
+  static VideoDriverInfo GetVideoDriverInfo(const UINT vendorId, const std::wstring& driverDesc);
+  static VideoDriverInfo GetVideoDriverInfoDX(const UINT vendorId, LUID adapterLuid);
+  static VideoDriverInfo FormatVideoDriverInfo(const UINT vendorId, uint64_t rawVersion);
+  static VideoDriverInfo FormatVideoDriverInfo(const UINT vendorId, const std::string& version);
+  static std::wstring GetDisplayFriendlyName(const std::wstring& GdiDeviceName);
+  /*!
+   * \brief Set the thread name using SetThreadDescription when available
+   * \param handle handle of the thread
+   * \param name name of the thread
+   * \return true if the name was successfully set, false otherwise (API not supported or API failure)
+   */
+  static bool SetThreadName(const HANDLE handle, const std::string& name);
+  /*!
+   * \brief Compare two Windows driver versions (xx.xx.xx.xx string format)
+   * \param version1 First version to compare
+   * \param version2 Second version to compare
+   * \return true when version1 is greater or equal to version2.
+   * Undefined results when the strings are not formatted properly.
+  */
+  static bool IsDriverVersionAtLeast(const std::string& version1, const std::string& version2);
+  /*!
+   * \brief Format a Windows HRESULT value into a string for logging
+   * \param hr The error code
+   * \return Formatted string
+   */
+  static std::string FormatHRESULT(HRESULT hr);
 };

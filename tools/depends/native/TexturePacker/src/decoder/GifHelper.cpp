@@ -19,8 +19,9 @@
  */
 
 #include "GifHelper.h"
+
 #include <algorithm>
-#include <stdlib.h>
+#include <cstdlib>
 #include <cstring>
 
 #define UNSIGNED_LITTLE_ENDIAN(lo, hi)	((lo) | ((hi) << 8))
@@ -29,11 +30,11 @@
 class Gifreader
 {
 public:
-  unsigned char* buffer;
-  unsigned int buffSize;
-  unsigned int readPosition;
+  unsigned char* buffer = nullptr;
+  unsigned int buffSize = 0;
+  unsigned int readPosition = 0;
 
-  Gifreader() : buffer(nullptr), buffSize(0), readPosition(0) {}
+  Gifreader() = default;
 };
 
 int ReadFromVfs(GifFileType* gif, GifByteType* gifbyte, int len)
@@ -42,29 +43,16 @@ int ReadFromVfs(GifFileType* gif, GifByteType* gifbyte, int len)
   return gifFile->Read(gifbyte, len);
 }
 
-GifHelper::GifHelper() :
-  m_imageSize(0),
-  m_pitch(0),
-  m_loops(0),
-  m_numFrames(0),
-  m_filename(""),
-  m_gif(nullptr),
-  m_pTemplate(nullptr)
-{
-  m_gifFile = new CFile();
-}
-
 GifHelper::~GifHelper()
 {
     Close(m_gif);
     Release();
-    delete m_gifFile;
 }
 
 bool GifHelper::Open(GifFileType*& gif, void *dataPtr, InputFunc readFunc)
 {
   int err = 0;
-#if GIFLIB_MAJOR == 5
+#if GIFLIB_MAJOR >= 5
   gif = DGifOpen(dataPtr, readFunc, &err);
 #else
   gif = DGifOpen(dataPtr, readFunc);
@@ -85,7 +73,7 @@ void GifHelper::Close(GifFileType* gif)
 {
   int err = 0;
   int reason = 0;
-#if GIFLIB_MAJOR == 5 && GIFLIB_MINOR >= 1
+#if (GIFLIB_MAJOR == 5 && GIFLIB_MINOR >= 1) || GIFLIB_MAJOR >= 6
   err = DGifCloseFile(gif, &reason);
 #else
   err = DGifCloseFile(gif);
@@ -113,8 +101,7 @@ const char* GifHelper::Reason(int reason)
 
 void GifHelper::Release()
 {
-  delete[] m_pTemplate;
-  m_pTemplate = nullptr;
+  m_pTemplate.clear();
   m_globalPalette.clear();
   m_frames.clear();
 }
@@ -180,10 +167,10 @@ bool GifHelper::LoadGifMetaData(GifFileType* gif)
   return true;
 }
 
-bool GifHelper::LoadGifMetaData(const char* file)
+bool GifHelper::LoadGifMetaData(const std::string& file)
 {
-  m_gifFile->Close();
-  if (!m_gifFile->Open(file) || !Open(m_gif, m_gifFile, ReadFromVfs))
+  m_gifFile.Close();
+  if (!m_gifFile.Open(file) || !Open(m_gif, &m_gifFile, ReadFromVfs))
     return false;
 
   return LoadGifMetaData(m_gif);
@@ -194,7 +181,7 @@ bool GifHelper::Slurp(GifFileType* gif)
   if (DGifSlurp(gif) == GIF_ERROR)
   {
     int reason = 0;
-#if GIFLIB_MAJOR == 5
+#if GIFLIB_MAJOR >= 5
     reason = gif->Error;
 #else
     reason = GifLastError();
@@ -206,10 +193,10 @@ bool GifHelper::Slurp(GifFileType* gif)
   return true;
 }
 
-bool GifHelper::LoadGif(const char* file)
+bool GifHelper::LoadGif(const std::string& file)
 {
   m_filename = file;
-  if (!LoadGifMetaData(m_filename.c_str()))
+  if (!LoadGifMetaData(m_filename))
     return false;
 
   try
@@ -221,7 +208,7 @@ bool GifHelper::LoadGif(const char* file)
     {
       fprintf(stderr, "Gif::LoadGif(): Could not extract any frame. File %s\n", m_filename.c_str());
       return false;
-    } 
+    }
     else if (extractedFrames < (int)m_numFrames)
     {
       fprintf(stderr, "Gif::LoadGif(): Could only extract %d/%d frames. File %s\n", extractedFrames, m_numFrames, m_filename.c_str());
@@ -240,8 +227,7 @@ bool GifHelper::LoadGif(const char* file)
 
 void GifHelper::InitTemplateAndColormap()
 {
-  m_pTemplate = new unsigned char[m_imageSize];
-  memset(m_pTemplate, 0, m_imageSize);
+  m_pTemplate.resize(m_imageSize);
 
   if (m_gif->SColorMap)
   {
@@ -260,7 +246,7 @@ bool GifHelper::GcbToFrame(GifFrame &frame, unsigned int imgIdx)
 
   if (m_gif->ImageCount > 0)
   {
-#if GIFLIB_MAJOR == 5
+#if GIFLIB_MAJOR >= 5
     GraphicsControlBlock gcb;
     if (DGifSavedExtensionToGCB(m_gif, imgIdx, &gcb))
     {
@@ -299,12 +285,6 @@ int GifHelper::ExtractFrames(unsigned int count)
 {
   if (!m_gif)
     return -1;
-
-  if (!m_pTemplate)
-  {
-    fprintf(stderr, "Gif::ExtractFrames(): No frame template available\n");
-    return -1;
-  }
 
   int extracted = 0;
   for (unsigned int i = 0; i < count; i++)
@@ -349,9 +329,7 @@ int GifHelper::ExtractFrames(unsigned int count)
       continue;
     }
 
-    frame->m_pImage = new unsigned char[m_imageSize];
-    frame->m_imageSize = m_imageSize;
-    memcpy(frame->m_pImage, m_pTemplate, m_imageSize);
+    frame->m_pImage = m_pTemplate;
 
     ConstructFrame(*frame, savedImage.RasterBits);
 
@@ -373,7 +351,8 @@ void GifHelper::ConstructFrame(GifFrame &frame, const unsigned char* src) const
 
   for (unsigned int dest_y = frame.m_top, src_y = 0; src_y < frame.m_height; ++dest_y, ++src_y)
   {
-    unsigned char *to = frame.m_pImage + (dest_y * m_pitch) + (frame.m_left * sizeof(GifColor));
+    unsigned char* to =
+        frame.m_pImage.data() + (dest_y * m_pitch) + (frame.m_left * sizeof(GifColor));
 
     const unsigned char *from = src + (src_y * frame.m_width);
     for (unsigned int src_x = 0; src_x < frame.m_width; ++src_x)
@@ -403,24 +382,24 @@ bool GifHelper::PrepareTemplate(GifFrame &frame)
   case DISPOSAL_UNSPECIFIED:
     /* Leave image in place */
   case DISPOSE_DO_NOT:
-    memcpy(m_pTemplate, frame.m_pImage, m_imageSize);
-    break;
+      m_pTemplate = frame.m_pImage;
+      break;
 
-    /*
+      /*
        Clear the frame's area to transparency.
        The disposal names is misleading. Do not restore to the background color because
        this part of the specification is ignored by all browsers/image viewers.
     */
   case DISPOSE_BACKGROUND:
   {
-    ClearFrameAreaToTransparency(m_pTemplate, frame);
-    break;
+      ClearFrameAreaToTransparency(m_pTemplate.data(), frame);
+      break;
   }
   /* Restore to previous content */
   case DISPOSE_PREVIOUS:
   {
 
-    /* 
+    /*
     * This disposal method makes no sense for the first frame
     * Since browsers etc. handle that too, we'll fall back to DISPOSE_DO_NOT
     */
@@ -436,7 +415,7 @@ bool GifHelper::PrepareTemplate(GifFrame &frame)
     {
       if (m_frames[i]->m_disposal != DISPOSE_PREVIOUS)
       {
-        memcpy(m_pTemplate, m_frames[i]->m_pImage, m_imageSize);
+        m_pTemplate = m_frames[i]->m_pImage;
         valid = true;
         break;
       }
@@ -469,44 +448,4 @@ void GifHelper::ClearFrameAreaToTransparency(unsigned char* dest, const GifFrame
       *to++ = 0;
     }
   }
-}
-
-GifFrame::GifFrame() :
-  m_pImage(nullptr),
-  m_delay(0),
-  m_top(0),
-  m_left(0),
-  m_disposal(0),
-  m_height(0),
-  m_width(0),
-  m_imageSize(0)
-{}
-
-
-GifFrame::GifFrame(const GifFrame& src) :
-  m_pImage(nullptr),
-  m_delay(src.m_delay),
-  m_top(src.m_top),
-  m_left(src.m_left),
-  m_disposal(src.m_disposal),
-  m_height(src.m_height),
-  m_width(src.m_width),
-  m_imageSize(src.m_imageSize)
-{
-  if (src.m_pImage)
-  {
-    m_pImage = new unsigned char[m_imageSize];
-    memcpy(m_pImage, src.m_pImage, m_imageSize);
-  }
-
-  if (src.m_palette.size())
-  {
-    m_palette = src.m_palette;
-  }
-}
-
-GifFrame::~GifFrame()
-{
-  delete[] m_pImage;
-  m_pImage = nullptr;
 }

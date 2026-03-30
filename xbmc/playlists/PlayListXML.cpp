@@ -1,33 +1,24 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2020 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PlayListXML.h"
-#include "filesystem/File.h"
+
+#include "FileItem.h"
 #include "Util.h"
-#include "utils/log.h"
+#include "filesystem/File.h"
+#include "media/MediaLockState.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
-#include "utils/XMLUtils.h"
 #include "utils/Variant.h"
+#include "utils/XBMCTinyXML2.h"
+#include "utils/XMLUtils.h"
+#include "utils/log.h"
 
-using namespace PLAYLIST;
 using namespace XFILE;
 
 /*
@@ -62,13 +53,14 @@ using namespace XFILE;
 </streams>
 */
 
+namespace KODI::PLAYLIST
+{
 
 CPlayListXML::CPlayListXML(void) = default;
 
 CPlayListXML::~CPlayListXML(void) = default;
 
-
-static inline std::string GetString( const TiXmlElement* pRootElement, const char *tagName )
+static inline std::string GetString(const tinyxml2::XMLElement* pRootElement, const char* tagName)
 {
   std::string strValue;
   if ( XMLUtils::GetString(pRootElement, tagName, strValue) )
@@ -79,7 +71,7 @@ static inline std::string GetString( const TiXmlElement* pRootElement, const cha
 
 bool CPlayListXML::Load( const std::string& strFileName )
 {
-  CXBMCTinyXML xmlDoc;
+  CXBMCTinyXML2 xmlDoc;
 
   m_strPlayListName = URIUtils::GetFileName(strFileName);
   URIUtils::GetParentPath(strFileName, m_strBasePath);
@@ -89,20 +81,20 @@ bool CPlayListXML::Load( const std::string& strFileName )
   // Try to load the file as XML. If it does not load, return an error.
   if ( !xmlDoc.LoadFile( strFileName ) )
   {
-    CLog::Log(LOGERROR, "Playlist %s has invalid format/malformed xml", strFileName.c_str());
+    CLog::Log(LOGERROR, "Playlist {} has invalid format/malformed xml", strFileName);
     return false;
   }
 
-  TiXmlElement *pRootElement = xmlDoc.RootElement();
+  auto* pRootElement = xmlDoc.RootElement();
 
   // If the stream does not contain "streams", still ok. Not an error.
-  if ( !pRootElement || stricmp( pRootElement->Value(), "streams" ) )
+  if (!pRootElement || StringUtils::CompareNoCase(pRootElement->Value(), "streams"))
   {
-    CLog::Log(LOGERROR, "Playlist %s has no <streams> root", strFileName.c_str());
+    CLog::Log(LOGERROR, "Playlist {} has no <streams> root", strFileName);
     return false;
   }
 
-  TiXmlElement* pSet = pRootElement->FirstChildElement("stream");
+  auto* pSet = pRootElement->FirstChildElement("stream");
 
   while ( pSet )
   {
@@ -146,15 +138,13 @@ bool CPlayListXML::Load( const std::string& strFileName )
 
        if ( !lockpass.empty() )
        {
-         newItem->m_strLockCode = lockpass;
-         newItem->m_iHasLock = 2;
-         newItem->m_iLockMode = LOCK_MODE_NUMERIC;
+         newItem->GetLockInfo().Set(LockMode::NUMERIC, lockpass, LOCK_STATE_LOCKED);
        }
 
        Add(newItem);
     }
     else
-       CLog::Log(LOGERROR, "Playlist entry %s in file %s has missing <url> tag", name.c_str(), strFileName.c_str());
+      CLog::Log(LOGERROR, "Playlist entry {} in file {} has missing <url> tag", name, strFileName);
 
     pSet = pSet->NextSiblingElement("stream");
   }
@@ -165,12 +155,13 @@ bool CPlayListXML::Load( const std::string& strFileName )
 
 void CPlayListXML::Save(const std::string& strFileName) const
 {
-  if (!m_vecItems.size()) return ;
+  if (m_vecItems.empty())
+    return;
   std::string strPlaylist = CUtil::MakeLegalPath(strFileName);
   CFile file;
   if (!file.OpenForWrite(strPlaylist, true))
   {
-    CLog::Log(LOGERROR, "Could not save WPL playlist: [%s]", strPlaylist.c_str());
+    CLog::Log(LOGERROR, "Could not save WPL playlist: [{}]", strPlaylist);
     return ;
   }
   std::string write;
@@ -180,20 +171,23 @@ void CPlayListXML::Save(const std::string& strFileName) const
   {
     CFileItemPtr item = m_vecItems[i];
     write += StringUtils::Format("  <stream>\n" );
-    write += StringUtils::Format("    <url>%s</url>", item->GetPath().c_str() );
-    write += StringUtils::Format("    <name>%s</name>", item->GetLabel().c_str() );
+    write += StringUtils::Format("    <url>{}</url>", item->GetPath().c_str());
+    write += StringUtils::Format("    <name>{}</name>", item->GetLabel());
 
     if ( !item->GetProperty("language").empty() )
-      write += StringUtils::Format("    <lang>%s</lang>", item->GetProperty("language").c_str() );
+      write += StringUtils::Format("    <lang>{}</lang>", item->GetProperty("language").asString());
 
     if ( !item->GetProperty("category").empty() )
-      write += StringUtils::Format("    <category>%s</category>", item->GetProperty("category").c_str() );
+      write += StringUtils::Format("    <category>{}</category>",
+                                   item->GetProperty("category").asString());
 
     if ( !item->GetProperty("remotechannel").empty() )
-      write += StringUtils::Format("    <channel>%s</channel>", item->GetProperty("remotechannel").c_str() );
+      write += StringUtils::Format("    <channel>{}</channel>",
+                                   item->GetProperty("remotechannel").asString());
 
-    if ( item->m_iHasLock > 0 )
-      write += StringUtils::Format("    <lockpassword>%s<lockpassword>", item->m_strLockCode.c_str() );
+    if (item->GetLockInfo().GetState() > LOCK_STATE_NO_LOCK)
+      write +=
+          StringUtils::Format("    <lockpassword>{}<lockpassword>", item->GetLockInfo().GetCode());
 
     write += StringUtils::Format("  </stream>\n\n" );
   }
@@ -202,3 +196,5 @@ void CPlayListXML::Save(const std::string& strFileName) const
   file.Write(write.c_str(), write.size());
   file.Close();
 }
+
+} // namespace KODI::PLAYLIST

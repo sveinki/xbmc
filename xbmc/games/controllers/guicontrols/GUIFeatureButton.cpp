@@ -1,24 +1,14 @@
 /*
- *      Copyright (C) 2016-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIFeatureButton.h"
+
+#include "ServiceBroker.h"
 #include "games/controllers/windows/GUIControllerDefines.h"
 #include "guilib/GUIMessage.h"
 #include "guilib/WindowIDs.h"
@@ -28,14 +18,15 @@
 
 using namespace KODI;
 using namespace GAME;
+using namespace std::chrono_literals;
 
 CGUIFeatureButton::CGUIFeatureButton(const CGUIButtonControl& buttonTemplate,
                                      IConfigurationWizard* wizard,
-                                     const CControllerFeature& feature,
-                                     unsigned int index) :
-  CGUIButtonControl(buttonTemplate),
-  m_feature(feature),
-  m_wizard(wizard)
+                                     const CPhysicalFeature& feature,
+                                     unsigned int index)
+  : CGUIButtonControl(buttonTemplate),
+    m_feature(feature),
+    m_wizard(wizard)
 {
   // Initialize CGUIButtonControl
   SetLabel(m_feature.Label());
@@ -50,16 +41,17 @@ void CGUIFeatureButton::OnUnFocus(void)
   m_wizard->OnUnfocus(this);
 }
 
-bool CGUIFeatureButton::DoPrompt(const std::string& strPrompt, const std::string& strWarn, const std::string& strFeature, CEvent& waitEvent)
+bool CGUIFeatureButton::DoPrompt(const std::string& strPrompt,
+                                 const std::string& strWarn,
+                                 const std::string& strFeature,
+                                 CEvent& waitEvent)
 {
-  using namespace MESSAGING;
-
   bool bInterrupted = false;
 
   if (!HasFocus())
   {
     CGUIMessage msgFocus(GUI_MSG_SETFOCUS, GetID(), GetID());
-    CApplicationMessenger::GetInstance().SendGUIMessage(msgFocus, WINDOW_INVALID, false);
+    CServiceBroker::GetAppMessenger()->SendGUIMessage(msgFocus, WINDOW_INVALID, false);
   }
 
   CGUIMessage msgLabel(GUI_MSG_LABEL_SET, GetID(), GetID());
@@ -74,15 +66,15 @@ bool CGUIFeatureButton::DoPrompt(const std::string& strPrompt, const std::string
     std::string strLabel;
 
     if (bWarn)
-      strLabel = StringUtils::Format(strWarn.c_str(), strFeature.c_str(), secondsRemaining);
+      strLabel = StringUtils::Format(strWarn, strFeature, secondsRemaining);
     else
-      strLabel = StringUtils::Format(strPrompt.c_str(), strFeature.c_str(), secondsRemaining);
+      strLabel = StringUtils::Format(strPrompt, strFeature, secondsRemaining);
 
     msgLabel.SetLabel(strLabel);
-    CApplicationMessenger::GetInstance().SendGUIMessage(msgLabel, WINDOW_INVALID, false);
+    CServiceBroker::GetAppMessenger()->SendGUIMessage(msgLabel, WINDOW_INVALID, false);
 
     waitEvent.Reset();
-    bInterrupted = waitEvent.WaitMSec(1000); // Wait 1 second
+    bInterrupted = waitEvent.Wait(1000ms); // Wait 1 second
 
     if (bInterrupted)
       break;
@@ -90,7 +82,7 @@ bool CGUIFeatureButton::DoPrompt(const std::string& strPrompt, const std::string
 
   // Reset label
   msgLabel.SetLabel(m_feature.Label());
-  CApplicationMessenger::GetInstance().SendGUIMessage(msgLabel, WINDOW_INVALID, false);
+  CServiceBroker::GetAppMessenger()->SendGUIMessage(msgLabel, WINDOW_INVALID, false);
 
   return bInterrupted;
 }

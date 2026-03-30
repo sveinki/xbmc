@@ -1,37 +1,39 @@
-#pragma once
 /*
- *      Copyright (C) 2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "addons/AddonEvents.h"
-#include "addons/Repository.h"
-#include "dialogs/GUIDialogExtendedProgressBar.h"
+#pragma once
+
+#include "jobs/IJobCallback.h"
+#include "powermanagement/PowerState.h"
+#include "settings/lib/ISettingCallback.h"
 #include "threads/CriticalSection.h"
 #include "threads/Timer.h"
 #include "utils/EventStream.h"
-#include "XBDateTime.h"
+
+#include <memory>
 #include <vector>
+
+class CDateTime;
 
 namespace ADDON
 {
 
-class CRepositoryUpdater : private ITimerCallback, private IJobCallback, public ISettingCallback
+class CAddonMgr;
+
+class CRepository;
+using RepositoryPtr = std::shared_ptr<CRepository>;
+
+class CRepositoryUpdateJob;
+
+class CRepositoryUpdater : private ITimerCallback,
+                           private IJobCallback,
+                           public ISettingCallback,
+                           public CPowerState
 {
 public:
   explicit CRepositoryUpdater(CAddonMgr& addonMgr);
@@ -54,12 +56,20 @@ public:
    */
   void Await();
 
+  enum class UpdateScheduleType
+  {
+    /*! Update should be scheduled as the first update after application start or setting change. */
+    First,
+    /*! Update should be scheduled as a regular update during application runtime. */
+    Regular
+  };
+
   /**
    * Schedule an automatic update to run based on settings and previous update
    * times. May be called when there are external changes this updater must know
    * about. Any previously scheduled update will be cancelled.
    */
-  void ScheduleUpdate();
+  void ScheduleUpdate(UpdateScheduleType scheduleType);
 
   /**
    * Returns the time of the last check (oldest). Invalid time if never checked.
@@ -67,7 +77,7 @@ public:
   CDateTime LastUpdated() const;
 
 
-  void OnSettingChanged(std::shared_ptr<const CSetting> setting) override;
+  void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
 
   struct RepositoryUpdated { };
 
@@ -83,11 +93,11 @@ private:
 
   void OnTimeout() override;
 
-  void OnEvent(const ADDON::AddonEvent& event);
+  CDateTime ClosestNextCheck() const;
 
   CCriticalSection m_criticalSection;
   CTimer m_timer;
-  CEvent m_doneEvent;
+  CEvent m_doneEvent{true};
   std::vector<CRepositoryUpdateJob*> m_jobs;
   CAddonMgr& m_addonMgr;
 

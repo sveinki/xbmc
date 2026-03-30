@@ -1,39 +1,33 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIDialogTeletext.h"
-#include "utils/log.h"
-#include "Application.h"
+
 #include "ServiceBroker.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationPlayer.h"
+#include "dialogs/GUIDialogKaiToast.h"
+#include "guilib/GUIMessage.h"
 #include "guilib/GUITexture.h"
 #include "guilib/Texture.h"
-#include "guilib/LocalizeStrings.h"
-#include "dialogs/GUIDialogKaiToast.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/ColorUtils.h"
+#include "utils/log.h"
+#include "windowing/WinSystem.h"
 
 static int teletextFadeAmount = 0;
 
 CGUIDialogTeletext::CGUIDialogTeletext()
-    : CGUIDialog(WINDOW_DIALOG_OSD_TELETEXT, "")
+  : CGUIDialog(WINDOW_DIALOG_OSD_TELETEXT, ""), m_pTxtTexture(nullptr)
 {
-  m_pTxtTexture = NULL;
   m_renderOrder = RENDER_ORDER_DIALOG_TELETEXT;
 }
 
@@ -62,10 +56,14 @@ bool CGUIDialogTeletext::OnMessage(CGUIMessage& message)
   if (message.GetMessage() == GUI_MSG_WINDOW_INIT)
   {
     /* Do not open if no teletext is available */
-    if (!g_application.m_pPlayer->GetTeletextCache())
+    const auto& components = CServiceBroker::GetAppComponents();
+    const auto appPlayer = components.GetComponent<CApplicationPlayer>();
+    if (!appPlayer->HasTeletextCache())
     {
       Close();
-      CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Info, g_localizeStrings.Get(23049), "", 1500, false);
+      CGUIDialogKaiToast::QueueNotification(
+          CGUIDialogKaiToast::Info,
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(23049), "", 1500, false);
       return true;
     }
   }
@@ -81,12 +79,19 @@ bool CGUIDialogTeletext::OnMessage(CGUIMessage& message)
 
 void CGUIDialogTeletext::Process(unsigned int currentTime, CDirtyRegionList &dirtyregions)
 {
+  if (m_TextDecoder.Changed())
+  {
+    MarkDirtyRegion();
+  }
   CGUIDialog::Process(currentTime, dirtyregions);
   m_renderRegion = m_vertCoords;
 }
 
 void CGUIDialogTeletext::Render()
 {
+  if (CServiceBroker::GetWinSystem()->GetGfxContext().GetRenderOrder() ==
+      RENDER_ORDER_FRONT_TO_BACK)
+    return;
   // Do not render if we have no texture
   if (!m_pTxtTexture)
   {
@@ -124,8 +129,9 @@ void CGUIDialogTeletext::Render()
     MarkDirtyRegion();
   }
 
-  color_t color = ((color_t)(teletextFadeAmount * 2.55f) & 0xff) << 24 | 0xFFFFFF;
-  CGUITexture::DrawQuad(m_vertCoords, color, m_pTxtTexture);
+  KODI::UTILS::COLOR::Color color =
+      (static_cast<KODI::UTILS::COLOR::Color>(teletextFadeAmount * 2.55f) & 0xff) << 24 | 0xFFFFFF;
+  CGUITexture::DrawQuad(m_vertCoords, color, m_pTxtTexture.get(), nullptr, -1.0f);
 
   CGUIDialog::Render();
 }
@@ -140,14 +146,15 @@ void CGUIDialogTeletext::OnInitWindow()
 
   if (!m_TextDecoder.InitDecoder())
   {
-    CLog::Log(LOGERROR, "%s: failed to init teletext decoder", __FUNCTION__);
+    CLog::Log(LOGERROR, "{}: failed to init teletext decoder", __FUNCTION__);
     Close();
   }
 
-  m_pTxtTexture = new CTexture(m_TextDecoder.GetWidth(), m_TextDecoder.GetHeight(), XB_FMT_A8R8G8B8);
+  m_pTxtTexture =
+      CTexture::CreateTexture(m_TextDecoder.GetWidth(), m_TextDecoder.GetHeight(), XB_FMT_A8R8G8B8);
   if (!m_pTxtTexture)
   {
-    CLog::Log(LOGERROR, "%s: failed to create texture", __FUNCTION__);
+    CLog::Log(LOGERROR, "{}: failed to create texture", __FUNCTION__);
     Close();
   }
 
@@ -159,8 +166,7 @@ void CGUIDialogTeletext::OnDeinitWindow(int nextWindowID)
   m_windowLoaded = false;
   m_TextDecoder.EndDecoder();
 
-  delete m_pTxtTexture;
-  m_pTxtTexture = NULL;
+  m_pTxtTexture.reset();
 
   CGUIDialog::OnDeinitWindow(nextWindowID);
 }
@@ -169,14 +175,14 @@ void CGUIDialogTeletext::SetCoordinates()
 {
   float left, right, top, bottom;
 
-  g_graphicsContext.SetScalingResolution(m_coordsRes, m_needsScaling);
+  CServiceBroker::GetWinSystem()->GetGfxContext().SetScalingResolution(m_coordsRes, m_needsScaling);
 
-  left = g_graphicsContext.ScaleFinalXCoord(0, 0);
-  right = g_graphicsContext.ScaleFinalXCoord((float)m_coordsRes.iWidth, 0);
-  top = g_graphicsContext.ScaleFinalYCoord(0, 0);
-  bottom = g_graphicsContext.ScaleFinalYCoord(0, (float)m_coordsRes.iHeight);
+  left = CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord(0, 0);
+  right = CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalXCoord((float)m_coordsRes.iWidth, 0);
+  top = CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(0, 0);
+  bottom = CServiceBroker::GetWinSystem()->GetGfxContext().ScaleFinalYCoord(0, (float)m_coordsRes.iHeight);
 
-  if (CServiceBroker::GetSettings().GetBool(CSettings::SETTING_VIDEOPLAYER_TELETEXTSCALE))
+  if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_VIDEOPLAYER_TELETEXTSCALE))
   {
     /* Fixed aspect ratio to 4:3 for teletext */
     float width = right - left;

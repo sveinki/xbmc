@@ -1,49 +1,53 @@
 /*
- *      Copyright (C) 2005-2016 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include "DebugInfo.h"
 #include "OverlayRenderer.h"
-#include <string>
+#include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlay.h"
+#include "cores/VideoPlayer/DVDSubtitles/SubtitlesAdapter.h"
 
-class CDVDOverlayText;
+#include <atomic>
+#include <memory>
+#include <string>
 
 class CDebugRenderer
 {
 public:
   CDebugRenderer();
   virtual ~CDebugRenderer();
-  void SetInfo(std::string &info1, std::string &info2, std::string &info3, std::string &info4);
-  void Render(CRect &src, CRect &dst, CRect &view);
+  void Initialize();
+  void Dispose();
+  void SetInfo(DEBUG_INFO_PLAYER& info);
+  void SetInfo(DEBUG_INFO_VIDEO& video, DEBUG_INFO_RENDER& render);
+  void Render(CRect& src, CRect& dst, CRect& view);
   void Flush();
 
 protected:
-
   class CRenderer : public OVERLAY::CRenderer
   {
   public:
     CRenderer();
-    void Render(int idx) override;
+    void Render(int idx, float depth = 1.0f) override;
+    void CreateSubtitlesStyle();
+
+  private:
+    // Implementation of Observer
+    void Notify(const Observable& obs, const ObservableMessage msg) override{};
+
+    std::shared_ptr<struct KODI::SUBTITLES::STYLE::style> m_debugOverlayStyle;
   };
 
-  std::string m_strDebug[4];
-  CDVDOverlayText *m_overlay[4];
   CRenderer m_overlayRenderer;
+
+private:
+  CSubtitlesAdapter* m_adapter{nullptr};
+  std::atomic_bool m_isInitialized{false};
+  std::shared_ptr<CDVDOverlay> m_overlay;
 };

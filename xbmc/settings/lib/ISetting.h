@@ -1,26 +1,16 @@
-#pragma once
 /*
- *      Copyright (C) 2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2013-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-#include <string>
+
+#pragma once
 
 #include "SettingRequirement.h"
+
+#include <string>
 
 class CSettingsManager;
 class TiXmlNode;
@@ -124,12 +114,25 @@ public:
   static bool DeserializeIdentification(const TiXmlNode *node, std::string &identification);
 
 protected:
+  static constexpr int DefaultLabel = -1;
+  /*!
+   \brief Deserializes the given XML node to retrieve a setting object's identifier from the given attribute.
+
+   \param node XML node containing a setting object's identifier
+   \param attribute Attribute which contains the setting object's identifier
+   \param identification Will contain the deserialized setting object's identifier
+   \return True if a setting object's identifier was deserialized, false otherwise
+   */
+  static bool DeserializeIdentificationFromAttribute(const TiXmlNode* node,
+                                                     const std::string& attribute,
+                                                     std::string& identification);
+
   std::string m_id;
   CSettingsManager *m_settingsManager;
 
 private:
   bool m_visible = true;
-  int m_label = -1;
+  int m_label = DefaultLabel;
   int m_help = -1;
   bool m_meetsRequirements = true;
   CSettingRequirement m_requirementCondition;

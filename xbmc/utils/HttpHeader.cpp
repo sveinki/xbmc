@@ -1,25 +1,16 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "HttpHeader.h"
+
 #include "utils/StringUtils.h"
+
+#include <utility>
 
 // header white space characters according to RFC 2616
 const char* const CHttpHeader::m_whitespaceChars = " \t";
@@ -50,7 +41,7 @@ void CHttpHeader::Parse(const std::string& strData)
 
     const size_t nextLine = lineEnd + 1;
     if (lineEnd > pos && strDataC[lineEnd - 1] == '\x0d') // use '\x0d' instead of '\r' to be platform independent
-      lineEnd--; 
+      lineEnd--;
 
     if (m_headerdone)
       Clear(); // clear previous header and process new one
@@ -92,7 +83,7 @@ bool CHttpHeader::ParseLine(const std::string& headerLine)
     StringUtils::Trim(strValue, m_whitespaceChars);
 
     if (!strParam.empty() && !strValue.empty())
-      m_params.push_back(HeaderParams::value_type(strParam, strValue));
+      m_params.emplace_back(std::move(strParam), std::move(strValue));
     else
       return false;
   }
@@ -113,7 +104,7 @@ void CHttpHeader::AddParam(const std::string& param, const std::string& value, c
   if (overwrite)
   { // delete ALL parameters with the same name
     // note: 'GetValue' always returns last added parameter,
-    //       so you probably don't need to overwrite 
+    //       so you probably don't need to overwrite
     for (size_t i = 0; i < m_params.size();)
     {
       if (m_params[i].first == paramLower)
@@ -128,7 +119,7 @@ void CHttpHeader::AddParam(const std::string& param, const std::string& value, c
   if (valueTrim.empty())
     return;
 
-  m_params.push_back(HeaderParams::value_type(paramLower, valueTrim));
+  m_params.emplace_back(std::move(paramLower), std::move(valueTrim));
 }
 
 std::string CHttpHeader::GetValue(const std::string& strParam) const

@@ -1,26 +1,16 @@
-#pragma once
 /*
- *      Copyright (C) 2015 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-#include <vector>
+
+#pragma once
 
 #include "interfaces/legacy/AddonClass.h"
+
+#include <vector>
 
 struct HTTPPythonRequest;
 
@@ -34,18 +24,16 @@ namespace XBMCAddon
     {
     public:
       WsgiInputStreamIterator();
-      //! @todo Switch to 'override' usage once 14.04 (Trusty) hits EOL. swig <3.0 doesn't understand C++11
-      virtual ~WsgiInputStreamIterator();
+      ~WsgiInputStreamIterator() override;
 
 #ifdef DOXYGEN_SHOULD_USE_THIS
       /// \ingroup python_xbmcwsgi_WsgiInputStream
       /// \python_func{ read([size]) }
-      ///------------------------------------------------------------------------
       ///
       /// Read a maximum of `<size>` bytes from the wsgi.input stream.
       ///
       /// @param size         [opt] bytes to read
-      /// @return             Returns the readed string
+      /// @return             Returns the read string
       ///
       read(...);
 #else
@@ -55,13 +43,12 @@ namespace XBMCAddon
 #ifdef DOXYGEN_SHOULD_USE_THIS
       /// \ingroup python_xbmcwsgi_WsgiInputStream
       /// \python_func{ readline([size]) }
-      ///------------------------------------------------------------------------
       ///
       /// Read a full line up to a maximum of `<size>` bytes from the wsgi.input
       /// stream.
       ///
       /// @param size         [opt] bytes to read
-      /// @return             Returns the readed string line
+      /// @return             Returns the read string line
       ///
       read(...);
 #else
@@ -71,13 +58,12 @@ namespace XBMCAddon
 #ifdef DOXYGEN_SHOULD_USE_THIS
       /// \ingroup python_xbmcwsgi_WsgiInputStream
       /// \python_func{ readlines([sizehint]) }
-      ///------------------------------------------------------------------------
       ///
       /// Read multiple full lines up to at least `<sizehint>` bytes from the
       /// wsgi.input stream and return them as a list.
       ///
       /// @param sizehint      [opt] bytes to read
-      /// @return              Returns a list readed string lines
+      /// @return              Returns a list read string lines
       ///
       read(...);
 #else
@@ -92,11 +78,11 @@ namespace XBMCAddon
       bool operator!=(const WsgiInputStreamIterator& rhs);
       String& operator*();
       inline bool end() const { return m_remaining <= 0; }
-      
+
     protected:
       String m_data;
-      mutable unsigned long m_offset;
-      mutable unsigned long m_remaining;
+      mutable unsigned long m_offset = 0;
+      mutable unsigned long m_remaining = 0;
 
     private:
       String m_line;
@@ -116,8 +102,7 @@ namespace XBMCAddon
     {
     public:
       WsgiInputStream();
-      //! @todo Switch to 'override' usage once 14.04 (Trusty) hits EOL. swig <3.0 doesn't understand C++11
-      virtual ~WsgiInputStream();
+      ~WsgiInputStream() override;
 
 #if !defined SWIG && !defined DOXYGEN_SHOULD_SKIP_THIS
       WsgiInputStreamIterator* begin();

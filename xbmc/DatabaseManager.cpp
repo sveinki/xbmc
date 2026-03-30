@@ -1,95 +1,89 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DatabaseManager.h"
-#include "utils/log.h"
-#include "addons/AddonDatabase.h"
-#include "view/ViewDatabase.h"
+
+#include "ServiceBroker.h"
 #include "TextureDatabase.h"
+#include "addons/AddonDatabase.h"
 #include "music/MusicDatabase.h"
-#include "video/VideoDatabase.h"
 #include "pvr/PVRDatabase.h"
 #include "pvr/epg/EpgDatabase.h"
-#include "games/addons/savestates/SavestateDatabase.h"
 #include "settings/AdvancedSettings.h"
-#include "cores/AudioEngine/Engines/ActiveAE/AudioDSPAddons/ActiveAEDSP.h"
+#include "settings/SettingsComponent.h"
+#include "utils/log.h"
+#include "video/VideoDatabase.h"
+#include "view/ViewDatabase.h"
+
+#include <algorithm>
+#include <mutex>
 
 using namespace PVR;
-using namespace ActiveAE;
 
-CDatabaseManager &CDatabaseManager::GetInstance()
+CDatabaseManager::CDatabaseManager() :
+  m_bIsUpgrading(false)
 {
-  static CDatabaseManager s_manager;
-  return s_manager;
-}
-
-CDatabaseManager::CDatabaseManager(): m_bIsUpgrading(false)
-{
+  // Initialize the addon database (must be before the addon manager is init'd)
+  ADDON::CAddonDatabase db;
+  UpdateDatabase(db);
 }
 
 CDatabaseManager::~CDatabaseManager() = default;
 
-void CDatabaseManager::Initialize(bool addonsOnly)
+bool CDatabaseManager::Initialize()
 {
-  Deinitialize();
-  { CAddonDatabase db; UpdateDatabase(db); }
-  if (addonsOnly)
-    return;
-  CLog::Log(LOGDEBUG, "%s, updating databases...", __FUNCTION__);
+  std::unique_lock lock(m_section);
+
+  m_dbStatus.clear();
+
+  CLog::Log(LOGDEBUG, "{}, updating databases...", __FUNCTION__);
+
+  const std::shared_ptr<CAdvancedSettings> advancedSettings = CServiceBroker::GetSettingsComponent()->GetAdvancedSettings();
 
   // NOTE: Order here is important. In particular, CTextureDatabase has to be updated
   //       before CVideoDatabase.
+  {
+    ADDON::CAddonDatabase db;
+    UpdateDatabase(db);
+  }
   { CViewDatabase db; UpdateDatabase(db); }
   { CTextureDatabase db; UpdateDatabase(db); }
-  { CMusicDatabase db; UpdateDatabase(db, &g_advancedSettings.m_databaseMusic); }
-  { CVideoDatabase db; UpdateDatabase(db, &g_advancedSettings.m_databaseVideo); }
-  { CPVRDatabase db; UpdateDatabase(db, &g_advancedSettings.m_databaseTV); }
-  { CPVREpgDatabase db; UpdateDatabase(db, &g_advancedSettings.m_databaseEpg); }
-  { CActiveAEDSPDatabase db; UpdateDatabase(db, &g_advancedSettings.m_databaseADSP); }
-  CLog::Log(LOGDEBUG, "%s, updating databases... DONE", __FUNCTION__);
-  m_bIsUpgrading = false;
-}
+  { CMusicDatabase db; UpdateDatabase(db, &advancedSettings->m_databaseMusic); }
+  { CVideoDatabase db; UpdateDatabase(db, &advancedSettings->m_databaseVideo); }
+  { CPVRDatabase db; UpdateDatabase(db, &advancedSettings->m_databaseTV); }
+  { CPVREpgDatabase db; UpdateDatabase(db, &advancedSettings->m_databaseEpg); }
 
-void CDatabaseManager::Deinitialize()
-{
-  CSingleLock lock(m_section);
-  m_dbStatus.clear();
+  CLog::Log(LOGDEBUG, "{}, updating databases... DONE", __FUNCTION__);
+
+  m_bIsUpgrading = false;
+  m_connecting = false;
+
+  return std::ranges::all_of(m_dbStatus,
+                             [](const auto& db) { return db.second == DBStatus::READY; });
 }
 
 bool CDatabaseManager::CanOpen(const std::string &name)
 {
-  CSingleLock lock(m_section);
-  std::map<std::string, DB_STATUS>::const_iterator i = m_dbStatus.find(name);
+  std::unique_lock lock(m_section);
+  const auto i = m_dbStatus.find(name);
   if (i != m_dbStatus.end())
-    return i->second == DB_READY;
+    return i->second == DBStatus::READY;
   return false; // db isn't even attempted to update yet
 }
 
 void CDatabaseManager::UpdateDatabase(CDatabase &db, DatabaseSettings *settings)
 {
   std::string name = db.GetBaseDBName();
-  UpdateStatus(name, DB_UPDATING);
+  UpdateStatus(name, DBStatus::UPDATING);
   if (Update(db, settings ? *settings : DatabaseSettings()))
-    UpdateStatus(name, DB_READY);
+    UpdateStatus(name, DBStatus::READY);
   else
-    UpdateStatus(name, DB_FAILED);
+    UpdateStatus(name, DBStatus::FAILED);
 }
 
 bool CDatabaseManager::Update(CDatabase &db, const DatabaseSettings &settings)
@@ -99,20 +93,29 @@ bool CDatabaseManager::Update(CDatabase &db, const DatabaseSettings &settings)
 
   int version = db.GetSchemaVersion();
   std::string latestDb = dbSettings.name;
-  latestDb += StringUtils::Format("%d", version);
+  latestDb += std::to_string(version);
 
   while (version >= db.GetMinSchemaVersion())
   {
     std::string dbName = dbSettings.name;
     if (version)
-      dbName += StringUtils::Format("%d", version);
+      dbName += std::to_string(version);
 
-    if (db.Connect(dbName, dbSettings, false))
+    m_connecting = true;
+    const CDatabase::ConnectionState connectionState{db.Connect(dbName, dbSettings, false)};
+    m_connecting = false;
+
+    if (connectionState == CDatabase::ConnectionState::STATE_ERROR)
+    {
+      return false; // unable to connect
+    }
+    else if (connectionState == CDatabase::ConnectionState::STATE_CONNECTED)
     {
       // Database exists, take a copy for our current version (if needed) and reopen that one
       if (version < db.GetSchemaVersion())
       {
-        CLog::Log(LOGNOTICE, "Old database found - updating from version %i to %i", version, db.GetSchemaVersion());
+        CLog::Log(LOGINFO, "Old database found - updating from version {} to {}", version,
+                  db.GetSchemaVersion());
         m_bIsUpgrading = true;
 
         bool copy_fail = false;
@@ -123,7 +126,7 @@ bool CDatabaseManager::Update(CDatabase &db, const DatabaseSettings &settings)
         }
         catch (...)
         {
-          CLog::Log(LOGERROR, "Unable to copy old database %s to new version %s", dbName.c_str(), latestDb.c_str());
+          CLog::Log(LOGERROR, "Unable to copy old database {} to new version {}", dbName, latestDb);
           copy_fail = true;
         }
 
@@ -132,9 +135,9 @@ bool CDatabaseManager::Update(CDatabase &db, const DatabaseSettings &settings)
         if (copy_fail)
           return false;
 
-        if (!db.Connect(latestDb, dbSettings, false))
+        if (db.Connect(latestDb, dbSettings, false) != CDatabase::ConnectionState::STATE_CONNECTED)
         {
-          CLog::Log(LOGERROR, "Unable to open freshly copied database %s", latestDb.c_str());
+          CLog::Log(LOGERROR, "Unable to open freshly copied database {}", latestDb);
           return false;
         }
       }
@@ -151,7 +154,7 @@ bool CDatabaseManager::Update(CDatabase &db, const DatabaseSettings &settings)
     version--;
   }
   // try creating a new one
-  if (db.Connect(latestDb, dbSettings, true))
+  if (db.Connect(latestDb, dbSettings, true) == CDatabase::ConnectionState::STATE_CONNECTED)
     return true;
 
   // failed to update or open the database
@@ -167,52 +170,90 @@ bool CDatabaseManager::UpdateVersion(CDatabase &db, const std::string &dbName)
 
   if (version < db.GetMinSchemaVersion())
   {
-    CLog::Log(LOGERROR, "Can't update database %s from version %i - it's too old", dbName.c_str(), version);
+    CLog::Log(LOGERROR, "Can't update database {} from version {} - it's too old", dbName, version);
     return false;
   }
   else if (version < db.GetSchemaVersion())
   {
-    CLog::Log(LOGNOTICE, "Attempting to update the database %s from version %i to %i", dbName.c_str(), version, db.GetSchemaVersion());
+    CLog::Log(LOGINFO, "Attempting to update the database {} from version {} to {}", dbName,
+              version, db.GetSchemaVersion());
     bool success = true;
     db.BeginTransaction();
+
     try
     {
-      // drop old analytics, update table(s), recreate analytics, update version
+      // drop old analytics
       db.DropAnalytics();
+    }
+    catch (...)
+    {
+      success = false;
+    }
+    if (!success)
+    {
+      CLog::Log(LOGERROR, "Exception dropping old analytics from {}", dbName);
+      db.RollbackTransaction();
+      return false;
+    }
+
+    db.CommitTransaction();
+    db.BeginTransaction();
+
+    try
+    {
+      // update table(s), recreate analytics, update version
       db.UpdateTables(version);
       db.CreateAnalytics();
       db.UpdateVersionNumber();
     }
     catch (...)
     {
-      CLog::Log(LOGERROR, "Exception updating database %s from version %i to %i", dbName.c_str(), version, db.GetSchemaVersion());
+      CLog::Log(LOGERROR, "Exception updating database {} from version {} to {}", dbName, version,
+                db.GetSchemaVersion());
       success = false;
     }
     if (!success)
     {
-      CLog::Log(LOGERROR, "Error updating database %s from version %i to %i", dbName.c_str(), version, db.GetSchemaVersion());
+      CLog::Log(LOGERROR, "Error updating database {} from version {} to {}", dbName, version,
+                db.GetSchemaVersion());
       db.RollbackTransaction();
       return false;
     }
     bReturn = db.CommitTransaction();
-    CLog::Log(LOGINFO, "Update to version %i successful", db.GetSchemaVersion());
+    CLog::Log(LOGINFO, "Update to version {} successful", db.GetSchemaVersion());
   }
   else if (version > db.GetSchemaVersion())
   {
     bReturn = false;
-    CLog::Log(LOGERROR, "Can't open the database %s as it is a NEWER version than what we were expecting?", dbName.c_str());
+    CLog::Log(LOGERROR,
+              "Can't open the database {} as it is a NEWER version than what we were expecting?",
+              dbName);
   }
   else
   {
     bReturn = true;
-    CLog::Log(LOGNOTICE, "Running database version %s", dbName.c_str());
+    CLog::Log(LOGINFO, "Running database version {}", dbName);
   }
 
   return bReturn;
 }
 
-void CDatabaseManager::UpdateStatus(const std::string &name, DB_STATUS status)
+void CDatabaseManager::UpdateStatus(const std::string& name, DBStatus status)
 {
-  CSingleLock lock(m_section);
+  std::unique_lock lock(m_section);
   m_dbStatus[name] = status;
+}
+
+void CDatabaseManager::LocalizationChanged()
+{
+  std::unique_lock lock(m_section);
+
+  // update video version type table after language changed
+  CVideoDatabase videodb;
+  if (videodb.Open())
+  {
+    videodb.UpdateVideoVersionTypeTable();
+    CLog::Log(LOGDEBUG, "{}, Video version type table updated for new language settings",
+              __FUNCTION__);
+  }
 }

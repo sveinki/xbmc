@@ -1,73 +1,89 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
 
 #include <string>
 #include <vector>
 
 class CURL;
+class CAdvancedSettings;
+class CFileItem;
+
+/*! \brief Defines the methodology to find hosts on a given subnet 
+    \sa IsHostOnLAN
+*/
+enum class LanCheckMode
+{
+  /*! \brief Only match if the host is on the same subnet as the kodi host */
+  ONLY_LOCAL_SUBNET,
+  /*! \brief Match the host if it belongs to any private subnet */
+  ANY_PRIVATE_SUBNET
+};
 
 class URIUtils
 {
 public:
-  URIUtils(void);
-  virtual ~URIUtils(void);
+  // Don't URL encode "-_.!()" according to RFC1738
+  //! @todo Update it to "-_.~" after Gotham according to RFC3986
+  static constexpr std::string_view RFC1738{"-._!()"};
+  static constexpr std::string_view RFC3986{"-_.~"};
+
+  static std::string URLEncode(std::string_view strURLData, std::string_view URLSpec = RFC1738);
+  static std::string URLDecode(std::string_view strURLData);
+
+  static void RegisterAdvancedSettings(const CAdvancedSettings& advancedSettings);
+  static void UnregisterAdvancedSettings();
 
   static std::string GetDirectory(const std::string &strFilePath);
 
-  static const std::string GetFileName(const CURL& url);
-  static const std::string GetFileName(const std::string& strFileNameAndPath);
+  static std::string GetFileName(const CURL& url);
+  static std::string GetFileName(const std::string& strFileNameAndPath);
+  static std::string GetFileOrFolderName(std::string_view path);
 
   static std::string GetExtension(const CURL& url);
-  static std::string GetExtension(const std::string& strFileName);
+  static std::string GetExtension(const std::string& path);
+
+  /*! \brief Check if the CFileItem has a plugin path.
+   \param item The CFileItem.
+   \return true if there is a plugin path, false otherwise.
+  */
+  static bool HasPluginPath(const CFileItem& item);
 
   /*!
    \brief Check if there is a file extension
-   \param strFileName Path or URL to check
+   \param path Path or URL to check
    \return \e true if strFileName have an extension.
    \note Returns false when strFileName is empty.
    \sa GetExtension
    */
-  static bool HasExtension(const std::string& strFileName);
+  static bool HasExtension(const std::string& path);
 
   /*!
    \brief Check if filename have any of the listed extensions
-   \param strFileName Path or URL to check
-   \param strExtensions List of '.' prefixed lowercase extensions separated with '|'
+   \param path Path or URL to check
+   \param extensions List of '.' prefixed lowercase extensions separated with '|'
    \return \e true if strFileName have any one of the extensions.
    \note The check is case insensitive for strFileName, but requires
          strExtensions to be lowercase. Returns false when strFileName or
          strExtensions is empty.
    \sa GetExtension
    */
-  static bool HasExtension(const std::string& strFileName, const std::string& strExtensions);
-  static bool HasExtension(const CURL& url, const std::string& strExtensions);
+  static bool HasExtension(const std::string& path, std::string_view extensions);
+  static bool HasExtension(const CURL& url, std::string_view strExtensions);
 
-  static void RemoveExtension(std::string& strFileName);
-  static std::string ReplaceExtension(const std::string& strFile,
-                                     const std::string& strNewExtension);
-  static void Split(const std::string& strFileNameAndPath, 
+  static void RemoveExtension(std::string& path);
+  static std::string ReplaceExtension(const std::string& path, const std::string& newExtension);
+  static void Split(const std::string& strFileNameAndPath,
                     std::string& strPath, std::string& strFileName);
   static std::vector<std::string> SplitPath(const std::string& strPath);
 
-  static void GetCommonPath(std::string& strPath, const std::string& strPath2);
+  static void GetCommonPath(std::string& parent, std::string_view path);
   static std::string GetParentPath(const std::string& strPath);
   static bool GetParentPath(const std::string& strPath, std::string& strParent);
 
@@ -76,6 +92,96 @@ public:
    \return the folder that contains the item.
    */
   static std::string GetBasePath(const std::string& strPath);
+
+  static bool IsDiscPath(const std::string& path);
+
+  /*! \brief Given a bluray:// path or disc file path (index.bdmv/video_ts.ifo), return the base .ISO or folder
+   containing the disc file structure.
+   \param path source path.
+   \return the base .ISO or folder containing the disc file structure.
+   \note Used to determine file/folder to delete
+   */
+  static std::string GetDiscBase(const std::string& file);
+
+  /*! \brief Given a bluray:// path or disc file path (index.bdmv/video_ts.ifo), return the folder
+   containing the disc file structure or ISO.
+   \param path source path.
+   \return the folder containing the .ISO or disc file structure.
+   */
+  static std::string GetDiscBasePath(const std::string& file);
+
+  /*! \brief Given a path (index.bdmv/video_ts.ifo), return the base folder
+   (ie the one containing the BDMV or VIDEO_TS folder).
+   \param path source path.
+   \return the base folder.
+   */
+  static std::string RemoveDiscPath(const std::string& path);
+
+  /*! \brief Given a bluray:// path, return the base .ISO or index.BDMV.
+   \param path bluray:// path.
+   \return the base .ISO or index.BDMV.
+   */
+  static std::string GetDiscFile(const std::string& path);
+
+  /*! \brief Given a bluray:// path, return the underlying file path (eg. smb://, udf:// etc..)
+   \param url CURL containing bluray:// path.
+   \return return the underlying file path.
+   */
+  static std::string GetDiscUnderlyingFile(const CURL& url);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// path to root.
+   \param path the ISO/index.BDMV path.
+   \return the bluray:// root path.
+   */
+  static std::string GetBlurayRootPath(const std::string& path);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// path to titles.
+   \param path the ISO/index.BDMV path.
+   \return the bluray:// root/titles path.
+   */
+  static std::string GetBlurayTitlesPath(const std::string& path);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// path to a given episode.
+   \param path the ISO/index.BDMV path.
+   \return the bluray:// root/episode/<season number>/<episode number> path.
+   */
+  static std::string GetBlurayEpisodePath(const std::string& path, int season, int episode);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// for all episodes on disc.
+   \param path the ISO/index.BDMV path.
+   \return the bluray:// root/episode/all path.
+   */
+  static std::string GetBlurayAllEpisodesPath(const std::string& path);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// path to default playlist path.
+   \param path the ISO/index.BDMV path.
+   \param playlist (optional) the .mpls playlist
+   \return the bluray:// playlist path - BDMV/PLAYLIST(/xxxxx.mpls)
+   */
+  static std::string GetBlurayPlaylistPath(const std::string& path, int playlist = -1);
+
+  /*! \brief Given a path to bluray playlist (bluray://.../xxxxx.mpls), returns the playlist number.
+   \param path the bluray:// path
+   \return the playlist number
+   */
+  static int GetBlurayPlaylistFromPath(const std::string& path);
+
+  /*! \brief Resolve two paths to their disc base (if needed) and compare for equality.
+   \param path1 first path to resolve and compare
+   \param path2 second path to resolve and compare
+   \return the playlist number
+   */
+  static bool CompareDiscPaths(const std::string& path1, const std::string& path2);
+
+  /*! \brief Get the regex for matching trailing part numbers.
+   \return the regex
+   */
+  static std::string GetTitleTrailingPartNumberRegex();
+
+  /*! \brief Get the regex for matching trailing part numbers including leading path separator.
+   \return the regex
+   */
+  static std::string GetTrailingPartNumberRegex();
 
   /* \brief Change the base path of a URL: fromPath/fromFile -> toPath/toFile
     Handles changes in path separator and filename URL encoding if necessary to derive toFile.
@@ -123,10 +229,11 @@ public:
   static bool IsSourcesPath(const std::string& strFile);
   static bool IsCDDA(const std::string& strFile);
   static bool IsDAV(const std::string& strFile);
-  static bool IsDOSPath(const std::string &path);
+  static bool IsDOSPath(const std::string& path);
+  static bool IsAbsolutePOSIXPath(const std::string& path);
   static bool IsDVD(const std::string& strFile);
   static bool IsFTP(const std::string& strFile);
-  static bool IsHTTP(const std::string& strFile);
+  static bool IsHTTP(const std::string& strFile, bool bTranslate = false);
   static bool IsUDP(const std::string& strFile);
   static bool IsTCP(const std::string& strFile);
   static bool IsHD(const std::string& strFileName);
@@ -134,17 +241,24 @@ public:
   static bool IsInRAR(const std::string& strFile);
   static bool IsInternetStream(const std::string& path, bool bStrictCheck = false);
   static bool IsInternetStream(const CURL& url, bool bStrictCheck = false);
+  static bool IsStreamedFilesystem(const std::string& strPath);
+  static bool IsNetworkFilesystem(const std::string& strPath);
   static bool IsInAPK(const std::string& strFile);
   static bool IsInZIP(const std::string& strFile);
   static bool IsISO9660(const std::string& strFile);
   static bool IsLiveTV(const std::string& strFile);
   static bool IsPVRRecording(const std::string& strFile);
+  static bool IsPVRRecordingFileOrFolder(const std::string& strFile);
+  static bool IsPVRTVRecordingFileOrFolder(const std::string& strFile);
+  static bool IsPVRRadioRecordingFileOrFolder(const std::string& strFile);
   static bool IsMultiPath(const std::string& strPath);
   static bool IsMusicDb(const std::string& strFile);
   static bool IsNfs(const std::string& strFile);
   static bool IsOnDVD(const std::string& strFile);
-  static bool IsOnLAN(const std::string& strFile);
-  static bool IsHostOnLAN(const std::string& hostName, bool offLineCheck = false);
+  static bool IsOnLAN(const std::string& strFile,
+                      LanCheckMode lanCheckMode = LanCheckMode::ONLY_LOCAL_SUBNET);
+  static bool IsHostOnLAN(const std::string& hostName,
+                          LanCheckMode lanCheckMode = LanCheckMode::ONLY_LOCAL_SUBNET);
   static bool IsPlugin(const std::string& strFile);
   static bool IsScript(const std::string& strFile);
   static bool IsRAR(const std::string& strFile);
@@ -152,20 +266,37 @@ public:
   static bool IsSmb(const std::string& strFile);
   static bool IsSpecial(const std::string& strFile);
   static bool IsStack(const std::string& strFile);
+  static bool IsFavourite(const std::string& strFile);
   static bool IsUPnP(const std::string& strFile);
   static bool IsURL(const std::string& strFile);
   static bool IsVideoDb(const std::string& strFile);
   static bool IsAPK(const std::string& strFile);
   static bool IsZIP(const std::string& strFile);
   static bool IsArchive(const std::string& strFile);
-  static bool IsBluray(const std::string& strFile);
+  static bool IsArchive(const CURL& url);
+  static bool IsDiscImage(const std::string& file);
+  static bool IsDiscImageStack(const std::string& file);
+  static bool IsBlurayPath(const std::string& strFile);
+  static bool IsBlurayMenuPath(const std::string& file);
+
+  /*! \brief Determines if a file is from optical media (ie. index.bdmv, video_ts.ifo etc..)
+   \param file file path for determination.
+   \return true if file is from optical media
+   */
+  static bool IsOpticalMediaFile(const std::string& file);
+
+  static bool IsBDFile(const std::string& file);
+  static bool IsDVDFile(const std::string& file);
   static bool IsAndroidApp(const std::string& strFile);
   static bool IsLibraryFolder(const std::string& strFile);
   static bool IsLibraryContent(const std::string& strFile);
+  static bool IsPVR(const std::string& strFile);
   static bool IsPVRChannel(const std::string& strFile);
+  static bool IsPVRRadioChannel(const std::string& strFile);
+  static bool IsPVRChannelGroup(const std::string& strFile);
   static bool IsPVRGuideItem(const std::string& strFile);
-  static bool IsUsingFastSwitch(const std::string& strFile);
 
+  static std::string AppendSlash(std::string strFolder);
   static void AddSlashAtEnd(std::string& strFolder);
   static bool HasSlashAtEnd(const std::string& strFile, bool checkURL = false);
   static void RemoveSlashAtEnd(std::string& strFolder);
@@ -190,8 +321,10 @@ public:
                                 const std::string& password = "");
 
   static std::string AddFileToFolder(const std::string& strFolder, const std::string& strFile);
-  template <typename... T>
-  static std::string AddFileToFolder(const std::string& strFolder, const std::string& strFile, T... args)
+  template<typename... T>
+  static std::string AddFileToFolder(const std::string& strFolder,
+                                     const std::string& strFile,
+                                     const T&... args)
   {
     auto newPath = AddFileToFolder(strFolder, strFile);
     return AddFileToFolder(newPath, args...);
@@ -227,7 +360,17 @@ public:
    */
   static bool UpdateUrlEncoding(std::string &strFilename);
 
+  static CURL AddCredentials(CURL url);
+
 private:
   static std::string resolvePath(const std::string &path);
+
+  /*! \brief Given a path to an .ISO or index.BDMV, returns a bluray:// path.
+   \param path the ISO/index.BDMV path.
+   \return the bluray:// path.
+   */
+  static std::string GetBlurayPath(const std::string& path);
+
+  static const CAdvancedSettings* m_advancedSettings;
 };
 

@@ -1,22 +1,9 @@
 /*
- *      Copyright (C) 2005-2007 Team XboxMediaCenter
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with GNU Make; see the file COPYING.  If not, write to
- *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
- *  http://www.gnu.org/copyleft/gpl.html
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 //--------------------------------------------------------------------------
@@ -28,16 +15,20 @@
 //--------------------------------------------------------------------------
 
 // Note: Jhead supports TAG_MAKER_NOTE exif field,
-//       but that is ommited for now - to make porting easier and addition smaller
-#ifndef _LINUX
+//       but that is omitted for now - to make porting easier and addition smaller
+
+#include "ExifParse.h"
+
+#ifdef TARGET_WINDOWS
 #include <windows.h>
 #else
 #include <memory.h>
 #include <cstring>
 #endif
+
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
-#include "ExifParse.h"
 
 #ifndef min
 #define min(a,b) (a)>(b)?(b):(a)
@@ -111,26 +102,29 @@ static void ErrNonfatal(const char* const msg, int a1, int a2);
 
 //--------------------------------------------------------------------------
 // Exif format descriptor stuff
-#define FMT_BYTE       1
-#define FMT_STRING     2
-#define FMT_USHORT     3
-#define FMT_ULONG      4
-#define FMT_URATIONAL  5
-#define FMT_SBYTE      6
-#define FMT_UNDEFINED  7
-#define FMT_SSHORT     8
-#define FMT_SLONG      9
-#define FMT_SRATIONAL 10
-#define FMT_SINGLE    11
-#define FMT_DOUBLE    12
+namespace
+{
+constexpr auto FMT_BYTE = 1;
+[[maybe_unused]] constexpr auto FMT_STRING = 2;
+constexpr auto FMT_USHORT = 3;
+constexpr auto FMT_ULONG = 4;
+constexpr auto FMT_URATIONAL = 5;
+constexpr auto FMT_SBYTE = 6;
+[[maybe_unused]] constexpr auto FMT_UNDEFINED = 7;
+constexpr auto FMT_SSHORT = 8;
+constexpr auto FMT_SLONG = 9;
+constexpr auto FMT_SRATIONAL = 10;
+constexpr auto FMT_SINGLE = 11;
+constexpr auto FMT_DOUBLE = 12;
 // NOTE: Remember to change NUM_FORMATS if you define a new format
-#define NUM_FORMATS   12
+constexpr auto NUM_FORMATS = 12;
 
-const unsigned int BytesPerFormat[NUM_FORMATS] = { 1,1,2,4,8,1,1,2,4,8,4,8 };
+const unsigned int BytesPerFormat[NUM_FORMATS] = {1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8};
+} // namespace
 
 //--------------------------------------------------------------------------
 // Internationalisation string IDs. The enum order must match that in the
-// language file (e.g. 'language/English/strings.xml', and EXIF_PARSE_STRING_ID_BASE
+// language file (e.g. 'language/resource.language.en_gb/strings.po', and EXIF_PARSE_STRING_ID_BASE
 // must match the ID of the first Exif string in that file.
 #define EXIF_PARSE_STRING_ID_BASE       21800
 enum {
@@ -201,22 +195,14 @@ static void ErrNonfatal(const char* const msg, int a1, int a2)
 }
 
 //--------------------------------------------------------------------------
-// Constructor.
-//--------------------------------------------------------------------------
-CExifParse::CExifParse () : m_ExifInfo(nullptr),
-        m_FocalPlaneUnits(0.0), m_LargestExifOffset(0),
-        m_ExifImageWidth(0), m_MotorolaOrder(false), m_DateFound(false)
-{}
-
-//--------------------------------------------------------------------------
 // Convert a 16 bit unsigned value from file's native byte order
 //--------------------------------------------------------------------------
 int CExifParse::Get16(const void* const Short, const bool motorolaOrder)
 {
     if (motorolaOrder) {
-        return (((unsigned char *)Short)[0] << 8) | ((unsigned char *)Short)[1];
+        return (((const unsigned char *)Short)[0] << 8) | ((const unsigned char *)Short)[1];
     } else {
-        return (((unsigned char *)Short)[1] << 8) | ((unsigned char *)Short)[0];
+        return (((const unsigned char *)Short)[1] << 8) | ((const unsigned char *)Short)[0];
     }
 }
 
@@ -226,11 +212,11 @@ int CExifParse::Get16(const void* const Short, const bool motorolaOrder)
 int CExifParse::Get32(const void* const Long, const bool motorolaOrder)
 {
     if (motorolaOrder) {
-        return  ((( char *)Long)[0] << 24) | (((unsigned char *)Long)[1] << 16)
-          | (((unsigned char *)Long)[2] << 8 ) | (((unsigned char *)Long)[3] << 0 );
+        return  (((const char *)Long)[0] << 24) | (((const unsigned char *)Long)[1] << 16)
+          | (((const unsigned char *)Long)[2] << 8 ) | (((const unsigned char *)Long)[3] << 0 );
     } else {
-        return  ((( char *)Long)[3] << 24) | (((unsigned char *)Long)[2] << 16)
-          | (((unsigned char *)Long)[1] << 8 ) | (((unsigned char *)Long)[0] << 0 );
+        return  (((const char *)Long)[3] << 24) | (((const unsigned char *)Long)[2] << 16)
+          | (((const unsigned char *)Long)[1] << 8 ) | (((const unsigned char *)Long)[0] << 0 );
     }
 }
 
@@ -262,8 +248,8 @@ double CExifParse::ConvertAnyFormat(const void* const ValuePtr, int Format)
 
   switch(Format)
   {
-    case FMT_SBYTE:     Value = *(  signed char*)ValuePtr;          break;
-    case FMT_BYTE:      Value = *(unsigned char*)ValuePtr;          break;
+    case FMT_SBYTE:     Value = *(const   signed char*)ValuePtr;          break;
+    case FMT_BYTE:      Value = *(const unsigned char*)ValuePtr;          break;
 
     case FMT_USHORT:    Value = Get16(ValuePtr, m_MotorolaOrder);   break;
     case FMT_ULONG:     Value = (unsigned)Get32(ValuePtr, m_MotorolaOrder);   break;
@@ -273,7 +259,7 @@ double CExifParse::ConvertAnyFormat(const void* const ValuePtr, int Format)
     {
       int Num,Den;
       Num = Get32(ValuePtr, m_MotorolaOrder);
-      Den = Get32(4+(char *)ValuePtr, m_MotorolaOrder);
+      Den = Get32(4+(const char *)ValuePtr, m_MotorolaOrder);
 
       if (Den == 0)    Value = 0;
       else             Value = (double)Num/Den;
@@ -284,8 +270,8 @@ double CExifParse::ConvertAnyFormat(const void* const ValuePtr, int Format)
     case FMT_SLONG:     Value = Get32(ValuePtr, m_MotorolaOrder);                  break;
 
     // Not sure if this is correct (never seen float used in Exif format)
-    case FMT_SINGLE:    Value = (double)*(float*)ValuePtr;          break;
-    case FMT_DOUBLE:    Value = *(double*)ValuePtr;                 break;
+    case FMT_SINGLE:    Value = (double)*(const float*)ValuePtr;          break;
+    case FMT_DOUBLE:    Value = *(const double*)ValuePtr;                 break;
 
     default:
       ErrNonfatal("Illegal format code %d",Format,0);
@@ -300,16 +286,16 @@ double CExifParse::ConvertAnyFormat(const void* const ValuePtr, int Format)
 //--------------------------------------------------------------------------
 /*void CExifParse::LocaliseDate (void)
 {
-    if (m_ExifInfo[SLIDE_EXIF_DATE_TIME][0] != ' ')
+    if (m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME][0] != ' ')
     {
-        int year  = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(0, 4).c_str());
-        int month = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(5, 2).c_str());
-        int day   = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(8, 2).c_str());
-        int hour  = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(11,2).c_str());
-        int min   = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(14,2).c_str());
-        int sec   = atoi(m_ExifInfo[SLIDE_EXIF_DATE_TIME].substr(17,2).c_str());
+        int year  = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(0, 4).c_str());
+        int month = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(5, 2).c_str());
+        int day   = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(8, 2).c_str());
+        int hour  = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(11,2).c_str());
+        int min   = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(14,2).c_str());
+        int sec   = atoi(m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME].substr(17,2).c_str());
         CDateTime date(year, month, day, hour, min, sec);
-        m_ExifInfo[SLIDE_EXIF_DATE_TIME] = date.GetAsLocalizedDateTime();
+        m_ExifInfo[SLIDESHOW_EXIF_DATE_TIME] = date.GetAsLocalizedDateTime();
     }
 }*/
 
@@ -346,7 +332,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
   IndentString[NestingLevel * 4] = '\0';
 
 
-  int NumDirEntries = Get16((void*)DirStart, m_MotorolaOrder);
+  int NumDirEntries = Get16((const void*)DirStart, m_MotorolaOrder);
 
   const unsigned char* const DirEnd = DIR_ENTRY_ADDR(DirStart, NumDirEntries);
   if (DirEnd+4 > (OffsetBase+ExifLength))
@@ -393,13 +379,13 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
       unsigned OffsetVal;
       OffsetVal = (unsigned)Get32(DirEntry+8, m_MotorolaOrder);
       // If its bigger than 4 bytes, the dir entry contains an offset.
-      if (OffsetVal+ByteCount > ExifLength)
+      if (OffsetVal > UINT32_MAX - ByteCount || OffsetVal + ByteCount > ExifLength)
       {
         // Bogus pointer offset and / or bytecount value
         ErrNonfatal("Illegal value pointer for tag %04x", Tag,0);
         continue;
       }
-      ValuePtr = (unsigned char*)(OffsetBase+OffsetVal);
+      ValuePtr = (unsigned char*)(const_cast<unsigned char*>(OffsetBase)+OffsetVal);
 
       if (OffsetVal > m_LargestExifOffset)
       {
@@ -409,7 +395,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
     }
     else {
       // 4 bytes or less and value is in the dir entry itself
-      ValuePtr = (unsigned char*)(DirEntry+8);
+      ValuePtr = (unsigned char*)(const_cast<unsigned char*>(DirEntry)+8);
     }
 
 
@@ -469,7 +455,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
       case TAG_DATETIME_DIGITIZED:
       case TAG_DATETIME:
       {
-        if (m_DateFound == false)
+        if (!m_DateFound)
         {
           // If we don't already have a DATETIME_ORIGINAL, use whatever
           // time fields we may have.
@@ -526,7 +512,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
 
       case TAG_FNUMBER:
         // Simplest way of expressing aperture, so I trust it the most.
-        // (overwrite previously computd value if there is one)
+        // (overwrite previously computed value if there is one)
         m_ExifInfo->ApertureFNumber = (float)ConvertAnyFormat(ValuePtr, Format);
       break;
 
@@ -547,7 +533,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
       break;
 
       case TAG_SUBJECT_DISTANCE:
-        // Inidcates the distacne the autofocus camera is focused to.
+        // Indicates the distance the autofocus camera is focused to.
         // Tends to be less accurate as distance increases.
         {
           float distance = (float)ConvertAnyFormat(ValuePtr, Format);
@@ -557,11 +543,11 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
 
       case TAG_EXPOSURETIME:
         {
-        // Simplest way of expressing exposure time, so I trust it most.
-        // (overwrite previously computd value if there is one)
-        float expTime = (float)ConvertAnyFormat(ValuePtr, Format);
-        if (expTime)
-          m_ExifInfo->ExposureTime = expTime;
+          // Simplest way of expressing exposure time, so I trust it most.
+          // (overwrite previously computed value if there is one)
+          float expTime = (float)ConvertAnyFormat(ValuePtr, Format);
+          if (expTime)
+            m_ExifInfo->ExposureTime = expTime;
         }
       break;
 
@@ -662,7 +648,7 @@ void CExifParse::ProcessDir(const unsigned char* const DirStart,
         const unsigned char* const SubdirStart = OffsetBase + (unsigned)Get32(ValuePtr, m_MotorolaOrder);
         if (SubdirStart < OffsetBase || SubdirStart > OffsetBase+ExifLength)
         {
-          ErrNonfatal("Illegal exif or interop ofset directory link",0,0);
+          ErrNonfatal("Illegal exif or interop offset directory link", 0, 0);
         }
         else
         {
@@ -771,7 +757,7 @@ bool CExifParse::Process (const unsigned char* const ExifSection, const unsigned
   const char ExifAlignment1[] = "MM";
   const char ExifExtra        = 0x2a;
 
-  char* pos = (char*)(ExifSection + sizeof(short));   // position data pointer after length field
+  const char* pos = (const char*)(ExifSection + sizeof(short));   // position data pointer after length field
 
   if (memcmp(pos, ExifHeader,6))
   {
@@ -796,18 +782,18 @@ bool CExifParse::Process (const unsigned char* const ExifSection, const unsigned
   pos += strlen(ExifAlignment0);
 
   // Check the next value for correctness.
-  if (Get16((void*)(pos), m_MotorolaOrder) != ExifExtra)
+  if (Get16((const void*)(pos), m_MotorolaOrder) != ExifExtra)
   {
     printf("ExifParse: invalid Exif start (1)");
     return false;
   }
   pos += sizeof(short);
 
-  unsigned long FirstOffset = (unsigned)Get32((void*)pos, m_MotorolaOrder);
-  if (FirstOffset < 8 || FirstOffset > 16)
+  unsigned long FirstOffset = (unsigned)Get32((const void*)pos, m_MotorolaOrder);
+  if (FirstOffset < 8 || FirstOffset + 8 >= length)
   {
-    // Usually set to 8, but other values valid too.
-//  CLog::Log(LOGERROR, "ExifParse: suspicious offset of first IFD value");
+    ErrNonfatal("Invalid offset of first IFD value: %u", FirstOffset, 0);
+    return false;
   }
 
 
@@ -815,7 +801,7 @@ bool CExifParse::Process (const unsigned char* const ExifSection, const unsigned
   // First directory starts 16 bytes in.  All offset are relative to 8 bytes in.
   ProcessDir(ExifSection+8+FirstOffset, ExifSection+8, length-8, 0);
 
-  m_ExifInfo->ThumbnailAtEnd = m_ExifInfo->ThumbnailOffset >= m_LargestExifOffset ? true : false;
+  m_ExifInfo->ThumbnailAtEnd = m_ExifInfo->ThumbnailOffset >= m_LargestExifOffset;
 
   // Compute the CCD width, in millimeters.
   if (m_FocalPlaneXRes != 0)
@@ -833,9 +819,10 @@ bool CExifParse::Process (const unsigned char* const ExifSection, const unsigned
     {
       // Compute 35 mm equivalent focal length based on sensor geometry if we haven't
       // already got it explicitly from a tag.
-      if (m_ExifInfo->CCDWidth != 0.0)
+      if (m_ExifInfo->CCDWidth != 0.0f)
       {
-        m_ExifInfo->FocalLength35mmEquiv = (int)(m_ExifInfo->FocalLength/m_ExifInfo->CCDWidth*36 + 0.5);
+        m_ExifInfo->FocalLength35mmEquiv =
+            (int)(m_ExifInfo->FocalLength / m_ExifInfo->CCDWidth * 36 + 0.5f);
       }
     }
   }
@@ -873,7 +860,7 @@ void CExifParse::GetLatLong(
     else
     {
       char latLong[30];
-      sprintf(latLong, "%3.0fd %2.0f' %5.2f\"", Values[0], Values[1], Values[2]);
+      snprintf(latLong, sizeof(latLong), "%3.0fd %2.0f' %5.2f\"", Values[0], Values[1], Values[2]);
       strcat(latLongString, latLong);
     }
   }
@@ -894,6 +881,13 @@ void CExifParse::ProcessGpsInfo(
   {
     const unsigned char* DirEntry = DIR_ENTRY_ADDR(DirStart, de);
 
+    // Fix from aosp 34a2564d3268a5ca1472c5076675782fbaf724d6
+    if (DirEntry + 12 > OffsetBase + ExifLength)
+    {
+      ErrNonfatal("GPS info directory goes past end of exif", 0, 0);
+      return;
+    }
+
     unsigned Tag        = Get16(DirEntry, m_MotorolaOrder);
     unsigned Format     = Get16(DirEntry+2, m_MotorolaOrder);
     unsigned Components = (unsigned)Get32(DirEntry+4, m_MotorolaOrder);
@@ -912,7 +906,7 @@ void CExifParse::ProcessGpsInfo(
     {
       unsigned OffsetVal = (unsigned)Get32(DirEntry+8, m_MotorolaOrder);
       // If its bigger than 4 bytes, the dir entry contains an offset.
-      if (OffsetVal+ByteCount > ExifLength)
+      if (OffsetVal > UINT32_MAX - ByteCount || OffsetVal + ByteCount > ExifLength)
       {
         // Bogus pointer offset and / or bytecount value
         ErrNonfatal("Illegal value pointer for tag %04x", Tag,0);
@@ -954,7 +948,8 @@ void CExifParse::ProcessGpsInfo(
       case TAG_GPS_ALT:
         {
           char temp[18];
-          sprintf(temp,"%dm", Get32(ValuePtr, m_MotorolaOrder));
+          snprintf(temp, sizeof(temp), "%.2fm",
+                   static_cast<double>(ConvertAnyFormat(ValuePtr, Format)));
           strcat(m_ExifInfo->GpsAlt, temp);
         }
       break;

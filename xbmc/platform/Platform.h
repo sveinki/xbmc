@@ -1,51 +1,101 @@
-#pragma once
-
 /*
- *      Copyright (C) 2016 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "utils/ComponentContainer.h"
+
+//! \brief Base class for services.
+class IPlatformService
+{
+public:
+  virtual ~IPlatformService() = default;
+};
 
 /**\brief Class for the Platform object
  *
- * Contains method which retrieve platform specific information
+ * Contains methods to retrieve platform specific information
  * and methods for doing platform specific environment preparation/initialisation
  */
-class CPlatform
+class CPlatform : public CComponentContainer<IPlatformService>
 {
 public:
   /**\brief Creates the Platform object
    *
-   *@return the platform object 
+   *@return the platform object
   */
   static CPlatform *CreateInstance();
-  
+
   /**\brief C'tor */
-  CPlatform();
-  
+  CPlatform() = default;
+
   /**\brief D'tor */
-  virtual ~CPlatform();
-  
+  virtual ~CPlatform() = default;
+
   /**\brief Called at an early stage of application startup
    *
    * This method can be used to do platform specific environment preparation
    * or initialisation (like setting environment variables for example)
    */
-  virtual void Init();
-  
+  virtual bool InitStageOne() { return true; }
+
+  /**\brief Called at a middle stage of application startup
+   *
+   * This method can be used for starting platform specific services that
+   * do not depend on windowing/gui.
+   */
+  virtual bool InitStageTwo() { return true; }
+
+  /**\brief Called at a late stage of application startup
+   *
+   * This method can be used for starting platform specific Window/GUI related
+   * services/components. (eg , WS-Discovery Daemons)
+   */
+  virtual bool InitStageThree() { return true; }
+
+  /**\brief Called at a late stage of application shutdown
+   *
+   * This method should be used to cleanup resources allocated in InitStageOne
+   */
+  virtual void DeinitStageOne() {}
+
+  /**\brief Called at a middle stage of application shutdown
+   *
+   * This method should be used to cleanup resources allocated in InitStageTwo
+   */
+  virtual void DeinitStageTwo() {}
+
+  /**\brief Called at an early stage of application shutdown
+   *
+   * This method should be used to cleanup resources allocated in InitStageThree
+   */
+  virtual void DeinitStageThree() {}
+
+  /**\brief Flag whether disabled add-ons - installed via packagemanager or manually - should be
+   * offered for configuration and activation on kodi startup for this platform
+   */
+  virtual bool IsConfigureAddonsAtStartupEnabled() { return false; }
+
+  /**\brief Flag whether this platform supports user installation of binary add-ons.
+   */
+  virtual bool SupportsUserInstalledBinaryAddons() { return true; }
+
+  /**\brief Print platform specific info to log
+   *
+   * Logs platform specific system info during application creation startup
+   */
+  virtual void PlatformSyslog() {}
+
+  /**\brief Get a platform service instance.
+   */
+  template<class T>
+  std::shared_ptr<T> GetService()
+  {
+    return this->GetComponent<T>();
+  }
 };

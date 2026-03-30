@@ -1,29 +1,24 @@
 /*
- *      Copyright (C) 2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2014-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "ResourceFile.h"
+
+#include "ServiceBroker.h"
 #include "URL.h"
 #include "Util.h"
+#include "addons/AddonBuilder.h"
 #include "addons/AddonManager.h"
 #include "addons/Resource.h"
-#include "utils/URIUtils.h"
+#include "addons/addoninfo/AddonInfo.h"
+#include "addons/addoninfo/AddonInfoBuilder.h"
+#include "addons/addoninfo/AddonType.h"
+
+#include <array>
 
 using namespace ADDON;
 using namespace XFILE;
@@ -48,7 +43,7 @@ bool CResourceFile::TranslatePath(const CURL &url, std::string &translatedPath)
     return false;
 
   // the share name represents an identifier that can be mapped to an addon ID
-  std::string addonId = url.GetShareName();
+  const std::string& addonId = url.GetShareName();
   std::string filePath;
   if (url.GetFileName().length() > addonId.length())
     filePath = url.GetFileName().substr(addonId.size() + 1);
@@ -57,10 +52,37 @@ bool CResourceFile::TranslatePath(const CURL &url, std::string &translatedPath)
     return false;
 
   AddonPtr addon;
-  if (!CAddonMgr::GetInstance().GetAddon(addonId, addon, ADDON_UNKNOWN, true) || addon == NULL)
+  if (!CServiceBroker::GetAddonMgr().GetAddon(addonId, addon, OnlyEnabled::CHOICE_YES) ||
+      addon == NULL)
     return false;
 
   std::shared_ptr<CResource> resource = std::dynamic_pointer_cast<ADDON::CResource>(addon);
+  if (!resource)
+  {
+    std::array<ADDON::AddonType, 6> resourceTypes = {
+        ADDON::AddonType::RESOURCE_IMAGES,   ADDON::AddonType::RESOURCE_LANGUAGE,
+        ADDON::AddonType::RESOURCE_UISOUNDS, ADDON::AddonType::RESOURCE_GAMES,
+        ADDON::AddonType::RESOURCE_FONT,     ADDON::AddonType::RESOURCE_SKIN,
+    };
+    for (ADDON::AddonType resourceType : resourceTypes)
+    {
+      if (!addon->HasType(resourceType))
+        continue;
+
+      ADDON::AddonInfoPtr addonInfo = ADDON::CAddonInfoBuilder::Generate(*addon);
+      if (!addonInfo)
+        continue;
+
+      ADDON::AddonPtr resourceAddon = ADDON::CAddonBuilder::Generate(addonInfo, resourceType);
+      if (!resourceAddon)
+        continue;
+
+      resource = std::dynamic_pointer_cast<ADDON::CResource>(resourceAddon);
+      if (resource && resource->IsAllowed(filePath))
+        break;
+    }
+  }
+
   if (resource == NULL)
     return false;
 

@@ -1,31 +1,20 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#include "Fanart.h"
+
+#include "StringUtils.h"
+#include "URIUtils.h"
+#include "utils/XBMCTinyXML2.h"
+#include "utils/XMLUtils.h"
 
 #include <algorithm>
 #include <functional>
-
-#include "Fanart.h"
-#include "utils/XBMCTinyXML.h"
-#include "utils/XMLUtils.h"
-#include "URIUtils.h"
-#include "StringUtils.h"
 
 const unsigned int CFanart::max_fanart_colors=3;
 
@@ -40,17 +29,24 @@ void CFanart::Pack()
 {
   // Take our data and pack it into the m_xml string
   m_xml.clear();
-  TiXmlElement fanart("fanart");
+  tinyxml2::XMLDocument doc(false);
+  auto fanartElement = doc.NewElement("fanart");
+  auto* fanartNode = doc.InsertEndChild(fanartElement);
   for (std::vector<SFanartData>::const_iterator it = m_fanart.begin(); it != m_fanart.end(); ++it)
   {
-    TiXmlElement thumb("thumb");
-    thumb.SetAttribute("colors", it->strColors.c_str());
-    thumb.SetAttribute("preview", it->strPreview.c_str());
-    TiXmlText text(it->strImage);
-    thumb.InsertEndChild(text);
-    fanart.InsertEndChild(thumb);
+    auto* thumbNode = doc.NewElement("thumb");
+    thumbNode->SetAttribute("colors", it->strColors.c_str());
+    thumbNode->SetAttribute("preview", it->strPreview.c_str());
+    auto* thumbText = doc.NewText(it->strImage.c_str());
+    thumbNode->InsertEndChild(thumbText);
+    fanartNode->InsertEndChild(thumbNode);
   }
-  m_xml << fanart;
+
+  // Setup printer for compact output (ie machine readable minimal whitespace)
+  tinyxml2::XMLPrinter printer(NULL, true);
+  doc.Print(&printer);
+
+  m_xml = printer.CStr();
 }
 
 void CFanart::AddFanart(const std::string& image, const std::string& preview, const std::string& colors)
@@ -70,16 +66,16 @@ void CFanart::Clear()
 
 bool CFanart::Unpack()
 {
-  CXBMCTinyXML doc;
+  CXBMCTinyXML2 doc;
   doc.Parse(m_xml);
 
   m_fanart.clear();
 
-  TiXmlElement *fanart = doc.FirstChildElement("fanart");
+  auto* fanart = doc.FirstChildElement("fanart");
   while (fanart)
   {
     std::string url = XMLUtils::GetAttribute(fanart, "url");
-    TiXmlElement *fanartThumb = fanart->FirstChildElement("thumb");
+    auto* fanartThumb = fanart->FirstChildElement("thumb");
     while (fanartThumb)
     {
       if (!fanartThumb->NoChildren())
@@ -87,12 +83,12 @@ bool CFanart::Unpack()
         SFanartData data;
         if (url.empty())
         {
-          data.strImage = fanartThumb->FirstChild()->ValueStr();
+          data.strImage = fanartThumb->FirstChild()->Value();
           data.strPreview = XMLUtils::GetAttribute(fanartThumb, "preview");
         }
         else
         {
-          data.strImage = URIUtils::AddFileToFolder(url, fanartThumb->FirstChild()->ValueStr());
+          data.strImage = URIUtils::AddFileToFolder(url, fanartThumb->FirstChild()->Value());
           if (fanartThumb->Attribute("preview"))
             data.strPreview = URIUtils::AddFileToFolder(url, fanartThumb->Attribute("preview"));
         }
@@ -157,7 +153,7 @@ bool CFanart::ParseColors(const std::string &colorsIn, std::string &colorsOut)
   // 1: The TVDB RGB Int Triplets, pipe separate with leading/trailing pipes "|68,69,59|69,70,58|78,78,68|"
 
   // Essentially we read the colors in using the proper format, and store them in our own fixed temporary format (3 DWORDS), and then
-  // write them back in in the specified format.
+  // write them back in the specified format.
 
   if (colorsIn.empty())
     return false;
@@ -172,9 +168,10 @@ bool CFanart::ParseColors(const std::string &colorsIn, std::string &colorsOut)
       std::vector<std::string> strTriplets = StringUtils::Split(strColors[i+1], ",");
       if (strTriplets.size() == 3)
       { // convert
-        if (colorsOut.size())
+        if (!colorsOut.empty())
           colorsOut += ",";
-        colorsOut += StringUtils::Format("FF%2lx%2lx%2lx", atol(strTriplets[0].c_str()), atol(strTriplets[1].c_str()), atol(strTriplets[2].c_str()));
+        colorsOut += StringUtils::Format("FF{:2x}{:2x}{:2x}", std::stol(strTriplets[0]),
+                                         std::stol(strTriplets[1]), std::stol(strTriplets[2]));
       }
     }
   }

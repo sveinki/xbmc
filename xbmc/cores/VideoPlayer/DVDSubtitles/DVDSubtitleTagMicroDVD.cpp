@@ -1,34 +1,21 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDSubtitleTagMicroDVD.h"
-#include "DVDCodecs/Overlay/DVDOverlayText.h"
+
 #include "utils/StringUtils.h"
 
-void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char* line, int len)
+void CDVDSubtitleTagMicroDVD::ConvertLine(std::string& strUTF8)
 {
-  std::string strUTF8;
-  strUTF8.assign(line, len);
-
   m_flag[FLAG_BOLD] = 0;
   m_flag[FLAG_ITALIC] = 0;
+  m_flag[FLAG_UNDERLINE] = 0;
+  m_flag[FLAG_STRIKETHROUGH] = 0;
   m_flag[FLAG_COLOR] = 0;
 
   int machine_status = 1;
@@ -40,9 +27,10 @@ void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char*
     {
       if (strUTF8[pos] == '{')
       {
-        size_t pos2, pos3;
-        if (((pos2 = strUTF8.find(':', pos)) != std::string::npos) && \
-           ((pos3 = strUTF8.find('}', pos2)) != std::string::npos))
+        size_t pos2 = strUTF8.find(':', pos);
+        size_t pos3 = strUTF8.find('}', pos2);
+
+        if ((pos2 != std::string::npos) && (pos3 != std::string::npos))
         {
           std::string tagName = strUTF8.substr(pos + 1, pos2 - pos - 1);
           std::string tagValue = strUTF8.substr(pos2 + 1, pos3 - pos2 - 1);
@@ -52,15 +40,27 @@ void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char*
           {
             if ((tagValue == "b") && (m_flag[FLAG_BOLD] == 0))
             {
-              m_flag[FLAG_BOLD] = (tagName == "Y")?TAG_ALL_LINE:TAG_ONE_LINE;
-              strUTF8.insert(pos, "[B]");
-              pos += 3;
+              m_flag[FLAG_BOLD] = (tagName == "Y") ? TAG_ALL_LINE : TAG_ONE_LINE;
+              strUTF8.insert(pos, "{\\b1}");
+              pos += 5;
             }
             else if ((tagValue == "i") && (m_flag[FLAG_ITALIC] == 0))
             {
-              m_flag[FLAG_ITALIC] = (tagName == "Y")?TAG_ALL_LINE:TAG_ONE_LINE;
-              strUTF8.insert(pos, "[I]");
-              pos += 3;
+              m_flag[FLAG_ITALIC] = (tagName == "Y") ? TAG_ALL_LINE : TAG_ONE_LINE;
+              strUTF8.insert(pos, "{\\i1}");
+              pos += 5;
+            }
+            else if ((tagValue == "u") && (m_flag[FLAG_UNDERLINE] == 0))
+            {
+              m_flag[FLAG_UNDERLINE] = (tagName == "U") ? TAG_ALL_LINE : TAG_ONE_LINE;
+              strUTF8.insert(pos, "{\\u1}");
+              pos += 5;
+            }
+            else if ((tagValue == "s") && (m_flag[FLAG_STRIKETHROUGH] == 0))
+            {
+              m_flag[FLAG_STRIKETHROUGH] = (tagName == "S") ? TAG_ALL_LINE : TAG_ONE_LINE;
+              strUTF8.insert(pos, "{\\s1}");
+              pos += 5;
             }
           }
           else if ((tagName == "C") || (tagName == "c"))
@@ -68,24 +68,21 @@ void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char*
             if ((tagValue[0] == '$') && (tagValue.size() == 7))
             {
               bool bHex = true;
-              for( int i=1 ; i<7 ; i++ )
+              for (int i = 1; i < 7; i++)
               {
                 char temp = tagValue[i];
-                if( !(('0' <= temp && temp <= '9') ||
-                  ('a' <= temp && temp <= 'f') ||
-                  ('A' <= temp && temp <= 'F') ))
+                if (!(('0' <= temp && temp <= '9') || ('a' <= temp && temp <= 'f') ||
+                      ('A' <= temp && temp <= 'F')))
                 {
                   bHex = false;
                   break;
                 }
               }
-              if( bHex && (m_flag[FLAG_COLOR] == 0))
+
+              if (bHex && (m_flag[FLAG_COLOR] == 0))
               {
-                std::string tempColorTag = "[COLOR ";
-                tempColorTag += "FF";
-                tempColorTag += tagValue.substr(1, 6);
-                tempColorTag += "]";
-                m_flag[FLAG_COLOR] = (tagName == "C")?TAG_ALL_LINE:TAG_ONE_LINE;
+                m_flag[FLAG_COLOR] = (tagName == "C") ? TAG_ALL_LINE : TAG_ONE_LINE;
+                std::string tempColorTag = "{\\c&H" + tagValue.substr(1, 6) + "&}";
                 strUTF8.insert(pos, tempColorTag);
                 pos += tempColorTag.length();
               }
@@ -100,8 +97,8 @@ void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char*
         if (m_flag[FLAG_ITALIC] == 0)
         {
           m_flag[FLAG_ITALIC] = TAG_ONE_LINE;
-          strUTF8.replace(pos, 1, "[I]");
-          pos += 3;
+          strUTF8.insert(pos, "{\\i1}");
+          pos += 5;
         }
         else
           strUTF8.erase(pos, 1);
@@ -112,51 +109,57 @@ void CDVDSubtitleTagMicroDVD::ConvertLine(CDVDOverlayText* pOverlay, const char*
     else if (machine_status == 2)
     {
       size_t pos4;
-      if ((pos4= strUTF8.find('|', pos)) != std::string::npos)
+      if ((pos4 = strUTF8.find('|', pos)) != std::string::npos)
       {
         pos = pos4;
         if (m_flag[FLAG_BOLD] == TAG_ONE_LINE)
         {
           m_flag[FLAG_BOLD] = 0;
-          strUTF8.insert(pos, "[/B]");
-          pos += 4;
+          strUTF8.insert(pos, "{\\b0}");
+          pos += 5;
         }
         if (m_flag[FLAG_ITALIC] == TAG_ONE_LINE)
         {
           m_flag[FLAG_ITALIC] = 0;
-          strUTF8.insert(pos, "[/I]");
-          pos += 4;
+          strUTF8.insert(pos, "{\\i0}");
+          pos += 5;
+        }
+        if (m_flag[FLAG_UNDERLINE] == TAG_ONE_LINE)
+        {
+          m_flag[FLAG_UNDERLINE] = 0;
+          strUTF8.insert(pos, "{\\u0}");
+          pos += 5;
+        }
+        if (m_flag[FLAG_STRIKETHROUGH] == TAG_ONE_LINE)
+        {
+          m_flag[FLAG_STRIKETHROUGH] = 0;
+          strUTF8.insert(pos, "{\\s0}");
+          pos += 5;
         }
         if (m_flag[FLAG_COLOR] == TAG_ONE_LINE)
         {
           m_flag[FLAG_COLOR] = 0;
-          strUTF8.insert(pos, "[/COLOR]");
-          pos += 8;
+          strUTF8.insert(pos, "{\\c}");
+          pos += 4;
         }
-        strUTF8.replace(pos, 1, "[CR]");
-        pos += 4;
+        strUTF8.replace(pos, 1, "\n");
+        pos += 1;
         machine_status = 1;
       }
       else
       {
         if (m_flag[FLAG_BOLD] != 0)
-          strUTF8.append("[/B]");
+          strUTF8.append("{\\b0}");
         if (m_flag[FLAG_ITALIC] != 0)
-          strUTF8.append("[/I]");
+          strUTF8.append("{\\i0}");
+        if (m_flag[FLAG_UNDERLINE] != 0)
+          strUTF8.append("{\\u0}");
+        if (m_flag[FLAG_STRIKETHROUGH] != 0)
+          strUTF8.append("{\\s0}");
         if (m_flag[FLAG_COLOR] != 0)
-          strUTF8.append("[/COLOR]");
+          strUTF8.append("{\\c}");
         machine_status = 0;
       }
     }
   }
-    
-  if (strUTF8.empty())
-    return;
-
-  if( strUTF8[strUTF8.size()-1] == '\n' )
-    strUTF8.erase(strUTF8.size()-1);
-
-  // add a new text element to our container
-  pOverlay->AddElement(new CDVDOverlayText::CElementText(strUTF8.c_str()));
 }
-

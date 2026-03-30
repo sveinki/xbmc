@@ -1,34 +1,22 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "TextureBundle.h"
 
-CTextureBundle::CTextureBundle()
-  : m_tbXBT{false}
-	, m_useXBT{false}
+#include "guilib/TextureBundleXBT.h"
+
+class CTexture;
+
+CTextureBundle::CTextureBundle() : m_tbXBT{false}, m_useXBT{false}
 {
 }
 
-CTextureBundle::CTextureBundle(bool useXBT)
-  : m_tbXBT{useXBT}
-	, m_useXBT{useXBT}
+CTextureBundle::CTextureBundle(bool useXBT) : m_tbXBT{useXBT}, m_useXBT{useXBT}
 {
 }
 
@@ -48,34 +36,33 @@ bool CTextureBundle::HasFile(const std::string& Filename)
   return false;
 }
 
-void CTextureBundle::GetTexturesFromPath(const std::string &path, std::vector<std::string> &textures)
+std::vector<std::string> CTextureBundle::GetTexturesFromPath(const std::string& path)
 {
   if (m_useXBT)
-  {
-    m_tbXBT.GetTexturesFromPath(path, textures);
-  }
+    return m_tbXBT.GetTexturesFromPath(path);
+  else
+    return {};
 }
 
-bool CTextureBundle::LoadTexture(const std::string& Filename, CBaseTexture** ppTexture,
-                                     int &width, int &height)
+std::optional<CTextureBundleXBT::Texture> CTextureBundle::LoadTexture(const std::string& filename)
 {
   if (m_useXBT)
-  {
-    return m_tbXBT.LoadTexture(Filename, ppTexture, width, height);
-  }
-
-  return false;
+    return m_tbXBT.LoadTexture(filename);
+  else
+    return {};
 }
 
-int CTextureBundle::LoadAnim(const std::string& Filename, CBaseTexture*** ppTextures,
-                              int &width, int &height, int& nLoops, int** ppDelays)
+std::optional<CTextureBundleXBT::Animation> CTextureBundle::LoadAnim(const std::string& filename)
 {
   if (m_useXBT)
-  {
-    return m_tbXBT.LoadAnim(Filename, ppTextures, width, height, nLoops, ppDelays);
-  }
+    return m_tbXBT.LoadAnim(filename);
+  else
+    return {};
+}
 
-  return 0;
+void CTextureBundle::Close()
+{
+  m_tbXBT.CloseBundle();
 }
 
 void CTextureBundle::SetThemeBundle(bool themeBundle)
@@ -83,7 +70,7 @@ void CTextureBundle::SetThemeBundle(bool themeBundle)
   m_tbXBT.SetThemeBundle(themeBundle);
 }
 
-std::string CTextureBundle::Normalize(const std::string &name)
+std::string CTextureBundle::Normalize(std::string name)
 {
-  return CTextureBundleXBT::Normalize(name);
+  return CTextureBundleXBT::Normalize(std::move(name));
 }

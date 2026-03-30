@@ -1,26 +1,14 @@
-#pragma once
 /*
- *      Copyright (C) 2016 Christian Browet
- *      http://xbmc.org
+ *  Copyright (C) 2016 Christian Browet
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <androidjni/JNIBase.h>
+#pragma once
 
+#include <androidjni/JNIBase.h>
 #include <androidjni/NsdManager.h>
 
 namespace jni
@@ -30,20 +18,20 @@ class CJNIXBMCNsdManagerDiscoveryListener : public CJNINsdManagerDiscoveryListen
 {
 public:
   CJNIXBMCNsdManagerDiscoveryListener();
-  CJNIXBMCNsdManagerDiscoveryListener(const CJNIXBMCNsdManagerDiscoveryListener& other); 
-  CJNIXBMCNsdManagerDiscoveryListener(const jni::jhobject &object) : CJNIBase(object) {}
-  virtual ~CJNIXBMCNsdManagerDiscoveryListener();
-  
+  CJNIXBMCNsdManagerDiscoveryListener(const CJNIXBMCNsdManagerDiscoveryListener& other);
+  explicit CJNIXBMCNsdManagerDiscoveryListener(const jni::jhobject &object) : CJNIBase(object) {}
+  ~CJNIXBMCNsdManagerDiscoveryListener() override;
+
   static void RegisterNatives(JNIEnv* env);
-   
+
   // CJNINsdManagerDiscoveryListener interface
 public:
-  void onDiscoveryStarted(const std::string& serviceType) = 0;
-  void onDiscoveryStopped(const std::string& serviceType) = 0;
-  void onServiceFound(const CJNINsdServiceInfo& serviceInfo) = 0;
-  void onServiceLost(const CJNINsdServiceInfo& serviceInfo) = 0;
-  void onStartDiscoveryFailed(const std::string& serviceType, int errorCode) = 0;
-  void onStopDiscoveryFailed(const std::string& serviceType, int errorCode) = 0;
+  void onDiscoveryStarted(const std::string& serviceType) override = 0;
+  void onDiscoveryStopped(const std::string& serviceType) override = 0;
+  void onServiceFound(const CJNINsdServiceInfo& serviceInfo) override = 0;
+  void onServiceLost(const CJNINsdServiceInfo& serviceInfo) override = 0;
+  void onStartDiscoveryFailed(const std::string& serviceType, int errorCode) override = 0;
+  void onStopDiscoveryFailed(const std::string& serviceType, int errorCode) override = 0;
 
 protected:
   static void _onDiscoveryStarted(JNIEnv* env, jobject thiz, jstring serviceType);

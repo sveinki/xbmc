@@ -1,121 +1,179 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "threads/CriticalSection.h"
+
 #include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "FileItem.h"
-#include "video/VideoDatabase.h"
-
-#include "pvr/PVRTypes.h"
-#include "pvr/recordings/PVRRecording.h"
+class CVideoDatabase;
 
 namespace PVR
 {
-  class CPVRRecordingsPath;
+class CPVRClient;
+class CPVREpgInfoTag;
+class CPVRRecording;
+class CPVRRecordingUid;
+class CPVRRecordingsPath;
 
-  class CPVRRecordings
-  {
-  public:
-    CPVRRecordings(void);
-    virtual ~CPVRRecordings(void);
+class CPVRRecordings
+{
+public:
+  CPVRRecordings();
+  virtual ~CPVRRecordings();
 
-    int Load();
-    void Clear();
-    void UpdateFromClient(const CPVRRecordingPtr &tag);
+  /*!
+   * @brief Update all recordings from the given PVR clients.
+   * @param clients The PVR clients data should be loaded for. Leave empty for all clients.
+   * @return True on success, false otherwise.
+   */
+  bool Update(const std::vector<std::shared_ptr<CPVRClient>>& clients);
 
-    /**
-     * @brief refresh the recordings list from the clients.
-     */
-    void Update(void);
+  /*!
+   * @brief unload all recordings.
+   */
+  void Unload();
 
-    int GetNumTVRecordings() const;
-    bool HasDeletedTVRecordings() const;
-    int GetNumRadioRecordings() const;
-    bool HasDeletedRadioRecordings() const;
+  /*!
+   * @brief Update data with recordings from the given clients, sync with local data.
+   * @param clients The clients to fetch data from. Leave empty to fetch data from all created clients.
+   * @return True on success, false otherwise.
+   */
+  bool UpdateFromClients(const std::vector<std::shared_ptr<CPVRClient>>& clients);
 
-    /**
-     * Deletes the item in question, be it a directory or a file
-     * @param item the item to delete
-     * @return whether the item was deleted successfully
-     */
-    bool Delete(const CFileItem &item);
-    bool Undelete(const CFileItem &item);
-    bool DeleteAllRecordingsFromTrash();
-    bool RenameRecording(CFileItem &item, std::string &strNewName);
-    bool SetRecordingsPlayCount(const CFileItemPtr &item, int count);
-    bool IncrementRecordingsPlayCount(const CFileItemPtr &item);
-    bool MarkWatched(const CFileItemPtr &item, bool bWatched);
+  /*!
+   * @brief client has delivered a new/updated recording.
+   * @param tag The recording
+   * @param client The client the recording belongs to.
+   */
+  void UpdateFromClient(const std::shared_ptr<CPVRRecording>& tag, const CPVRClient& client);
 
-    bool GetDirectory(const std::string& strPath, CFileItemList &items);
-    CFileItemPtr GetByPath(const std::string &path);
-    CPVRRecordingPtr GetById(int iClientId, const std::string &strRecordingId) const;
-    void GetAll(CFileItemList &items, bool bDeleted = false);
-    CFileItemPtr GetById(unsigned int iId) const;
+  /*!
+   * @brief refresh the size of any in progress recordings from the clients.
+   */
+  void UpdateInProgressSize();
 
-    /*!
-     * @brief Get the recording for the given epg tag, if any.
-     * @param epgTag The epg tag.
-     * @return The requested recording, or an empty recordingptr if none was found.
-     */
-    CPVRRecordingPtr GetRecordingForEpgTag(const CPVREpgInfoTagPtr &epgTag) const;
+  int GetNumTVRecordings() const;
+  bool HasDeletedTVRecordings() const;
+  int GetNumRadioRecordings() const;
+  bool HasDeletedRadioRecordings() const;
 
-  private:
-    typedef std::map<CPVRRecordingUid, CPVRRecordingPtr> PVR_RECORDINGMAP;
-    typedef PVR_RECORDINGMAP::iterator PVR_RECORDINGMAP_ITR;
-    typedef PVR_RECORDINGMAP::const_iterator PVR_RECORDINGMAP_CITR;
+  /*!
+   * @brief Set a recording's watched state
+   * @param recording The recording
+   * @param bWatched True to set watched, false to set unwatched state
+   * @return True on success, false otherwise
+   */
+  bool MarkWatched(const std::shared_ptr<CPVRRecording>& recording, bool bWatched);
 
-    CCriticalSection m_critSection;
-    bool m_bIsUpdating;
-    PVR_RECORDINGMAP m_recordings;
-    unsigned int m_iLastId;
-    CVideoDatabase m_database;
-    bool m_bDeletedTVRecordings;
-    bool m_bDeletedRadioRecordings;
-    unsigned int m_iTVRecordings;
-    unsigned int m_iRadioRecordings;
+  /*!
+   * @brief Reset a recording's resume point, if any
+   * @param recording The recording
+   * @return True on success, false otherwise
+   */
+  bool ResetResumePoint(const std::shared_ptr<CPVRRecording>& recording);
 
-    void UpdateFromClients(void);
-    std::string TrimSlashes(const std::string &strOrig) const;
-    bool IsDirectoryMember(const std::string &strDirectory, const std::string &strEntryDirectory, bool bGrouped) const;
-    void GetSubDirectories(const CPVRRecordingsPath &recParentPath, CFileItemList *results);
+  /*!
+   * @brief Delete a recording in the backend, cleanup db enries.
+   * @param recording The recording
+   * @return True on success, false otherwise
+   */
+  bool DeleteRecording(const std::shared_ptr<CPVRRecording>& recording);
 
-    /**
-     * @brief recursively deletes all recordings in the specified directory
-     * @param item the directory
-     * @return true if all recordings were deleted
-     */
-    bool DeleteDirectory(const CFileItem &item);
-    bool DeleteRecording(const CFileItem &item);
+  /*!
+   * @brief Get a list of all recordings
+   * @return the list of all recordings
+   */
+  std::vector<std::shared_ptr<CPVRRecording>> GetAll() const;
 
-    /**
-     * @brief special value for parameter count of method ChangeRecordingsPlayCount
-     */
-    static const int INCREMENT_PLAY_COUNT = -1;
+  std::shared_ptr<CPVRRecording> GetByPath(const std::string& path) const;
+  std::shared_ptr<CPVRRecording> GetById(int iClientId, const std::string& strRecordingId) const;
+  std::shared_ptr<CPVRRecording> GetById(unsigned int iId) const;
 
-    /**
-     * @brief change the playcount of the given recording or recursively of all children of the given recordings folder
-     * @param item the recording or directory containing recordings
-     * @param count the new playcount or INCREMENT_PLAY_COUNT to denote that the current playcount(s) are to be incremented by one
-     * @return true if all playcounts were changed
-     */
-    bool ChangeRecordingsPlayCount(const CFileItemPtr &item, int count);    
-  };
-}
+  /*!
+   * @brief Check whether at least one recording is offered by the given provider.
+   * @param isRadio Check radio or TV recordings.
+   * @param clientId The clientId to check.
+   * @param providerId The providerId to check.
+   * @return True, if at least one matching recording is offered by the provider, false otherwise.
+   */
+  bool HasRecordingForProvider(bool isRadio, int clientId, int providerId) const;
+
+  /*!
+   * @brief Get the total count of recordings offered by the given provider.
+   * @param isRadio Check radio or TV recordings.
+   * @param clientId The clientId of the provider.
+   * @param providerId The providerId.
+   * @return The total count of matching recordings.
+   */
+  unsigned int GetRecordingCountByProvider(bool isRadio, int clientId, int providerId) const;
+
+  /*!
+   * @brief Get the recording for the given epg tag, if any.
+   * @param epgTag The epg tag.
+   * @return The requested recording, or an empty recordingptr if none was found.
+   */
+  std::shared_ptr<CPVRRecording> GetRecordingForEpgTag(
+      const std::shared_ptr<const CPVREpgInfoTag>& epgTag) const;
+
+  /*!
+   * @brief Erase stale texture db entries and image files.
+   * @return number of cleaned up images.
+   */
+  int CleanupCachedImages();
+
+private:
+  /*!
+   * @brief Get/Open the video database.
+   * @return A reference to the video database.
+   */
+  CVideoDatabase& GetVideoDatabase();
+
+  /*!
+   * @brief Set a recording's play count
+   * @param recording The recording
+   * @param count The new play count
+   * @return True on success, false otherwise
+   */
+  bool SetRecordingsPlayCount(const std::shared_ptr<CPVRRecording>& recording, int count);
+
+  /*!
+   * @brief Increment a recording's play count
+   * @param recording The recording
+   * @return True on success, false otherwise
+   */
+  bool IncrementRecordingsPlayCount(const std::shared_ptr<CPVRRecording>& recording);
+
+  /*!
+   * @brief special value for parameter count of method ChangeRecordingsPlayCount
+   */
+  static const int INCREMENT_PLAY_COUNT = -1;
+
+  /*!
+   * @brief change the play count of the given recording
+   * @param recording The recording
+   * @param count The new play count or INCREMENT_PLAY_COUNT to denote that the current play count is to be incremented by one
+   * @return true if the play count was changed successfully
+   */
+  bool ChangeRecordingsPlayCount(const std::shared_ptr<CPVRRecording>& recording, int count);
+
+  mutable CCriticalSection m_critSection;
+  bool m_bIsUpdating = false;
+  std::map<CPVRRecordingUid, std::shared_ptr<CPVRRecording>> m_recordings;
+  unsigned int m_iLastId = 0;
+  std::unique_ptr<CVideoDatabase> m_database;
+  bool m_bDeletedTVRecordings = false;
+  bool m_bDeletedRadioRecordings = false;
+  unsigned int m_iTVRecordings = 0;
+  unsigned int m_iRadioRecordings = 0;
+};
+} // namespace PVR

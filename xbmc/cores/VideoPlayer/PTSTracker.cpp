@@ -1,29 +1,19 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PTSTracker.h"
-#include "DVDClock.h"
+
 #include "DVDCodecs/DVDCodecUtils.h"
-#include "cores/VideoPlayer/TimingConstants.h"
-#include "utils/log.h"
+#include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "utils/StringUtils.h"
+#include "utils/log.h"
+
+#include <algorithm>
 #include <cmath>
 
 #define MAXERR DVD_MSEC_TO_TIME(2.5)
@@ -90,7 +80,8 @@ void CPtsTracker::Add(double pts)
     {
       m_VFRCounter++;
       m_lastPattern = m_pattern;
-      CLog::Log(LOGDEBUG, "CPtsTracker: pattern lost on diff %f, number of losses %i", GetDiff(0), m_VFRCounter);
+      CLog::Log(LOGDEBUG, "CPtsTracker: pattern lost on diff {:f}, number of losses {}", GetDiff(0),
+                m_VFRCounter);
       Flush();
     }
 
@@ -113,8 +104,8 @@ void CPtsTracker::Add(double pts)
       }
 
       double frameduration = CalcFrameDuration();
-      CLog::Log(LOGDEBUG, "CPtsTracker: detected pattern of length %i: %s, frameduration: %f",
-                (int)pattern.size(), GetPatternStr().c_str(), frameduration);
+      CLog::Log(LOGDEBUG, "CPtsTracker: detected pattern of length {}: {}, frameduration: {:f}",
+                (int)pattern.size(), GetPatternStr(), frameduration);
     }
   }
 
@@ -262,7 +253,7 @@ bool CPtsTracker::CheckPattern(std::vector<double>& pattern)
 }
 
 //calculate how long each frame should last from the saved pattern
-//Retreive also information of max and min frame rate duration, for VFR files case
+//also retrieve information of max and min frame rate duration, for VFR files case
 double CPtsTracker::CalcFrameDuration()
 {
   if (!m_pattern.empty())
@@ -324,7 +315,7 @@ std::string CPtsTracker::GetPatternStr()
   std::string patternstr;
 
   for (unsigned int i = 0; i < m_pattern.size(); i++)
-    patternstr += StringUtils::Format("%.2f ", m_pattern[i]);
+    patternstr += StringUtils::Format("{:.2f} ", m_pattern[i]);
 
   StringUtils::Trim(patternstr);
 

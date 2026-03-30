@@ -1,34 +1,24 @@
 /*
- *      Copyright (C) 2005-2017 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "RenderFactory.h"
-#include "threads/SingleLock.h"
+
+#include <mutex>
+
 
 using namespace VIDEOPLAYER;
 
 CCriticalSection renderSection;
 std::map<std::string, VIDEOPLAYER::CreateRenderer> CRendererFactory::m_renderers;
 
-CBaseRenderer* CRendererFactory::CreateRenderer(std::string id, CVideoBuffer *buffer)
+CBaseRenderer* CRendererFactory::CreateRenderer(const std::string& id, CVideoBuffer* buffer)
 {
-  CSingleLock lock(renderSection);
+  std::unique_lock lock(renderSection);
 
   auto it = m_renderers.find(id);
   if (it != m_renderers.end())
@@ -41,9 +31,10 @@ CBaseRenderer* CRendererFactory::CreateRenderer(std::string id, CVideoBuffer *bu
 
 std::vector<std::string> CRendererFactory::GetRenderers()
 {
-  CSingleLock lock(renderSection);
+  std::unique_lock lock(renderSection);
 
   std::vector<std::string> ret;
+  ret.reserve(m_renderers.size());
   for (auto &renderer : m_renderers)
   {
     ret.push_back(renderer.first);
@@ -51,16 +42,16 @@ std::vector<std::string> CRendererFactory::GetRenderers()
   return ret;
 }
 
-void CRendererFactory::RegisterRenderer(std::string id, ::CreateRenderer createFunc)
+void CRendererFactory::RegisterRenderer(const std::string& id, ::CreateRenderer createFunc)
 {
-  CSingleLock lock(renderSection);
+  std::unique_lock lock(renderSection);
 
   m_renderers[id] = createFunc;
 }
 
 void CRendererFactory::ClearRenderer()
 {
-  CSingleLock lock(renderSection);
+  std::unique_lock lock(renderSection);
 
   m_renderers.clear();
 }

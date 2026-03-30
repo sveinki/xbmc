@@ -1,45 +1,55 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "cores/FFmpeg.h"
-#include "utils/log.h"
-#include "threads/CriticalSection.h"
-#include "utils/StringUtils.h"
-#include "threads/Thread.h"
-#include "settings/AdvancedSettings.h"
-#include "URL.h"
-#include <map>
 
-static XbmcThreads::ThreadLocal<CFFmpegLog> CFFmpegLogTls;
+#include "ServiceBroker.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/SettingsComponent.h"
+#include "threads/CriticalSection.h"
+#include "threads/Thread.h"
+#include "utils/StringUtils.h"
+#include "utils/log.h"
+
+extern "C"
+{
+#include <libavcodec/bsf.h>
+}
+
+#include <map>
+#include <mutex>
+
+static thread_local CFFmpegLog* CFFmpegLogTls;
+
+namespace FFMPEG_HELP_TOOLS
+{
+
+std::string FFMpegErrorToString(int err)
+{
+  std::string text;
+  text.resize(AV_ERROR_MAX_STRING_SIZE);
+  av_strerror(err, text.data(), AV_ERROR_MAX_STRING_SIZE);
+  return text;
+}
+
+} // namespace FFMPEG_HELP_TOOLS
 
 void CFFmpegLog::SetLogLevel(int level)
 {
   CFFmpegLog::ClearLogLevel();
   CFFmpegLog *log = new CFFmpegLog();
   log->level = level;
-  CFFmpegLogTls.set(log);
+  CFFmpegLogTls = log;
 }
 
 int CFFmpegLog::GetLogLevel()
 {
-  CFFmpegLog* log = CFFmpegLogTls.get();
+  CFFmpegLog* log = CFFmpegLogTls;
   if (!log)
     return -1;
   return log->level;
@@ -47,58 +57,22 @@ int CFFmpegLog::GetLogLevel()
 
 void CFFmpegLog::ClearLogLevel()
 {
-  CFFmpegLog* log = CFFmpegLogTls.get();
-  CFFmpegLogTls.set(nullptr);
+  CFFmpegLog* log = CFFmpegLogTls;
+  CFFmpegLogTls = nullptr;
   if (log)
     delete log;
 }
 
-/* callback for the ffmpeg lock manager */
-int ffmpeg_lockmgr_cb(void **mutex, enum AVLockOp operation)
-{
-  CCriticalSection **lock = (CCriticalSection **)mutex;
-
-  switch (operation)
-  {
-    case AV_LOCK_CREATE:
-    {
-      *lock = NULL;
-      *lock = new CCriticalSection();
-      if (*lock == NULL)
-        return 1;
-      break;
-    }
-    case AV_LOCK_OBTAIN:
-      (*lock)->lock();
-      break;
-
-    case AV_LOCK_RELEASE:
-      (*lock)->unlock();
-      break;
-
-    case AV_LOCK_DESTROY:
-    {
-      delete *lock;
-      *lock = NULL;
-      break;
-    }
-
-    default:
-      return 1;
-  }
-  return 0;
-}
-
 static CCriticalSection m_logSection;
-std::map<uintptr_t, std::string> g_logbuffer;
+std::map<const CThread*, std::string> g_logbuffer;
 
 void ff_flush_avutil_log_buffers(void)
 {
-  CSingleLock lock(m_logSection);
+  std::unique_lock lock(m_logSection);
   /* Loop through the logbuffer list and remove any blank buffers
      If the thread using the buffer is still active, it will just
      add a new buffer next time it writes to the log */
-  std::map<uintptr_t, std::string>::iterator it;
+  std::map<const CThread*, std::string>::iterator it;
   for (it = g_logbuffer.begin(); it != g_logbuffer.end(); )
     if ((*it).second.empty())
       g_logbuffer.erase(it++);
@@ -108,8 +82,8 @@ void ff_flush_avutil_log_buffers(void)
 
 void ff_avutil_log(void* ptr, int level, const char* format, va_list va)
 {
-  CSingleLock lock(m_logSection);
-  uintptr_t threadId = (uintptr_t)CThread::GetCurrentThreadId();
+  std::unique_lock lock(m_logSection);
+  const CThread* threadId = CThread::GetCurrentThread();
   std::string &buffer = g_logbuffer[threadId];
 
   AVClass* avc= ptr ? *(AVClass**)ptr : NULL;
@@ -118,10 +92,9 @@ void ff_avutil_log(void* ptr, int level, const char* format, va_list va)
   if (CFFmpegLog::GetLogLevel() > 0)
     maxLevel = AV_LOG_INFO;
 
-  if (level > maxLevel &&
-     !g_advancedSettings.CanLogComponent(LOGFFMPEG))
+  if (level > maxLevel && !CServiceBroker::GetLogging().CanLogComponent(LOGFFMPEG))
     return;
-  else if (g_advancedSettings.m_logLevel <= LOG_LEVEL_NORMAL)
+  else if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_logLevel <= LOG_LEVEL_NORMAL)
     return;
 
   int type;
@@ -142,7 +115,7 @@ void ff_avutil_log(void* ptr, int level, const char* format, va_list va)
   }
 
   std::string message = StringUtils::FormatV(format, va);
-  std::string prefix = StringUtils::Format("ffmpeg[%lX]: ", threadId);
+  std::string prefix = StringUtils::Format("ffmpeg[{}]: ", fmt::ptr(threadId));
   if (avc)
   {
     if (avc->item_name)
@@ -155,20 +128,213 @@ void ff_avutil_log(void* ptr, int level, const char* format, va_list va)
   int pos, start = 0;
   while ((pos = buffer.find_first_of('\n', start)) >= 0)
   {
-    if(pos > start)
-    {
-      std::vector<std::string> toLog = StringUtils::Split(buffer.substr(start, pos - start), "from '");
-      if (toLog.size() > 1)
-      {
-       size_t pos = toLog[1].find_first_of('\'');
-       std::string url = CURL::GetRedacted(toLog[1].substr(0, pos - 1));
-       toLog[0] += url + toLog[1].substr(pos);
-      }
-
-      CLog::Log(type, "%s%s", prefix.c_str(), toLog[0].c_str());
-    }
+    if (pos > start)
+      CLog::Log(type, "{}{}", prefix, buffer.substr(start, pos - start));
     start = pos+1;
   }
   buffer.erase(0, start);
 }
 
+FFmpegExtraData::FFmpegExtraData(size_t size)
+  : m_data(reinterpret_cast<uint8_t*>(av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE))),
+    m_size(size)
+{
+  // using av_mallocz because some APIs require at least the padding to be zeroed, e.g. AVCodecParameters
+  if (!m_data)
+    throw std::bad_alloc();
+}
+
+FFmpegExtraData::FFmpegExtraData(const uint8_t* data, size_t size) : FFmpegExtraData(size)
+{
+  if (size > 0)
+    std::memcpy(m_data, data, size);
+}
+
+FFmpegExtraData::~FFmpegExtraData()
+{
+  av_free(m_data);
+}
+
+FFmpegExtraData::FFmpegExtraData(const FFmpegExtraData& e) : FFmpegExtraData(e.m_size)
+{
+  if (m_size > 0)
+    std::memcpy(m_data, e.m_data, m_size);
+}
+
+FFmpegExtraData::FFmpegExtraData(FFmpegExtraData&& other) noexcept : FFmpegExtraData()
+{
+  std::swap(m_data, other.m_data);
+  std::swap(m_size, other.m_size);
+}
+
+FFmpegExtraData& FFmpegExtraData::operator=(const FFmpegExtraData& other)
+{
+  if (this != &other)
+  {
+    if (m_size >= other.m_size && other.m_size > 0) // reuse current buffer if large enough
+    {
+      std::memcpy(m_data, other.m_data, other.m_size);
+      m_size = other.m_size;
+    }
+    else
+    {
+      FFmpegExtraData extraData(other);
+      *this = std::move(extraData);
+    }
+  }
+  return *this;
+}
+
+FFmpegExtraData& FFmpegExtraData::operator=(FFmpegExtraData&& other) noexcept
+{
+  if (this != &other)
+  {
+    std::swap(m_data, other.m_data);
+    std::swap(m_size, other.m_size);
+  }
+  return *this;
+}
+
+bool FFmpegExtraData::operator==(const FFmpegExtraData& other) const
+{
+  return m_size == other.m_size && (m_size == 0 || std::memcmp(m_data, other.m_data, m_size) == 0);
+}
+
+bool FFmpegExtraData::operator!=(const FFmpegExtraData& other) const
+{
+  return !(*this == other);
+}
+
+uint8_t* FFmpegExtraData::TakeData()
+{
+  auto tmp = m_data;
+  m_data = nullptr;
+  m_size = 0;
+  return tmp;
+}
+
+FFmpegExtraData GetPacketExtradata(const AVPacket* pkt, const AVCodecParameters* codecPar)
+{
+  constexpr int FF_MAX_EXTRADATA_SIZE = ((1 << 28) - AV_INPUT_BUFFER_PADDING_SIZE);
+
+  if (!pkt)
+    return {};
+
+  /* extract_extradata bitstream filter is implemented only
+   * for certain codecs, as noted in discussion of PR#21248
+   */
+
+  AVCodecID codecId = codecPar->codec_id;
+
+  // clang-format off
+  if (
+    codecId != AV_CODEC_ID_MPEG1VIDEO &&
+    codecId != AV_CODEC_ID_MPEG2VIDEO &&
+    codecId != AV_CODEC_ID_H264 &&
+    codecId != AV_CODEC_ID_HEVC &&
+    codecId != AV_CODEC_ID_MPEG4 &&
+    codecId != AV_CODEC_ID_VC1 &&
+    codecId != AV_CODEC_ID_AV1 &&
+    codecId != AV_CODEC_ID_AVS2 &&
+    codecId != AV_CODEC_ID_AVS3 &&
+    codecId != AV_CODEC_ID_CAVS
+  )
+    // clang-format on
+    return {};
+
+  const AVBitStreamFilter* f = av_bsf_get_by_name("extract_extradata");
+  if (!f)
+    return {};
+
+  AVBSFContext* bsf = nullptr;
+  int ret = av_bsf_alloc(f, &bsf);
+  if (ret < 0)
+    return {};
+
+  ret = avcodec_parameters_copy(bsf->par_in, codecPar);
+  if (ret < 0)
+  {
+    av_bsf_free(&bsf);
+    return {};
+  }
+
+  ret = av_bsf_init(bsf);
+  if (ret < 0)
+  {
+    av_bsf_free(&bsf);
+    return {};
+  }
+
+  AVPacket* dstPkt = av_packet_alloc();
+  if (!dstPkt)
+  {
+    CLog::LogF(LOGERROR, "failed to allocate packet");
+
+    av_bsf_free(&bsf);
+    return {};
+  }
+  AVPacket* pktRef = dstPkt;
+
+  ret = av_packet_ref(pktRef, pkt);
+  if (ret < 0)
+  {
+    av_bsf_free(&bsf);
+    av_packet_free(&dstPkt);
+    return {};
+  }
+
+  ret = av_bsf_send_packet(bsf, pktRef);
+  if (ret < 0)
+  {
+    av_packet_unref(pktRef);
+    av_bsf_free(&bsf);
+    av_packet_free(&dstPkt);
+    return {};
+  }
+
+  FFmpegExtraData extraData;
+  ret = 0;
+  while (ret >= 0)
+  {
+    ret = av_bsf_receive_packet(bsf, pktRef);
+    if (ret < 0)
+    {
+      if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
+        break;
+
+      continue;
+    }
+
+    size_t retExtraDataSize = 0;
+    uint8_t* retExtraData =
+        av_packet_get_side_data(pktRef, AV_PKT_DATA_NEW_EXTRADATA, &retExtraDataSize);
+    if (retExtraData && retExtraDataSize > 0 && retExtraDataSize < FF_MAX_EXTRADATA_SIZE)
+    {
+      try
+      {
+        extraData = FFmpegExtraData(retExtraData, retExtraDataSize);
+      }
+      catch (const std::bad_alloc&)
+      {
+        CLog::LogF(LOGERROR, "failed to allocate {} bytes for extradata", retExtraDataSize);
+
+        av_packet_unref(pktRef);
+        av_bsf_free(&bsf);
+        av_packet_free(&dstPkt);
+        return {};
+      }
+
+      CLog::LogF(LOGDEBUG, "fetching extradata, extradata_size({})", retExtraDataSize);
+
+      av_packet_unref(pktRef);
+      break;
+    }
+
+    av_packet_unref(pktRef);
+  }
+
+  av_bsf_free(&bsf);
+  av_packet_free(&dstPkt);
+
+  return extraData;
+}

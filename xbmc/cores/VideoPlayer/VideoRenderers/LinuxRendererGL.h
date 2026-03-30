@@ -1,76 +1,45 @@
 /*
- *      Copyright (C) 2007-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2007-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
-
-#include "system.h"
 
 #include <vector>
 
 #include "system_gl.h"
 
 #include "FrameBufferObject.h"
-#include "guilib/Shader.h"
-#include "settings/VideoSettings.h"
-#include "RenderFlags.h"
+#include "cores/VideoSettings.h"
 #include "RenderInfo.h"
-#include "guilib/GraphicContext.h"
 #include "BaseRenderer.h"
 #include "ColorManager.h"
-#include "threads/Event.h"
-#include "VideoShaders/ShaderFormats.h"
+#include "utils/Geometry.h"
+
+extern "C" {
+#include <libavutil/mastering_display_metadata.h>
+}
 
 class CRenderCapture;
+class CRenderSystemGL;
 
-class CBaseTexture;
-namespace Shaders { class BaseYUV2RGBShader; }
-namespace Shaders { class BaseVideoFilterShader; }
-
-struct DRAWRECT
+class CTexture;
+namespace Shaders
 {
-  float left;
-  float top;
-  float right;
-  float bottom;
-};
-
-struct YUVRANGE
+namespace GL
 {
-  int y_min, y_max;
-  int u_min, u_max;
-  int v_min, v_max;
-};
-
-struct YUVCOEF
-{
-  float r_up, r_vp;
-  float g_up, g_vp;
-  float b_up, b_vp;
-};
+class BaseYUV2RGBGLSLShader;
+class BaseVideoFilterShader;
+}
+} // namespace Shaders
 
 enum RenderMethod
 {
   RENDER_GLSL=0x01,
-  RENDER_ARB=0x02,
-  RENDER_POT=0x04,
-  RENDER_CUSTOM=0x08
+  RENDER_CUSTOM=0x02
 };
 
 enum RenderQuality
@@ -80,20 +49,9 @@ enum RenderQuality
   RQ_MULTIPASS,
 };
 
-#define PLANE_Y 0
-#define PLANE_U 1
-#define PLANE_V 2
-
 #define FIELD_FULL 0
 #define FIELD_TOP 1
 #define FIELD_BOT 2
-
-extern YUVRANGE yuv_range_lim;
-extern YUVRANGE yuv_range_full;
-extern YUVCOEF yuv_coef_bt601;
-extern YUVCOEF yuv_coef_bt709;
-extern YUVCOEF yuv_coef_ebu;
-extern YUVCOEF yuv_coef_smtp240m;
 
 class CLinuxRendererGL : public CBaseRenderer
 {
@@ -105,37 +63,40 @@ public:
   static bool Register();
 
   // Player functions
-  bool Configure(const VideoPicture &picture, float fps, unsigned flags, unsigned int orientation) override;
+  bool Configure(const VideoPicture &picture, float fps, unsigned int orientation) override;
   bool IsConfigured() override { return m_bConfigured; }
-  void AddVideoPicture(const VideoPicture &picture, int index, double currentClock) override;
-  void FlipPage(int source) override;
+  void AddVideoPicture(const VideoPicture &picture, int index) override;
   void UnInit() override;
-  void Reset() override;
-  void Flush() override;
+  bool Flush(bool saveBuffers) override;
   void SetBufferSize(int numBuffers) override { m_NumYV12Buffers = numBuffers; }
   void ReleaseBuffer(int idx) override;
-  void RenderUpdate(bool clear, DWORD flags = 0, DWORD alpha = 255) override;
+  void RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha) override;
   void Update() override;
-  bool RenderCapture(CRenderCapture* capture) override;
+  bool RenderCapture(int index, CRenderCapture* capture) override;
   CRenderInfo GetRenderInfo() override;
   bool ConfigChanged(const VideoPicture &picture) override;
 
   // Feature support
   bool SupportsMultiPassRendering() override;
-  bool Supports(ERENDERFEATURE feature) override;
-  bool Supports(ESCALINGMETHOD method) override;
+  bool Supports(ERENDERFEATURE feature) const override;
+  bool Supports(ESCALINGMETHOD method) const override;
+
+  CRenderCapture* GetRenderCapture() override;
 
 protected:
-  bool Render(DWORD flags, int renderBuffer);
+
+  bool Render(unsigned int flags, int renderBuffer);
   void ClearBackBuffer();
+  void ClearBackBufferQuad();
   void DrawBlackBars();
 
   bool ValidateRenderer();
-  int  NextYV12Texture();
   virtual bool ValidateRenderTarget();
   virtual void LoadShaders(int field=FIELD_FULL);
   void SetTextureFilter(GLenum method);
   void UpdateVideoFilter();
+  void CheckVideoParameters(int index);
+  AVColorPrimaries GetSrcPrimaries(AVColorPrimaries srcPrimaries, unsigned int width, unsigned int height);
 
   // textures
   virtual bool UploadTexture(int index);
@@ -160,14 +121,25 @@ protected:
   void RenderToFBO(int renderBuffer, int field, bool weave = false);
   void RenderFromFBO();
   void RenderSinglePass(int renderBuffer, int field); // single pass glsl renderer
-  void RenderSoftware(int renderBuffer, int field);   // single pass s/w yuv2rgb renderer
   void RenderRGB(int renderBuffer, int field);      // render using vdpau/vaapi hardware
   void RenderProgressiveWeave(int renderBuffer, int field); // render using vdpau hardware
 
-  // hooks for HwDec Renderered
-  virtual bool LoadShadersHook() { return false; };
-  virtual bool RenderHook(int idx) { return false; };
-  virtual void AfterRenderHook(int idx) {};
+  struct CYuvPlane;
+  struct CPictureBuffer;
+
+  void BindPbo(CPictureBuffer& buff);
+  void UnBindPbo(CPictureBuffer& buff);
+  void LoadPlane(CYuvPlane& plane, int type,
+                 unsigned width,  unsigned height,
+                 int stride, int bpp, void* data);
+  void GetPlaneTextureSize(CYuvPlane& plane);
+  GLint GetInternalFormat(GLint format, int bpp);
+
+  // hooks for HwDec Renderer
+  virtual bool LoadShadersHook() { return false; }
+  virtual bool RenderHook(int idx) { return false; }
+  virtual void AfterRenderHook(int idx) {}
+  virtual bool CanSaveBuffers() { return true; }
 
   struct
   {
@@ -175,80 +147,86 @@ protected:
     float width, height;
   } m_fbo;
 
-  int m_iYV12RenderBuffer;
-  int m_NumYV12Buffers;
-  int m_iLastRenderBuffer;
+  GLint m_intermediateFormat{GL_RGBA8};
+  GLint m_intermediateType{GL_UNSIGNED_BYTE};
+  bool m_intermediateGammaCorrection{false};
 
-  bool m_bConfigured;
-  bool m_bValidated;
-  GLenum m_textureTarget;
-  int m_renderMethod;
-  RenderQuality m_renderQuality;
-  
+  int m_iYV12RenderBuffer = 0;
+  int m_NumYV12Buffers = 0;
+
+  bool m_bConfigured = false;
+  bool m_bValidated = false;
+  GLenum m_textureTarget = GL_TEXTURE_2D;
+  int m_renderMethod = RENDER_GLSL;
+  RenderQuality m_renderQuality = RQ_SINGLEPASS;
+  CRenderSystemGL *m_renderSystem = nullptr;
+
   // Raw data used by renderer
-  int m_currentField;
-  int m_reloadShaders;
+  int m_currentField = FIELD_FULL;
+  int m_reloadShaders = 0;
 
-  struct YUVPLANE
+  struct CYuvPlane
   {
     GLuint id;
     GLuint pbo;
-
-    CRect  rect;
-
-    float  width;
-    float  height;
-
+    CRect rect;
+    float width;
+    float height;
     unsigned texwidth;
     unsigned texheight;
-
     //pixels per texel
     unsigned pixpertex_x;
     unsigned pixpertex_y;
   };
 
-  struct YUVBUFFER
+  struct CPictureBuffer
   {
-    YUVBUFFER();
-   ~YUVBUFFER();
+    CPictureBuffer();
+    ~CPictureBuffer() = default;
 
-    YUVPLANE fields[MAX_FIELDS][YuvImage::MAX_PLANES];
+    CYuvPlane fields[MAX_FIELDS][YuvImage::MAX_PLANES];
     YuvImage image;
     GLuint pbo[3]; // one pbo for 3 planes
 
     CVideoBuffer *videoBuffer;
     bool loaded;
+
+    AVColorPrimaries m_srcPrimaries;
+    AVColorSpace m_srcColSpace;
+    AVColorTransferCharacteristic m_srcColTransfer;
+
+    int m_srcBits = 8;
+    int m_srcTextureBits = 8;
+    bool m_srcFullRange;
+
+    bool hasDisplayMetadata = false;
+    AVMasteringDisplayMetadata displayMetadata;
+    bool hasLightMetadata = false;
+    AVContentLightMetadata lightMetadata;
   };
 
   // YV12 decoder textures
   // field index 0 is full image, 1 is odd scanlines, 2 is even scanlines
-  YUVBUFFER m_buffers[NUM_BUFFERS];
+  CPictureBuffer m_buffers[NUM_BUFFERS];
 
-  void LoadPlane(YUVPLANE& plane, int type,
-                 unsigned width,  unsigned height,
-                 int stride, int bpp, void* data);
-
-  void GetPlaneTextureSize(YUVPLANE& plane);
-
-  Shaders::BaseYUV2RGBShader *m_pYUVShader;
-  Shaders::BaseVideoFilterShader *m_pVideoFilterShader;
-  ESCALINGMETHOD m_scalingMethod;
-  ESCALINGMETHOD m_scalingMethodGui;
+  Shaders::GL::BaseYUV2RGBGLSLShader* m_pYUVShader = nullptr;
+  Shaders::GL::BaseVideoFilterShader* m_pVideoFilterShader = nullptr;
+  ESCALINGMETHOD m_scalingMethod = VS_SCALINGMETHOD_LINEAR;
+  ESCALINGMETHOD m_scalingMethodGui = VS_SCALINGMETHOD_MAX;
   bool m_useDithering;
   unsigned int m_ditherDepth;
   bool m_fullRange;
-
-  // clear colour for "black" bars
-  float m_clearColour;
-
-  void BindPbo(YUVBUFFER& buff);
-  void UnBindPbo(YUVBUFFER& buff);
-  bool m_pboSupported;
-  bool m_pboUsed;
-
-  bool  m_nonLinStretch;
-  bool  m_nonLinStretchGui;
-  float m_pixelRatio;
+  AVColorPrimaries m_srcPrimaries;
+  bool m_toneMap = false;
+  ETONEMAPMETHOD m_toneMapMethod = VS_TONEMAPMETHOD_OFF;
+  bool m_passthroughHDR = false;
+  float m_clearColour = 0.0f;
+  bool m_pboSupported = true;
+  bool m_pboUsed = false;
+  bool m_nonLinStretch = false;
+  bool m_nonLinStretchGui = false;
+  float m_pixelRatio = 0.0f;
+  CRect m_viewRect;
 
   // color management
   std::unique_ptr<CColorManager> m_ColorManager;
@@ -261,42 +239,3 @@ protected:
   bool LoadCLUT();
   void DeleteCLUT();
 };
-
-
-inline int NP2( unsigned x ) {
-#if defined(TARGET_POSIX) && \
-    !defined(__POWERPC__) && \
-    !defined(__PPC__) && \
-    !defined(__arm__) && \
-    !defined(__aarch64__) && \
-    !defined(__mips__) && \
-    !defined(__SH4__) && \
-    !defined(__sparc__) && \
-    !defined(__arc__) && \
-    !defined(__xtensa__)
-  // If there are any issues compiling this, just append a ' && 0'
-  // to the above to make it '#if defined(TARGET_POSIX) && 0'
-
-  // Linux assembly is AT&T Unix style, not Intel style
-  unsigned y;
-  __asm__("dec %%ecx \n"
-          "movl $1, %%eax \n"
-          "bsr %%ecx,%%ecx \n"
-          "inc %%ecx \n"
-          "shl %%cl, %%eax \n"
-          "movl %%eax, %0 \n"
-          :"=r"(y)
-          :"c"(x)
-          :"%eax");
-  return y;
-#else
-    --x;
-    x |= x >> 1;
-    x |= x >> 2;
-    x |= x >> 4;
-    x |= x >> 8;
-    x |= x >> 16;
-    return ++x;
-#endif
-}
-

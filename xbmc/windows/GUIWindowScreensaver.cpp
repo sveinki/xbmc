@@ -1,103 +1,120 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIWindowScreensaver.h"
 
-#include "Application.h"
+#include "GUIPassword.h"
 #include "GUIUserMessages.h"
 #include "ServiceBroker.h"
+#include "addons/AddonManager.h"
 #include "addons/ScreenSaver.h"
+#include "addons/addoninfo/AddonType.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationPowerHandling.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "windowing/WinSystem.h"
 
-CGUIWindowScreensaver::CGUIWindowScreensaver(void)
-  : CGUIWindow(WINDOW_SCREENSAVER, ""),
-    m_addon(nullptr)
+using namespace KODI;
+
+CGUIWindowScreensaver::CGUIWindowScreensaver()
+  : CGUIDialog(WINDOW_SCREENSAVER, "", DialogModalityType::MODELESS)
 {
+  m_renderOrder = RENDER_ORDER_WINDOW_SCREENSAVER;
 }
 
-void CGUIWindowScreensaver::Process(unsigned int currentTime, CDirtyRegionList &regions)
+void CGUIWindowScreensaver::Process(unsigned int currentTime, CDirtyRegionList& regions)
 {
   MarkDirtyRegion();
   CGUIWindow::Process(currentTime, regions);
-  m_renderRegion.SetRect(0, 0, (float)g_graphicsContext.GetWidth(), (float)g_graphicsContext.GetHeight());
+  const auto& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  m_renderRegion.SetRect(0, 0, static_cast<float>(context.GetWidth()),
+                         static_cast<float>(context.GetHeight()));
 }
 
 void CGUIWindowScreensaver::Render()
 {
   if (m_addon)
   {
-    g_graphicsContext.CaptureStateBlock();
+    auto& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+
+    context.CaptureStateBlock();
     m_addon->Render();
-    g_graphicsContext.ApplyStateBlock();
+    context.ApplyStateBlock();
     return;
   }
 
-  CGUIWindow::Render();
+  CGUIDialog::Render();
 }
 
-// called when the mouse is moved/clicked etc. etc.
-EVENT_RESULT CGUIWindowScreensaver::OnMouseEvent(const CPoint &point, const CMouseEvent &event)
+void CGUIWindowScreensaver::OnInitWindow()
 {
-  g_windowManager.PreviousWindow();
-  return EVENT_RESULT_HANDLED;
+  CGUIDialog::OnInitWindow();
+  m_visible = true;
+}
+
+void CGUIWindowScreensaver::UpdateVisibility()
+{
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+  if (!appPower->IsInScreenSaver() && m_visible)
+  {
+    m_visible = false;
+    Close();
+  }
 }
 
 bool CGUIWindowScreensaver::OnMessage(CGUIMessage& message)
 {
   switch (message.GetMessage())
   {
-  case GUI_MSG_WINDOW_DEINIT:
+    case GUI_MSG_WINDOW_DEINIT:
     {
       if (m_addon)
       {
         m_addon->Stop();
-        delete m_addon;
-        m_addon = nullptr;
+        m_addon.reset();
       }
 
-      g_graphicsContext.ApplyStateBlock();
+      CServiceBroker::GetWinSystem()->GetGfxContext().ApplyStateBlock();
     }
     break;
 
-  case GUI_MSG_WINDOW_INIT:
+    case GUI_MSG_WINDOW_INIT:
     {
       CGUIWindow::OnMessage(message);
 
-      g_graphicsContext.CaptureStateBlock();
+      CServiceBroker::GetWinSystem()->GetGfxContext().CaptureStateBlock();
 
-      const ADDON::BinaryAddonBasePtr addonBase = CServiceBroker::GetBinaryAddonManager().GetInstalledAddonInfo(CServiceBroker::GetSettings().GetString(CSettings::SETTING_SCREENSAVER_MODE), ADDON::ADDON_SCREENSAVER);
+      const std::string addon = CServiceBroker::GetSettingsComponent()->GetSettings()->GetString(
+          CSettings::SETTING_SCREENSAVER_MODE);
+      const ADDON::AddonInfoPtr addonBase =
+          CServiceBroker::GetAddonMgr().GetAddonInfo(addon, ADDON::AddonType::SCREENSAVER);
       if (!addonBase)
         return false;
-      m_addon = new ADDON::CScreenSaver(addonBase);
+      m_addon = std::make_unique<KODI::ADDONS::CScreenSaver>(addonBase);
       return m_addon->Start();
     }
 
-  case GUI_MSG_CHECK_LOCK:
-    if (!g_passwordManager.IsProfileLockUnlocked())
+    case GUI_MSG_CHECK_LOCK:
     {
-      g_application.m_iScreenSaveLock = -1;
-      return false;
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+      if (!g_passwordManager.IsProfileLockUnlocked())
+      {
+        appPower->SetScreenSaverLockFailed();
+        return false;
+      }
+      appPower->SetScreenSaverUnlocked();
+      return true;
     }
-    g_application.m_iScreenSaveLock = 1;
-    return true;
   }
 
   return CGUIWindow::OnMessage(message);

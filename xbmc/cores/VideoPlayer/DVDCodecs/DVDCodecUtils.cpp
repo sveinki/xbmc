@@ -1,32 +1,20 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "DVDCodecUtils.h"
-#include "TimingConstants.h"
-#include "utils/log.h"
+
 #include "cores/FFmpeg.h"
-#include "cores/VideoPlayer/Process/VideoBuffer.h"
-#include "Util.h"
+#include "cores/VideoPlayer/Interface/TimingConstants.h"
+
+#include <array>
 
 extern "C" {
-#include "libswscale/swscale.h"
+#include <libswscale/swscale.h>
 }
 
 bool CDVDCodecUtils::IsVP3CompatibleWidth(int width)
@@ -37,9 +25,9 @@ bool CDVDCodecUtils::IsVP3CompatibleWidth(int width)
   // 769-784, 849-864, 929-944, 1009–1024, 1793–1808, 1873–1888, 1953–1968 and 2033-2048 pixel.
   // This relates to the following macroblock sizes.
   int unsupported[] = {49, 54, 59, 64, 113, 118, 123, 128};
-  for (unsigned int i = 0; i < sizeof(unsupported) / sizeof(int); i++)
+  for (int u : unsupported)
   {
-    if (unsupported[i] == (width + 15) / 16)
+    if (u == (width + 15) / 16)
       return false;
   }
   return true;
@@ -48,13 +36,22 @@ bool CDVDCodecUtils::IsVP3CompatibleWidth(int width)
 double CDVDCodecUtils::NormalizeFrameduration(double frameduration, bool *match)
 {
   //if the duration is within 20 microseconds of a common duration, use that
-  const double durations[] = {DVD_TIME_BASE * 1.001 / 24.0, DVD_TIME_BASE / 24.0, DVD_TIME_BASE / 25.0,
-                              DVD_TIME_BASE * 1.001 / 30.0, DVD_TIME_BASE / 30.0, DVD_TIME_BASE / 50.0,
-                              DVD_TIME_BASE * 1.001 / 60.0, DVD_TIME_BASE / 60.0};
+  // clang-format off
+  constexpr std::array<double, 8> durations = {
+    DVD_TIME_BASE * 1.001 / 24.0,
+    DVD_TIME_BASE / 24.0,
+    DVD_TIME_BASE / 25.0,
+    DVD_TIME_BASE * 1.001 / 30.0,
+    DVD_TIME_BASE / 30.0,
+    DVD_TIME_BASE / 50.0,
+    DVD_TIME_BASE * 1.001 / 60.0,
+    DVD_TIME_BASE / 60.0
+  };
+  // clang-format on
 
   double lowestdiff = DVD_TIME_BASE;
   int    selected   = -1;
-  for (size_t i = 0; i < ARRAY_SIZE(durations); i++)
+  for (size_t i = 0; i < durations.size(); i++)
   {
     double diff = fabs(frameduration - durations[i]);
     if (diff < DVD_MSEC_TO_TIME(0.02) && diff < lowestdiff)

@@ -1,37 +1,29 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
-
-# lib name, version
-LIBNAME=libgpg-error
-VERSION=1.20
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.bz2
+include ../../Makefile.include LIBGPG-ERROR-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile LIBGPG-ERROR-VERSION ../../download-files.include \
+                              tvos_remove-fork.patch
 
 # configuration settings
 CONFIGURE=./configure --prefix=$(PREFIX) \
-  --disable-languages \
-  --disable-nls --disable-shared
+                      --disable-doc \
+                      --disable-tests \
+                      --disable-languages \
+                      --disable-nls \
+                      --disable-shared
 
 LIBDYLIB=$(PLATFORM)/src/.libs/$(LIBNAME).a
 
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
-
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM)/*; mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
+ifeq ($(TARGET_PLATFORM),appletvos)
+	cd $(PLATFORM); patch -p1 -i ../tvos_remove-fork.patch
+endif
+	cd $(PLATFORM); $(AUTORECONF) -vif
 	cd $(PLATFORM); $(CONFIGURE)
 
 $(LIBDYLIB): $(PLATFORM)
-ifeq ($(OS),osx)
-	$(MAKE) -C $(PLATFORM)/src gen-posix-lock-obj
-	$(PLATFORM)/src/gen-posix-lock-obj > $(PLATFORM)/src/syscfg/tmp.h
-	mv $(PLATFORM)/src/syscfg/tmp.h $(PLATFORM)/src/syscfg/$$(awk 'NR==1 {print $$2}' $(PLATFORM)/src/syscfg/tmp.h)
-endif
 ifeq ($(OS),android)
 ifeq ($(CPU),arm64-v8a)
 	cp lock-obj-pub.aarch64-unknown-linux-android.h $(PLATFORM)/src/syscfg/lock-obj-pub.linux-android.h

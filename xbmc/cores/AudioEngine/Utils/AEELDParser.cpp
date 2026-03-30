@@ -1,31 +1,20 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "AEELDParser.h"
+
 #include "AEDeviceInfo.h"
 #include "utils/EndianSwap.h"
-#include <string.h>
+
 #include <algorithm>
 #include <functional>
-
 #include <stdio.h>
+#include <string.h>
 
 #define GRAB_BITS(buf, byte, lowbit, bits) ((buf[byte] >> (lowbit)) & ((1 << (bits)) - 1))
 
@@ -83,8 +72,6 @@ typedef struct
 #define CEA_861_FORMAT_WMAPRO    14
 #define CEA_861_FORMAT_RESERVED2 15
 
-#define rtrim(s) s.erase(std::find_if(s.rbegin(), s.rend(), std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end())
-
 void CAEELDParser::Parse(const uint8_t *data, size_t length, CAEDeviceInfo& info)
 {
   ELDHeader header;
@@ -107,12 +94,12 @@ void CAEELDParser::Parse(const uint8_t *data, size_t length, CAEDeviceInfo& info
   header.fc                  = (data[7 ] & 0x04) == 0x04;
   header.lfe                 = (data[7 ] & 0x02) == 0x02;
   header.flr                 = (data[7 ] & 0x01) == 0x01;
-  header.port_id             = Endian_SwapLE64(*((uint64_t*)(data + 8)));
+  header.port_id             = Endian_SwapLE64(*((const uint64_t*)(data + 8)));
   header.mfg_name[0]         = 'A' + ((data[16] >> 2) & 0x1F) - 1;
   header.mfg_name[1]         = 'A' + (((data[16] << 3) | (data[17] >> 5)) & 0x1F) - 1;
   header.mfg_name[2]         = 'A' + (data[17] & 0x1F) - 1;
   header.mfg_name[3]         = '\0';
-  header.product_code        = Endian_SwapLE16(*((uint16_t*)(data + 18)));
+  header.product_code        = Endian_SwapLE16(*((const uint16_t*)(data + 18)));
 
   switch (header.conn_type)
   {
@@ -124,8 +111,11 @@ void CAEELDParser::Parse(const uint8_t *data, size_t length, CAEDeviceInfo& info
   if (header.monitor_name_length <= 16)
   {
     header.monitor_name.assign((const char *)(data + 20), header.monitor_name_length);
-    rtrim(header.monitor_name);
-    if (header.monitor_name.length() > 0)
+    header.monitor_name.erase(std::find_if(header.monitor_name.rbegin(), header.monitor_name.rend(),
+                                           [](char c) { return !std::isspace(c); })
+                                  .base(),
+                              header.monitor_name.end());
+    if (!header.monitor_name.empty())
     {
       info.m_displayNameExtra.append(" ");
       info.m_displayNameExtra.append(header.monitor_name);
@@ -203,7 +193,7 @@ void CAEELDParser::Parse(const uint8_t *data, size_t length, CAEDeviceInfo& info
     if (fmt == AE_FMT_INVALID)
       continue;
 
-    if (std::find(info.m_dataFormats.begin(), info.m_dataFormats.end(), fmt) == info.m_dataFormats.end())
+    if (std::ranges::find(info.m_dataFormats, fmt) == info.m_dataFormats.end())
       info.m_dataFormats.push_back(fmt);
   }
 }

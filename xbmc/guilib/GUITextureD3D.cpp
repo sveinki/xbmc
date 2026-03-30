@@ -1,49 +1,55 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#include "GUITextureD3D.h"
 
 #include "D3DResource.h"
 #include "GUIShaderDX.h"
-#include "GUITextureD3D.h"
-#include "Texture.h"
-#include "windowing/WindowingFactory.h"
+#include "TextureDX.h"
+#include "rendering/dx/RenderContext.h"
 
-CGUITextureD3D::CGUITextureD3D(float posX, float posY, float width, float height, const CTextureInfo &texture)
-: CGUITextureBase(posX, posY, width, height, texture)
+#include <DirectXMath.h>
+
+using namespace DirectX;
+
+void CGUITextureD3D::Register()
+{
+  CGUITexture::Register(CGUITextureD3D::CreateTexture, CGUITextureD3D::DrawQuad);
+}
+
+CGUITexture* CGUITextureD3D::CreateTexture(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
+{
+  return new CGUITextureD3D(posX, posY, width, height, texture);
+}
+
+CGUITextureD3D::CGUITextureD3D(
+    float posX, float posY, float width, float height, const CTextureInfo& texture)
+  : CGUITexture(posX, posY, width, height, texture)
 {
 }
 
-CGUITextureD3D::~CGUITextureD3D()
+CGUITextureD3D* CGUITextureD3D::Clone() const
 {
+  return new CGUITextureD3D(*this);
 }
 
-void CGUITextureD3D::Begin(color_t color)
+void CGUITextureD3D::Begin(KODI::UTILS::COLOR::Color color)
 {
-  CBaseTexture* texture = m_texture.m_textures[m_currentFrame];
+  CTexture* texture = m_texture.m_textures[m_currentFrame].get();
   texture->LoadToGPU();
 
-  if (m_diffuse.size()) 
+  if (m_diffuse.size())
 	  m_diffuse.m_textures[0]->LoadToGPU();
 
   m_col = color;
 
-  g_Windowing.SetAlphaBlendEnable(true);
+  DX::Windowing()->SetAlphaBlendEnable(true);
 }
 
 void CGUITextureD3D::End()
@@ -112,14 +118,19 @@ void CGUITextureD3D::Draw(float *x, float *y, float *z, const CRect &texture, co
   }
   verts[3].color = xcolor;
 
-  CDXTexture* tex = (CDXTexture *)m_texture.m_textures[m_currentFrame];
-  CGUIShaderDX* pGUIShader = g_Windowing.GetGUIShader();
+  CDXTexture* tex = static_cast<CDXTexture*>(m_texture.m_textures[m_currentFrame].get());
+  CGUIShaderDX* pGUIShader = DX::Windowing()->GetGUIShader();
 
-  pGUIShader->Begin(m_diffuse.size() ? SHADER_METHOD_RENDER_MULTI_TEXTURE_BLEND : SHADER_METHOD_RENDER_TEXTURE_BLEND);
+  pGUIShader->Begin(m_diffuse.size() > 0 ? (m_scalingMethod == TEXTURE_SCALING::NEAREST
+                                                ? SHADER_METHOD_RENDER_MULTI_TEXTURE_BLEND_NEAREST
+                                                : SHADER_METHOD_RENDER_MULTI_TEXTURE_BLEND)
+                                         : (m_scalingMethod == TEXTURE_SCALING::NEAREST
+                                                ? SHADER_METHOD_RENDER_TEXTURE_BLEND_NEAREST
+                                                : SHADER_METHOD_RENDER_TEXTURE_BLEND));
 
   if (m_diffuse.size())
   {
-    CDXTexture* diff = (CDXTexture *)m_diffuse.m_textures[0];
+    CDXTexture* diff = static_cast<CDXTexture*>(m_diffuse.m_textures[0].get());
     ID3D11ShaderResourceView* resource[] = { tex->GetShaderResource(), diff->GetShaderResource() };
     pGUIShader->SetShaderViews(ARRAYSIZE(resource), resource);
   }
@@ -128,10 +139,16 @@ void CGUITextureD3D::Draw(float *x, float *y, float *z, const CRect &texture, co
     ID3D11ShaderResourceView* resource = tex->GetShaderResource();
     pGUIShader->SetShaderViews(1, &resource);
   }
+  pGUIShader->SetDepth(m_depth);
   pGUIShader->DrawQuad(verts[0], verts[1], verts[2], verts[3]);
 }
 
-void CGUITextureD3D::DrawQuad(const CRect &rect, color_t color, CBaseTexture *texture, const CRect *texCoords)
+void CGUITextureD3D::DrawQuad(const CRect& rect,
+                              KODI::UTILS::COLOR::Color color,
+                              CTexture* texture,
+                              const CRect* texCoords,
+                              const float depth,
+                              const bool blending)
 {
   unsigned numViews = 0;
   ID3D11ShaderResourceView* views = nullptr;
@@ -140,8 +157,10 @@ void CGUITextureD3D::DrawQuad(const CRect &rect, color_t color, CBaseTexture *te
   {
     texture->LoadToGPU();
     numViews = 1;
-    views = ((CDXTexture *)texture)->GetShaderResource();
+    views = ((CDXTexture*)texture)->GetShaderResource();
   }
 
-  CD3DTexture::DrawQuad(rect, color, numViews, &views, texCoords, texture ? SHADER_METHOD_RENDER_TEXTURE_BLEND : SHADER_METHOD_RENDER_DEFAULT);
+  CD3DTexture::DrawQuad(rect, color, numViews, &views, texCoords,
+                        texture ? SHADER_METHOD_RENDER_TEXTURE_BLEND : SHADER_METHOD_RENDER_DEFAULT,
+                        depth);
 }

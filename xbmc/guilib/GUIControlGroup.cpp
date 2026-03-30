@@ -1,29 +1,22 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIControlGroup.h"
 
+#include "GUIMessage.h"
+#include "ServiceBroker.h"
+#include "input/mouse/MouseEvent.h"
+#include "windowing/WinSystem.h"
+
 #include <cassert>
 #include <utility>
 
-#include "guiinfo/GUIInfoLabels.h"
+using namespace KODI;
 
 CGUIControlGroup::CGUIControlGroup()
 {
@@ -95,7 +88,7 @@ void CGUIControlGroup::DynamicResourceAlloc(bool bOnOff)
 void CGUIControlGroup::Process(unsigned int currentTime, CDirtyRegionList &dirtyregions)
 {
   CPoint pos(GetPosition());
-  g_graphicsContext.SetOrigin(pos.x, pos.y);
+  CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(pos.x, pos.y);
 
   CRect rect;
   for (auto *control : m_children)
@@ -107,7 +100,7 @@ void CGUIControlGroup::Process(unsigned int currentTime, CDirtyRegionList &dirty
       rect.Union(control->GetRenderRegion());
   }
 
-  g_graphicsContext.RestoreOrigin();
+  CServiceBroker::GetWinSystem()->GetGfxContext().RestoreOrigin();
   CGUIControl::Process(currentTime, dirtyregions);
   m_renderRegion = rect;
 }
@@ -115,19 +108,33 @@ void CGUIControlGroup::Process(unsigned int currentTime, CDirtyRegionList &dirty
 void CGUIControlGroup::Render()
 {
   CPoint pos(GetPosition());
-  g_graphicsContext.SetOrigin(pos.x, pos.y);
+  CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(pos.x, pos.y);
   CGUIControl *focusedControl = NULL;
-  for (auto *control : m_children)
+  if (CServiceBroker::GetWinSystem()->GetGfxContext().GetRenderOrder() ==
+      RENDER_ORDER_FRONT_TO_BACK)
   {
-    if (m_renderFocusedLast && control->HasFocus())
-      focusedControl = control;
-    else
-      control->DoRender();
+    for (auto it = m_children.rbegin(); it != m_children.rend(); ++it)
+    {
+      if (m_renderFocusedLast && (*it)->HasFocus())
+        focusedControl = (*it);
+      else
+        (*it)->DoRender();
+    }
+  }
+  else
+  {
+    for (auto* control : m_children)
+    {
+      if (m_renderFocusedLast && control->HasFocus())
+        focusedControl = control;
+      else
+        control->DoRender();
+    }
   }
   if (focusedControl)
     focusedControl->DoRender();
   CGUIControl::Render();
-  g_graphicsContext.RestoreOrigin();
+  CServiceBroker::GetWinSystem()->GetGfxContext().RestoreOrigin();
 }
 
 void CGUIControlGroup::RenderEx()
@@ -139,7 +146,6 @@ void CGUIControlGroup::RenderEx()
 
 bool CGUIControlGroup::OnAction(const CAction &action)
 {
-  assert(false);  // unimplemented
   return false;
 }
 
@@ -250,7 +256,7 @@ bool CGUIControlGroup::OnMessage(CGUIMessage& message)
     break;
   }
   bool handled(false);
-  //not intented for any specific control, send to all childs and our base handler.
+  //not intended for any specific control, send to all childs and our base handler.
   if (message.GetControlId() == 0)
   {
     for (auto *control : m_children)
@@ -294,6 +300,23 @@ bool CGUIControlGroup::CanFocus() const
       return true;
   }
   return false;
+}
+
+void CGUIControlGroup::AssignDepth()
+{
+  CGUIControl* focusedControl = nullptr;
+  if (!m_children.empty())
+  {
+    for (auto* control : m_children)
+    {
+      if (m_renderFocusedLast && control->HasFocus())
+        focusedControl = control;
+      else
+        control->AssignDepth();
+    }
+  }
+  if (focusedControl)
+    focusedControl->AssignDepth();
 }
 
 void CGUIControlGroup::SetInitialVisibility()
@@ -364,7 +387,7 @@ bool CGUIControlGroup::HasAnimation(ANIMATION_TYPE animType)
   return false;
 }
 
-EVENT_RESULT CGUIControlGroup::SendMouseEvent(const CPoint &point, const CMouseEvent &event)
+EVENT_RESULT CGUIControlGroup::SendMouseEvent(const CPoint& point, const MOUSE::CMouseEvent& event)
 {
   // transform our position into child coordinates
   CPoint childPoint(point);
@@ -450,7 +473,7 @@ CGUIControl *CGUIControlGroup::GetFocusedControl() const
 CGUIControl *CGUIControlGroup::GetFirstFocusableControl(int id)
 {
   if (!CanFocus()) return NULL;
-  if (id && id == (int) GetID()) return this; // we're focusable and they want us
+  if (id && id == GetID()) return this; // we're focusable and they want us
   for (auto *pControl : m_children)
   {
     CGUIControlGroup *group(dynamic_cast<CGUIControlGroup*>(pControl));
@@ -459,7 +482,7 @@ CGUIControl *CGUIControlGroup::GetFirstFocusableControl(int id)
       CGUIControl *control = group->GetFirstFocusableControl(id);
       if (control) return control;
     }
-    if ((!id || (int) pControl->GetID() == id) && pControl->CanFocus())
+    if ((!id || pControl->GetID() == id) && pControl->CanFocus())
       return pControl;
   }
   return NULL;
@@ -499,7 +522,7 @@ bool CGUIControlGroup::InsertControl(CGUIControl *control, const CGUIControl *in
 void CGUIControlGroup::SaveStates(std::vector<CControlState> &states)
 {
   // save our state, and that of our children
-  states.push_back(CControlState(GetID(), m_focusedControl));
+  states.emplace_back(GetID(), m_focusedControl);
   for (auto *control : m_children)
     control->SaveStates(states);
 }

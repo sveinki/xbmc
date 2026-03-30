@@ -1,98 +1,59 @@
-include ../../Makefile.include
+-include ../../Makefile.include
 include FFMPEG-VERSION
-DEPS= ../../Makefile.include FFMPEG-VERSION Makefile
+DEPS = FFMPEG-VERSION Makefile ../../download-files.include \
+                      CMakeLists.txt \
+                      001-ffmpeg-all-libpostproc-plugin.patch
 
-# set to "yes" to enable patching
-# we don't apply patches until we move to a vanilla ffmpeg tarball
-APPLY_PATCHES=no
+BUILD_TYPE = Release
+ifeq ($(DEBUG_BUILD),yes)
+  BUILD_TYPE = Debug
+endif
 
-# configuration settings
-ffmpg_config = --prefix=$(PREFIX) --extra-version="kodi-$(VERSION)"
-ffmpg_config += --cc="$(CC)" --cxx="$(CXX)" --ar=$(AR) --ranlib=$(RANLIB)
-ffmpg_config += --disable-devices --disable-doc
-ffmpg_config += --disable-ffplay --disable-ffmpeg --disable-sdl
-ffmpg_config += --disable-ffprobe --disable-ffserver
-ffmpg_config += --enable-gpl --enable-runtime-cpudetect
-ffmpg_config += --enable-postproc --enable-pthreads
-ffmpg_config += --enable-muxer=spdif --enable-muxer=adts
-ffmpg_config += --enable-muxer=asf --enable-muxer=ipod
-ffmpg_config += --enable-encoder=ac3 --enable-encoder=aac
-ffmpg_config += --enable-encoder=wmav2 --enable-protocol=http
-ffmpg_config += --enable-gnutls
-ffmpg_config += --enable-encoder=png --enable-encoder=mjpeg
+CMAKE_ARGS=-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
+           -DCMAKE_MODULE_PATH="$(CMAKE_SOURCE_DIR)/cmake/modules;$(CMAKE_SOURCE_DIR)/cmake/modules/buildtools" \
+           -DPKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig \
+           -DCMAKE_INSTALL_PREFIX=$(PREFIX) \
+           -DFFMPEG_VER=$(VERSION) \
+           -DENABLE_DAV1D=ON \
+           -DEXTRA_FLAGS="$(FFMPEG_CONFIGURE_OPTIONS)"
+
+ifeq ($(USE_CCACHE), yes)
+  CMAKE_ARGS+= -DENABLE_CCACHE=$(USE_CCACHE) \
+               -DCCACHE_PROGRAM=$(CCACHE)
+endif
 
 ifeq ($(CROSS_COMPILING), yes)
-  ffmpg_config += --arch=$(CPU) --enable-cross-compile
-endif
-ifeq ($(OS), linux)
-  ffmpg_config += --target-os=$(OS) --cpu=$(CPU)
-  ifneq ($(TARGET_PLATFORM),raspberry-pi)
-    ffmpg_config += --enable-vdpau --enable-vaapi
-  endif
-  ffmpg_config += --enable-pic
-endif
-ifeq ($(OS), android)
-  ifeq ($(findstring arm64, $(CPU)), arm64)
-    ffmpg_config += --arch=aarch64 --cpu=cortex-a53
-  else
-    ifeq ($(findstring arm, $(CPU)), arm)
-      ffmpg_config += --cpu=cortex-a9
-    else
-      ffmpg_config += --cpu=i686 --disable-mmx
-    endif
-  endif
-  ffmpg_config += --target-os=linux --extra-libs=-liconv
-endif
-ifeq ($(OS), ios)
-  ifneq ($(CPU), arm64)
-    ffmpg_config += --cpu=cortex-a8
-  else
-    ffmpg_config += --as="$(NATIVEPREFIX)/bin/gas-preprocessor.pl -arch aarch64 -- $(CC)"
-  endif
-  ffmpg_config += --yasmexe=$(NATIVEPREFIX)/bin/yasm
-  ffmpg_config += --disable-decoder=mpeg_xvmc --disable-vda --disable-crystalhd --enable-videotoolbox
-  ffmpg_config += --target-os=darwin
-endif
-ifeq ($(OS), osx)
-  ffmpg_config += --disable-outdev=sdl
-  ffmpg_config += --disable-decoder=mpeg_xvmc --disable-vda --disable-crystalhd --enable-videotoolbox
-  ffmpg_config += --target-os=darwin
-  ffmpg_config += --disable-securetransport
-endif
-ifeq ($(findstring arm, $(CPU)), arm)
-  ffmpg_config += --enable-pic --disable-armv5te --disable-armv6t2
-endif
-ifeq ($(findstring mips, $(CPU)), mips)
-  ffmpg_config += --disable-mips32r2 --disable-mipsdspr1 --disable-mipsdspr2
-endif
-ifeq ($(Configuration), Release)
-  ffmpg_config += --disable-debug
+  DEPS += ../../Makefile.include
+  CMAKE_ARGS+= -DPKG_CONFIG_EXECUTABLE=$(NATIVEPREFIX)/bin/pkg-config \
+               -DCROSSCOMPILING=$(CROSS_COMPILING)
+               -DCMAKE_AR=$(AR) \
+               -DCMAKE_RANLIB=$(RANLIB) \
+               -DCMAKE_STRIP=$(STRIP)
+else
+  TARBALLS_LOCATION := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
+  RETRIEVE_TOOL = curl
+  RETRIEVE_TOOL_FLAGS = -LsS --create-dirs --retry 10 --retry-connrefused -o
+  ARCHIVE_TOOL_FLAGS = --strip-components=1 -xf
+  BASE_URL ?= https://mirrors.kodi.tv/build-deps/sources
 endif
 
-
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
-
+include ../../download-files.include
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) -Ls --create-dirs -f -o $(TARBALLS_LOCATION)/$(ARCHIVE) $(BASE_URL)/archive/$(VERSION).tar.gz
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)
+	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)/build
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	cd $(PLATFORM); sed -i".bak" -e "s%pkg_config_default=pkg-config%export PKG_CONFIG_LIBDIR=$(PREFIX)/lib/pkgconfig \&\& pkg_config_default=$(NATIVEPREFIX)/bin/pkg-config%" configure
-	cd $(PLATFORM);\
-	CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)" \
-	./configure $(ffmpg_config)
-ifeq ($(OS), ios)
-	cd $(PLATFORM); sed -i -- 's/HAVE_CLOCK_GETTIME 1/HAVE_CLOCK_GETTIME 0/g' config.h
-endif
+	cd $(PLATFORM); cp ../CMakeLists.txt ./
+	cd $(PLATFORM); cp ../001-ffmpeg-all-libpostproc-plugin.patch ./
+	cd $(PLATFORM)/build; $(CMAKE) $(CMAKE_ARGS) ..
 
-build: $(PLATFORM)
-	$(MAKE) -C $(PLATFORM)
+.build-$(PLATFORM): $(PLATFORM)
+	$(MAKE) -C $(PLATFORM)/build
+	touch $@
 
-.installed-$(PLATFORM): build
-	$(MAKE) -C $(PLATFORM) install
+.installed-$(PLATFORM): .build-$(PLATFORM)
+	$(MAKE) -C $(PLATFORM)/build install
 	touch $@
 
 clean:

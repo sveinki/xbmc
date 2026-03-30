@@ -7,6 +7,10 @@ function(add_addon_depends addon searchpath)
   set(OUTPUT_DIR ${ADDON_DEPENDS_PATH})
   # look for platform-specific dependencies
   file(GLOB_RECURSE cmake_input_files ${searchpath}/${CORE_SYSTEM_NAME}/*.txt)
+  # backward compatibility
+  if(NOT cmake_input_files AND CORE_SYSTEM_NAME STREQUAL windowsstore)
+    file(GLOB_RECURSE cmake_input_files ${searchpath}/windows/*.txt)
+  endif()
   file(GLOB_RECURSE cmake_input_files2 ${searchpath}/common/*.txt)
   list(APPEND cmake_input_files ${cmake_input_files2})
 
@@ -15,7 +19,7 @@ function(add_addon_depends addon searchpath)
     if(NOT (file MATCHES CMakeLists.txt OR
             file MATCHES install.txt OR
             file MATCHES noinstall.txt OR
-            file MATCHES flags.txt OR
+            file MATCHES "flags.*[.]txt" OR
             file MATCHES deps.txt OR
             file MATCHES "[a-z]+-deps[.]txt" OR
             file MATCHES platforms.txt))
@@ -50,12 +54,18 @@ function(add_addon_depends addon searchpath)
         if(EXISTS ${dir}/flags.txt)
           set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${dir}/flags.txt)
           file(STRINGS ${dir}/flags.txt extraflags)
-
-          # replace some custom placeholders
-          string(REPLACE "@MINGW_TOOLCHAIN_FILE@" "${OUTPUT_DIR}/Toolchain_mingw32.cmake" extraflags "${extraflags}")
           string(REPLACE " " ";" extraflags ${extraflags})
 
           message(STATUS "${id} extraflags: ${extraflags}")
+        endif()
+
+        if(EXISTS ${dir}/flags-${CPU}.txt)
+          set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${dir}/flags-${CPU}.txt)
+          file(STRINGS ${dir}/flags-${CPU}.txt archextraflags)
+          string(REPLACE " " ";" archextraflags ${archextraflags})
+
+          message(STATUS "${id} ${CPU} extraflags: ${archextraflags}")
+          list(APPEND extraflags ${archextraflags})
         endif()
 
         set(BUILD_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
@@ -67,13 +77,20 @@ function(add_addon_depends addon searchpath)
                        -DCORE_SYSTEM_NAME=${CORE_SYSTEM_NAME}
                        -DENABLE_STATIC=1
                        -DBUILD_SHARED_LIBS=0)
+        # windows args
+        if (CMAKE_SYSTEM_NAME STREQUAL WindowsStore OR CMAKE_SYSTEM_NAME STREQUAL Windows)
+          list(APPEND BUILD_ARGS -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}
+                                 -DCMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION})
+        endif()
         # if there are no make rules override files available take care of manually passing on ARCH_DEFINES
         if(NOT CMAKE_USER_MAKE_RULES_OVERRIDE AND NOT CMAKE_USER_MAKE_RULES_OVERRIDE_CXX)
           # make sure we create strings, not lists
           set(TMP_C_FLAGS "${CMAKE_C_FLAGS} ${ARCH_DEFINES}")
           set(TMP_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARCH_DEFINES}")
+          set(TMP_EXE_LINKER_FLAGS "-L${OUTPUT_DIR}/lib ${CMAKE_EXE_LINKER_FLAGS}")
           list(APPEND BUILD_ARGS -DCMAKE_C_FLAGS=${TMP_C_FLAGS}
-                                 -DCMAKE_CXX_FLAGS=${TMP_CXX_FLAGS})
+                                 -DCMAKE_CXX_FLAGS=${TMP_CXX_FLAGS}
+                                 -DCMAKE_EXE_LINKER_FLAGS=${TMP_EXE_LINKER_FLAGS})
         endif()
 
         if(CMAKE_TOOLCHAIN_FILE)
@@ -82,16 +99,29 @@ function(add_addon_depends addon searchpath)
           message(${BUILD_ARGS})
         endif()
 
-        # prepare patchfile. ensure we have a clean file after reconfiguring
-        set(PATCH_FILE ${BUILD_DIR}/${id}/tmp/patch.cmake)
-        file(REMOVE ${PATCH_FILE})
+        if(ADDON_EXTRA_ARGS)
+          string(REPLACE " " ";" ADDON_EXTRA_ARGS ${ADDON_EXTRA_ARGS})
+          list(APPEND BUILD_ARGS ${ADDON_EXTRA_ARGS})
+          message("Addon Extra Args: ${ADDON_EXTRA_ARGS}")
+        endif()
+
+        # used for addons where need special folders to store there content (if
+        # not set the addon define it byself).
+        # e.g. Google Chromium addon where his git bring:
+        # - "unable to create file" ... "Filename too long"
+        # see also WARNING by Windows on: https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart
+        if(THIRD_PARTY_PATH)
+          message(STATUS "Third party lib path specified")
+          message(STATUS ${THIRD_PARTY_PATH})
+          list(APPEND BUILD_ARGS -DTHIRD_PARTY_PATH=${THIRD_PARTY_PATH})
+        endif()
+
+        set(PATCH_COMMAND)
 
         # if there's a CMakeLists.txt use it to prepare the build
         if(EXISTS ${dir}/CMakeLists.txt)
           set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${dir}/CMakeLists.txt)
-          file(APPEND ${PATCH_FILE}
-               "file(COPY ${dir}/CMakeLists.txt
-                     DESTINATION ${BUILD_DIR}/${id}/src/${id})\n")
+          list(APPEND PATCH_COMMAND COMMAND ${CMAKE_COMMAND} -E copy_if_different ${dir}/CMakeLists.txt ${BUILD_DIR}/${id}/src/${id})
         endif()
 
         # check if we have patches to apply
@@ -101,8 +131,18 @@ function(add_addon_depends addon searchpath)
           if(NOT PATCH_PROGRAM OR "${PATCH_PROGRAM}" STREQUAL "")
             if(NOT PATCH_EXECUTABLE)
               # find the path to the patch executable
-              find_program(PATCH_EXECUTABLE NAMES patch)
 
+              if(WIN32)
+                # On Windows prioritize Git patch.exe
+                find_package(Git)
+                if(Git_FOUND)
+                  get_filename_component(GIT_DIR ${GIT_EXECUTABLE} DIRECTORY)
+                  get_filename_component(GIT_DIR ${GIT_DIR} DIRECTORY)
+                endif()
+                find_program(PATCH_EXECUTABLE NAMES patch.exe HINTS ${GIT_DIR} PATH_SUFFIXES usr/bin)
+              else()
+                find_program(PATCH_EXECUTABLE NAMES patch)
+              endif()
               if(NOT PATCH_EXECUTABLE)
                 message(FATAL_ERROR "Missing patch command (we looked in ${CMAKE_PREFIX_PATH})")
               endif()
@@ -118,14 +158,13 @@ function(add_addon_depends addon searchpath)
               file(READ ${patch} patch_content_hex HEX)
               # Force handle LF-only line endings
               if(NOT patch_content_hex MATCHES "0d0a")
-                set(PATCH_PROGRAM "\"${PATCH_PROGRAM}\" --binary")
+                list(APPEND PATCH_PROGRAM --binary)
               endif()
             endif()
           endif()
 
           set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${patch})
-          file(APPEND ${PATCH_FILE}
-               "execute_process(COMMAND ${PATCH_PROGRAM} -p1 -i \"${patch}\")\n")
+          list(APPEND PATCH_COMMAND COMMAND ${PATCH_PROGRAM} -p1 -i ${patch})
         endforeach()
 
 
@@ -147,6 +186,10 @@ function(add_addon_depends addon searchpath)
         if(EXISTS ${dir}/${CORE_SYSTEM_NAME}-deps.txt)
           file(STRINGS ${dir}/${CORE_SYSTEM_NAME}-deps.txt deps)
           message(STATUS "${id} depends: ${deps}")
+        # backward compatibility
+        elseif(CORE_SYSTEM_NAME STREQUAL windowsstore AND EXISTS ${dir}/windows-deps.txt)
+          file(STRINGS ${dir}/windows-deps.txt deps)
+          message(STATUS "${id} depends: ${deps}")
         elseif(EXISTS ${dir}/deps.txt)
           set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${dir}/deps.txt)
           file(STRINGS ${dir}/deps.txt deps)
@@ -155,26 +198,26 @@ function(add_addon_depends addon searchpath)
           set(deps)
         endif()
 
+        if (EXISTS "${dir}/${CORE_PLATFORM_NAME}-deps.txt" AND NOT "${CORE_PLATFORM_NAME}" STREQUAL "${CORE_SYSTEM_NAME}")
+          set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${dir}/${CORE_PLATFORM_NAME}-deps.txt")
+          file(STRINGS "${dir}/${CORE_PLATFORM_NAME}-deps.txt" platform_deps)
+          message(STATUS "${id} platform-specific depends: ${platform_deps}")
+          list(APPEND deps ${platform_deps})
+        endif()
+
         if(CROSS_AUTOCONF AND AUTOCONF_FILES)
           foreach(afile ${AUTOCONF_FILES})
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${afile})
-            file(APPEND ${PATCH_FILE}
-                 "message(STATUS \"AUTOCONF: copying ${afile} to ${BUILD_DIR}/${id}/src/${id}\")\n
-                 file(COPY ${afile} DESTINATION ${BUILD_DIR}/${id}/src/${id})\n")
+            list(APPEND PATCH_COMMAND COMMAND ${CMAKE_COMMAND} -E echo "AUTOCONF: copying ${afile} to ${BUILD_DIR}/${id}/src/${id}")
+            list(APPEND PATCH_COMMAND COMMAND ${CMAKE_COMMAND} -E copy_if_different ${afile} ${BUILD_DIR}/${id}/src/${id})
           endforeach()
-        endif()
-
-        # if the patch file exists we need to set the PATCH_COMMAND
-        set(PATCH_COMMAND "")
-        if(EXISTS ${PATCH_FILE})
-          set(PATCH_COMMAND ${CMAKE_COMMAND} -P ${PATCH_FILE})
         endif()
 
         # prepare the setup of the call to externalproject_add()
         set(EXTERNALPROJECT_SETUP PREFIX ${BUILD_DIR}/${id}
                                   CMAKE_ARGS ${extraflags} ${BUILD_ARGS}
                                   PATCH_COMMAND ${PATCH_COMMAND}
-                                  "${INSTALL_COMMAND}")
+                                  ${INSTALL_COMMAND})
 
         if(CMAKE_VERSION VERSION_GREATER 3.5.9)
           list(APPEND EXTERNALPROJECT_SETUP GIT_SHALLOW 1)
@@ -190,7 +233,7 @@ function(add_addon_depends addon searchpath)
             externalproject_add(${id}
                                 GIT_REPOSITORY ${url}
                                 GIT_TAG ${revision}
-                                "${EXTERNALPROJECT_SETUP}")
+                                ${EXTERNALPROJECT_SETUP})
 
             # For patchfiles to work, disable (users globally set) autocrlf=true
             if(CMAKE_MINIMUM_REQUIRED_VERSION VERSION_GREATER 3.7)
@@ -217,20 +260,33 @@ function(add_addon_depends addon searchpath)
                                     -DOUTPUT_DIR=${OUTPUT_DIR}
                                     -DCMAKE_PREFIX_PATH=${OUTPUT_DIR}
                                     -DCMAKE_INSTALL_PREFIX=${OUTPUT_DIR}
-                                    -DCMAKE_EXE_LINKER_FLAGS=-L${OUTPUT_DIR}/lib
                                     -DCMAKE_INCLUDE_PATH=${OUTPUT_DIR}/include)
+            endif()
+
+            set(DOWNLOAD_DIR ${BUILD_DIR}/download)
+            if(EXISTS ${dir}/${id}.sha256)
+              file(STRINGS ${dir}/${id}.sha256 sha256sum)
+              list(GET sha256sum 0 sha256sum)
+              set(URL_HASH_COMMAND URL_HASH SHA256=${sha256sum})
+              if(TARBALL_DIR)
+                set(DOWNLOAD_DIR ${TARBALL_DIR})
+              endif()
+            else()
+              unset(URL_HASH_COMMAND)
+              message(AUTHOR_WARNING "${dir}/${id}.sha256 is missing")
             endif()
 
             externalproject_add(${id}
                                 URL ${url}
-                                DOWNLOAD_DIR ${BUILD_DIR}/download
+                                ${URL_HASH_COMMAND}
+                                DOWNLOAD_DIR ${DOWNLOAD_DIR}
                                 CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
-                                "${EXTERNALPROJECT_SETUP}")
+                                ${EXTERNALPROJECT_SETUP})
           endif()
         else()
           externalproject_add(${id}
                               SOURCE_DIR ${dir}
-                              "${EXTERNALPROJECT_SETUP}")
+                              ${EXTERNALPROJECT_SETUP})
         endif()
 
         if(deps)

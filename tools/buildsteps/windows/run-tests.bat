@@ -5,31 +5,29 @@ REM setup all paths
 PUSHD %~dp0\..\..\..
 SET WORKSPACE=%CD%
 POPD
-cd %WORKSPACE%\kodi-build
-SET builddeps_dir=%WORKSPACE%\project\BuildDependencies
-SET msys_dir=%builddeps_dir%\msys64
-IF NOT EXIST %msys_dir% (SET msys_dir=%builddeps_dir%\msys32)
-SET awk_exe=%msys_dir%\usr\bin\awk.exe
-SET sed_exe=%msys_dir%\usr\bin\sed.exe
+
+IF DEFINED BUILDDIR (
+  echo Test BuildDir: %BUILDDIR%
+) else (
+  echo Setting Default BUILDDIR: %WORKSPACE%\kodi-build.%TARGET_PLATFORM%
+  SET BUILDDIR=%WORKSPACE%\kodi-build.%TARGET_PLATFORM%
+)
+
+cd %BUILDDIR%
 
 REM read the version values from version.txt
-FOR /f %%i IN ('%awk_exe% "/APP_NAME/ {print $2}" %WORKSPACE%\version.txt') DO SET APP_NAME=%%i
+FOR /f "tokens=1,2" %%i IN (%WORKSPACE%\version.txt) DO IF "%%i" == "APP_NAME" SET APP_NAME=%%j
 
 CLS
-COLOR 1B
 TITLE %APP_NAME% testsuite Build-/Runscript
 
 rem -------------------------------------------------------------
 rem  CONFIG START
 SET exitcode=0
 SET useshell=sh
-SET BRANCH=na
 SET buildconfig=Release
 SET PreferredToolArchitecture=x64
 
-
-  :: sets the BRANCH env var
-  call getbranch.bat
 
   rem  CONFIG END
   rem -------------------------------------------------------------
@@ -50,7 +48,12 @@ ECHO ------------------------------------------------------------
 
 :RUNTESTSUITE
 ECHO Running testsuite...
-  "%buildconfig%\%APP_NAME%-test.exe" --gtest_output=xml:%WORKSPACE%\gtestresults.xml
+  "%buildconfig%\%APP_NAME%-test.exe" --gtest_output=xml:%BUILDDIR%\gtestresults.xml
+
+  IF NOT EXIST %BUILDDIR%\gtestresults.xml (
+    set DIETEXT="%APP_NAME%-test.exe failed to execute or output test results!"
+    goto DIE
+  )
 
   rem Adapt gtest xml output to be conform with junit xml
   rem this basically looks for lines which have "notrun" in the <testcase /> tag
@@ -58,9 +61,9 @@ ECHO Running testsuite...
   rem <testcase name="IsStarted" status="notrun" time="0" classname="TestWebServer"/>
   rem becomes
   rem <testcase name="IsStarted" status="notrun" time="0" classname="TestWebServer"><skipped/></testcase>
-  %sed_exe% "s/<testcase\(.*\)\"notrun\"\(.*\)\/>$/<testcase\1\"notrun\"\2><skipped\/><\/testcase>/" %WORKSPACE%\gtestresults.xml > %WORKSPACE%\gtestresults-skipped.xml
-  del %WORKSPACE%\gtestresults.xml
-  move %WORKSPACE%\gtestresults-skipped.xml %WORKSPACE%\gtestresults.xml
+  @PowerShell "(GC %BUILDDIR%\gtestresults.xml)|%%{$_ -Replace '(<testcase.+)("notrun")(.+)(/>)','$1$2$3><skipped/></testcase>'}|SC %BUILDDIR%\gtestresults-skipped.xml"
+  del %BUILDDIR%\gtestresults.xml
+  move %BUILDDIR%\gtestresults-skipped.xml %BUILDDIR%\gtestresults.xml
 ECHO Done running testsuite!
 ECHO ------------------------------------------------------------
 GOTO END

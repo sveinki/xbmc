@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #ifdef TARGET_WINDOWS
@@ -46,8 +34,16 @@ CConvolutionKernel::CConvolutionKernel(ESCALINGMETHOD method, int size)
     Spline36();
   else if (method == VS_SCALINGMETHOD_LANCZOS3)
     Lanczos3();
-  else if (method == VS_SCALINGMETHOD_CUBIC)
+  else if (method == VS_SCALINGMETHOD_CUBIC_B_SPLINE)
+    Bicubic(1.0, 0.0);
+  else if (method == VS_SCALINGMETHOD_CUBIC_MITCHELL)
     Bicubic(1.0 / 3.0, 1.0 / 3.0);
+  else if (method == VS_SCALINGMETHOD_CUBIC_CATMULL)
+    Bicubic(0.0, 0.5);
+  else if (method == VS_SCALINGMETHOD_CUBIC_0_075)
+    Bicubic(0.0, 0.75);
+  else if (method == VS_SCALINGMETHOD_CUBIC_0_1)
+    Bicubic(0.0, 1.0);
 
   ToIntFract();
   ToUint8();
@@ -269,7 +265,7 @@ void CConvolutionKernel::ToIntFract()
 
   for (int i = 0; i < m_size * 4; i++)
   {
-    int value = MathUtils::round_int((m_floatpixels[i] + 1.0) / 2.0 * 65535.0);
+    int value = MathUtils::round_int((static_cast<double>(m_floatpixels[i]) + 1.0) / 2.0 * 65535.0);
     if (value < 0)
       value = 0;
     else if (value > 65535)
@@ -290,7 +286,7 @@ void CConvolutionKernel::ToUint8()
 
   for (int i = 0; i < m_size * 4; i++)
   {
-    int value = MathUtils::round_int((m_floatpixels[i] * 0.5 + 0.5) * 255.0);
+    int value = MathUtils::round_int((static_cast<double>(m_floatpixels[i]) * 0.5 + 0.5) * 255.0);
     if (value < 0)
       value = 0;
     else if (value > 255)

@@ -1,35 +1,29 @@
 /*
- *      Copyright (C) 2016 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2016-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "SettingsBase.h"
+
 #include "settings/SettingUtils.h"
+#include "settings/SettingsValueXmlSerializer.h"
 #include "settings/lib/Setting.h"
 #include "settings/lib/SettingsManager.h"
 #include "utils/Variant.h"
 #include "utils/XBMCTinyXML.h"
 
-#define SETTINGS_XML_ROOT   "settings"
+#include <mutex>
+
+namespace
+{
+constexpr const char* SETTINGS_XML_ROOT = "settings";
+} // unnamed namespace
 
 CSettingsBase::CSettingsBase()
-  : m_initialized(false)
-  , m_settingsManager(new CSettingsManager())
+  : m_settingsManager(new CSettingsManager())
 { }
 
 CSettingsBase::~CSettingsBase()
@@ -41,7 +35,7 @@ CSettingsBase::~CSettingsBase()
 
 bool CSettingsBase::Initialize()
 {
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   if (m_initialized)
     return false;
 
@@ -64,7 +58,7 @@ bool CSettingsBase::Initialize()
 
   m_settingsManager->SetInitialized();
 
-  InitializeISettingsHandlers();  
+  InitializeISettingsHandlers();
   InitializeISubSettings();
   InitializeISettingCallbacks();
 
@@ -100,15 +94,15 @@ bool CSettingsBase::LoadHiddenValuesFromXml(const TiXmlElement* root)
   if (root == nullptr)
     return false;
 
-  std::map<std::string, std::shared_ptr<CSetting>> loadedSettings;
+  CSettingsManager::LoadedSettings loadedSettings;
 
   bool updated;
   // don't trigger events for hidden settings
   bool success = m_settingsManager->Load(root, updated, false, &loadedSettings);
   if (success)
   {
-    for(std::map<std::string, std::shared_ptr<CSetting>>::const_iterator setting = loadedSettings.begin(); setting != loadedSettings.end(); ++setting)
-      setting->second->SetVisible(false);
+    for (const auto& [_, setting] : loadedSettings)
+      setting->SetVisible(false);
   }
 
   return success;
@@ -126,12 +120,15 @@ bool CSettingsBase::IsLoaded() const
 
 bool CSettingsBase::SaveValuesToXml(CXBMCTinyXML& xml) const
 {
-  TiXmlElement rootElement(SETTINGS_XML_ROOT);
-  TiXmlNode* xmlRoot = xml.InsertEndChild(rootElement);
-  if (xmlRoot == nullptr)
+  std::string serializedSettings;
+  const auto xmlSerializer = std::make_unique<CSettingsValueXmlSerializer>();
+  if (!m_settingsManager->Save(xmlSerializer.get(), serializedSettings))
     return false;
 
-  return m_settingsManager->Save(xmlRoot);
+  if (!xml.Parse(serializedSettings))
+    return false;
+
+  return true;
 }
 
 void CSettingsBase::Unload()
@@ -141,12 +138,16 @@ void CSettingsBase::Unload()
 
 void CSettingsBase::Uninitialize()
 {
-  CSingleLock lock(m_critical);
+  std::unique_lock lock(m_critical);
   if (!m_initialized)
     return;
 
   // unregister setting option fillers
   UninitializeOptionFillers();
+
+  // unregister setting conditions
+  UninitializeConditions();
+
   // unregister ISettingCallback implementations
   UninitializeISettingCallbacks();
 
@@ -161,7 +162,8 @@ void CSettingsBase::Uninitialize()
   m_initialized = false;
 }
 
-void CSettingsBase::RegisterCallback(ISettingCallback* callback, const std::set<std::string>& settingList)
+void CSettingsBase::RegisterCallback(ISettingCallback* callback,
+                                     const SettingsContainer& settingList)
 {
   m_settingsManager->RegisterCallback(callback, settingList);
 }
@@ -240,16 +242,16 @@ bool CSettingsBase::SetString(const std::string& id, const std::string& value)
 std::vector<CVariant> CSettingsBase::GetList(const std::string& id) const
 {
   std::shared_ptr<CSetting> setting = m_settingsManager->GetSetting(id);
-  if (setting == nullptr || setting->GetType() != SettingType::List)
+  if (!setting || setting->GetType() != SettingType::List)
     return std::vector<CVariant>();
 
   return CSettingUtils::GetList(std::static_pointer_cast<CSettingList>(setting));
 }
 
-bool CSettingsBase::SetList(const std::string& id, const std::vector<CVariant>& value)
+bool CSettingsBase::SetList(const std::string& id, const std::vector<CVariant>& value) const
 {
   std::shared_ptr<CSetting> setting = m_settingsManager->GetSetting(id);
-  if (setting == nullptr || setting->GetType() != SettingType::List)
+  if (!setting || setting->GetType() != SettingType::List)
     return false;
 
   return CSettingUtils::SetList(std::static_pointer_cast<CSettingList>(setting), value);
@@ -268,7 +270,7 @@ void CSettingsBase::SetDefaults()
 bool CSettingsBase::InitializeDefinitionsFromXml(const CXBMCTinyXML& xml)
 {
   const TiXmlElement* root = xml.RootElement();
-  if (root == nullptr)
+  if (!root)
     return false;
 
   return m_settingsManager->Initialize(root);

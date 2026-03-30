@@ -1,30 +1,19 @@
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
 #pragma once
-#include <Neptune/Source/Core/NptTypes.h>
+
+#include <memory>
+#include <string>
+
 #include <Neptune/Source/Core/NptReferences.h>
 #include <Neptune/Source/Core/NptStrings.h>
-
-#include "system.h"
-#include "FileItem.h"
-#include <string>
+#include <Neptune/Source/Core/NptTypes.h>
 
 class CUPnPServer;
 class CFileItem;
@@ -124,10 +113,26 @@ namespace UPNP
                                CUPnPServer*                   upnp_server = NULL,
                                UPnPService                    upnp_service = UPnPServiceNone);
 
-  CFileItemPtr     BuildObject(PLT_MediaObject* entry,
-                               UPnPService      upnp_service = UPnPServiceNone);
+  std::shared_ptr<CFileItem> BuildObject(PLT_MediaObject* entry,
+                                         UPnPService upnp_service = UPnPServiceNone);
 
   bool             GetResource(const PLT_MediaObject* entry, CFileItem& item);
-  CFileItemPtr     GetFileItem(const NPT_String& uri, const NPT_String& meta);
+  std::shared_ptr<CFileItem> GetFileItem(const NPT_String& uri, const NPT_String& meta);
+
+  /*!
+   * @brief Provided a given object id, encode it into a safe format to provide to UPnP clients
+   * @Note base64 is currently used as the safe format
+   * @param id the object it to encode
+   * @return the encoded object id
+  */
+  NPT_String EncodeObjectId(const std::string& id);
+
+  /*!
+   * @brief Provided a given encoded object id, decode it into a format known by the application
+   * @Note base64 is currently used as the expected input format
+   * @param id the object it to decode
+   * @return the decoded object id
+  */
+  NPT_String DecodeObjectId(const std::string& id);
 }
 

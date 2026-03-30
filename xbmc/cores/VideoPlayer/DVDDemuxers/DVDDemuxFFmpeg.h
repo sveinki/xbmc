@@ -1,24 +1,12 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "DVDDemux.h"
 #include "threads/CriticalSection.h"
@@ -28,16 +16,24 @@
 #include <vector>
 
 extern "C" {
-#include "libavformat/avformat.h"
+#include <libavformat/avformat.h>
 }
 
 class CDVDDemuxFFmpeg;
+class CDVDInputStream;
 class CURL;
+
+enum class TRANSPORT_STREAM_STATE
+{
+  NONE,
+  READY,
+  NOTREADY,
+};
 
 class CDemuxStreamVideoFFmpeg : public CDemuxStreamVideo
 {
 public:
-  CDemuxStreamVideoFFmpeg(AVStream* stream) : m_stream(stream) {}
+  explicit CDemuxStreamVideoFFmpeg(AVStream* stream) : m_stream(stream) {}
   std::string GetStreamName() override;
 
   std::string m_description;
@@ -48,12 +44,12 @@ protected:
 class CDemuxStreamAudioFFmpeg : public CDemuxStreamAudio
 {
 public:
-  CDemuxStreamAudioFFmpeg(AVStream* stream) : m_stream(stream) {}
+  explicit CDemuxStreamAudioFFmpeg(AVStream* stream) : m_stream(stream) {}
   std::string GetStreamName() override;
 
   std::string m_description;
 protected:
-  CDVDDemuxFFmpeg *m_parent;
+  CDVDDemuxFFmpeg* m_parent;
   AVStream* m_stream  = nullptr;
 };
 
@@ -61,12 +57,12 @@ class CDemuxStreamSubtitleFFmpeg
   : public CDemuxStreamSubtitle
 {
 public:
-  CDemuxStreamSubtitleFFmpeg(AVStream* stream) : m_stream(stream) {}
+  explicit CDemuxStreamSubtitleFFmpeg(AVStream* stream) : m_stream(stream) {}
   std::string GetStreamName() override;
 
   std::string m_description;
 protected:
-  CDVDDemuxFFmpeg *m_parent;
+  CDVDDemuxFFmpeg* m_parent;
   AVStream* m_stream = nullptr;
 };
 
@@ -88,15 +84,16 @@ public:
   CDVDDemuxFFmpeg();
   ~CDVDDemuxFFmpeg() override;
 
-  bool Open(CDVDInputStream* pInput, bool streaminfo = true, bool fileinfo = false);
+  bool Open(const std::shared_ptr<CDVDInputStream>& pInput, bool fileinfo);
   void Dispose();
-  void Reset() override ;
+  bool Reset() override ;
   void Flush() override;
   void Abort() override;
   void SetSpeed(int iSpeed) override;
   std::string GetFileName() override;
 
   DemuxPacket* Read() override;
+  DemuxPacket* ReadInternal(bool keep);
 
   bool SeekTime(double time, bool backwards = false, double* startpts = NULL) override;
   bool SeekByte(int64_t pos);
@@ -104,18 +101,20 @@ public:
   CDemuxStream* GetStream(int iStreamId) const override;
   std::vector<CDemuxStream*> GetStreams() const override;
   int GetNrOfStreams() const override;
+  int GetPrograms(std::vector<ProgramInfo>& programs) override;
+  void SetProgram(int progId) override;
 
   bool SeekChapter(int chapter, double* startpts = NULL) override;
   int GetChapterCount() override;
   int GetChapter() override;
   void GetChapterName(std::string& strChapterName, int chapterIdx=-1) override;
-  int64_t GetChapterPos(int chapterIdx=-1) override;
+  std::chrono::milliseconds GetChapterPos(int chapterIdx = -1) override;
   std::string GetStreamCodecName(int iStreamId) override;
 
   bool Aborted();
 
   AVFormatContext* m_pFormatContext;
-  CDVDInputStream* m_pInput;
+  std::shared_ptr<CDVDInputStream> m_pInput;
 
 protected:
   friend class CDemuxStreamAudioFFmpeg;
@@ -126,20 +125,23 @@ protected:
   void AddStream(int streamIdx, CDemuxStream* stream);
   void CreateStreams(unsigned int program = UINT_MAX);
   void DisposeStreams();
-  void ParsePacket(AVPacket *pkt);
-  bool IsVideoReady();
+  void ParsePacket(AVPacket* pkt);
+  TRANSPORT_STREAM_STATE TransportStreamAudioState();
+  TRANSPORT_STREAM_STATE TransportStreamVideoState();
+  bool IsTransportStreamReady();
   void ResetVideoStreams();
-  AVDictionary *GetFFMpegOptionsFromInput();
+  AVDictionary* GetFFMpegOptionsFromInput();
   double ConvertTimestamp(int64_t pts, int den, int num);
-  void UpdateCurrentPTS();
   bool IsProgramChange();
   unsigned int HLSSelectProgram();
 
-  std::string GetStereoModeFromMetadata(AVDictionary *pMetadata);
-  std::string ConvertCodecToInternalStereoMode(const std::string &mode, const StereoModeConversionMap *conversionMap);
+  std::string GetStereoModeFromMetadata(AVDictionary* pMetadata);
+  std::string ConvertCodecToInternalStereoMode(const std::string& mode, const StereoModeConversionMap* conversionMap);
 
-  void GetL16Parameters(int &channels, int &samplerate);
+  void GetL16Parameters(int& channels, int& samplerate);
   double SelectAspect(AVStream* st, bool& forced);
+
+  StreamHdrType DetermineHdrType(AVStream* pStream);
 
   CCriticalSection m_critSection;
   std::map<int, CDemuxStream*> m_streams;
@@ -152,8 +154,13 @@ protected:
   bool     m_bAVI;
   bool     m_bSup;
   int      m_speed;
-  unsigned m_program;
-  XbmcThreads::EndTime  m_timeout;
+  unsigned int m_program;
+  unsigned int m_streamsInProgram;
+  unsigned int m_newProgram;
+  unsigned int m_initialProgramNumber;
+  int m_seekStream;
+
+  XbmcThreads::EndTime<> m_timeout;
 
   // Due to limitations of ffmpeg, we only can detect a program change
   // with a packet. This struct saves the packet for the next read and
@@ -165,8 +172,11 @@ protected:
   }m_pkt;
 
   bool m_streaminfo;
-  bool m_checkvideo;
+  bool m_reopen = false;
+  bool m_checkTransportStream;
   int m_displayTime = 0;
   double m_dtsAtDisplayTime;
+  bool m_seekToKeyFrame = false;
+  double m_startTime = 0;
 };
 

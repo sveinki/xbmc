@@ -1,27 +1,24 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <cstdint>
+#pragma once
+
 #include "guilib/GUIDialog.h"
+#include "utils/XTimeUtils.h"
+
+#include <cstdint>
+
+enum class InputVerificationResult
+{
+  CANCELED,
+  FAILED,
+  SUCCESS
+};
 
 class CGUIDialogNumeric :
       public CGUIDialog
@@ -37,22 +34,22 @@ public:
 
   bool IsConfirmed() const;
   bool IsCanceled() const;
-  bool IsInputHidden() const { return m_mode == INPUT_PASSWORD; };
+  bool IsInputHidden() const { return m_mode == INPUT_PASSWORD; }
 
   static bool ShowAndVerifyNewPassword(std::string& strNewPassword);
   static int ShowAndVerifyPassword(std::string& strPassword, const std::string& strHeading, int iRetries);
-  static bool ShowAndVerifyInput(std::string& strPassword, const std::string& strHeading, bool bGetUserInput);
+  static InputVerificationResult ShowAndVerifyInput(std::string& strPassword, const std::string& strHeading, bool bGetUserInput);
 
   void SetHeading(const std::string &strHeading);
-  void SetMode(INPUT_MODE mode, const SYSTEMTIME &initial);
+  void SetMode(INPUT_MODE mode, const KODI::TIME::SystemTime& initial);
   void SetMode(INPUT_MODE mode, const std::string &initial);
-  SYSTEMTIME GetOutput() const;
+  KODI::TIME::SystemTime GetOutput() const;
   std::string GetOutputString() const;
 
-  static bool ShowAndGetTime(SYSTEMTIME &time, const std::string &heading);
-  static bool ShowAndGetDate(SYSTEMTIME &date, const std::string &heading);
+  static bool ShowAndGetTime(KODI::TIME::SystemTime& time, const std::string& heading);
+  static bool ShowAndGetDate(KODI::TIME::SystemTime& date, const std::string& heading);
   static bool ShowAndGetIPAddress(std::string &IPAddress, const std::string &heading);
-  static bool ShowAndGetNumber(std::string& strInput, const std::string &strHeading, unsigned int iAutoCloseTimeoutMs = 0);
+  static bool ShowAndGetNumber(std::string& strInput, const std::string &strHeading, unsigned int iAutoCloseTimeoutMs = 0, bool bSetHidden = false);
   static bool ShowAndGetSeconds(std::string& timeString, const std::string &heading);
 
 protected:
@@ -72,14 +69,14 @@ protected:
   void HandleInputSeconds(uint32_t num);
   void HandleInputTime(uint32_t num);
 
-  bool m_bConfirmed;
-  bool m_bCanceled;
+  bool m_bConfirmed = false;
+  bool m_bCanceled = false;
 
-  INPUT_MODE m_mode;                // the current input mode
-  SYSTEMTIME m_datetime;            // for time and date modes
+  INPUT_MODE m_mode = INPUT_PASSWORD; // the current input mode
+  KODI::TIME::SystemTime m_datetime; // for time and date modes
   uint8_t m_ip[4];                  // for ip address mode
-  uint32_t m_block;             // for time, date, and IP methods.
-  uint32_t m_lastblock;
-  bool m_dirty;                     // true if the current block has been changed.
+  uint32_t m_block{}; // for time, date, and IP methods.
+  uint32_t m_lastblock{};
+  bool m_dirty = false; // true if the current block has been changed.
   std::string m_number;              ///< for number or password input
 };

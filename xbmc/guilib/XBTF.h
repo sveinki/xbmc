@@ -1,32 +1,23 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include <ctime>
 #include <map>
 #include <string>
 #include <vector>
 
 #include <stdint.h>
 
-static const std::string XBTF_MAGIC = "XBTF";
-static const std::string XBTF_VERSION = "2";
+inline const std::string XBTF_MAGIC = "XBTF";
+inline const std::string XBTF_VERSION = "3";
+static const char XBTF_VERSION_MIN = '2';
 
 #include "TextureFormats.h"
 
@@ -38,7 +29,7 @@ public:
   uint32_t GetWidth() const;
   void SetWidth(uint32_t width);
 
-  uint32_t GetFormat(bool raw = false) const;
+  XB_FMT GetFormat(bool raw = false) const;
   void SetFormat(uint32_t format);
 
   uint32_t GetHeight() const;
@@ -61,6 +52,11 @@ public:
   bool IsPacked() const;
   bool HasAlpha() const;
 
+  KD_TEX_FMT GetKDFormat() const;
+  KD_TEX_FMT GetKDFormatType() const;
+  KD_TEX_ALPHA GetKDAlpha() const;
+  KD_TEX_SWIZ GetKDSwizzle() const;
+
 private:
   uint32_t m_width;
   uint32_t m_height;
@@ -75,7 +71,6 @@ class CXBTFFile
 {
 public:
   CXBTFFile();
-  CXBTFFile(const CXBTFFile& ref);
 
   const std::string& GetPath() const;
   void SetPath(const std::string& path);
@@ -94,7 +89,7 @@ public:
 
 private:
   std::string m_path;
-  uint32_t m_loop;
+  uint32_t m_loop = 0;
   std::vector<CXBTFFrame> m_frames;
 };
 

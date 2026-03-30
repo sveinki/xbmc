@@ -14,129 +14,45 @@
 				<include>Visible_Left</include>
 				<control type="fixedlist" id="50">
 					<left>0</left>
-					<top>list_y_offset</top>
+					<top>list_top_offset</top>
 					<right>918</right>
-					<bottom>list_y_offset</bottom>
+					<bottom>list_bottom_offset</bottom>
+					<onleft>9000</onleft>
+					<onright>73</onright>
 					<onup>50</onup>
 					<ondown>50</ondown>
-					<onleft>9000</onleft>
-					<onright>77</onright>
-					<movement>2</movement>
-					<focusposition>3</focusposition>
-					<pagecontrol>77</pagecontrol>
-					<scrolltime>200</scrolltime>
-					<itemlayout height="100">
-						<control type="label">
-							<visible>String.IsEmpty(ListItem.Date)</visible>
-							<left>120</left>
-							<top>0</top>
-							<right>30</right>
-							<height>100</height>
-							<font>font36_title</font>
-							<aligny>center</aligny>
-							<label>$INFO[ListItem.Label]</label>
-						</control>
-						<control type="group">
-							<visible>!String.IsEmpty(ListItem.Date)</visible>
-							<control type="image">
-								<left>25</left>
-								<top>10</top>
-								<width>80</width>
-								<height>80</height>
-								<texture fallback="DefaultTVShows.png">$INFO[Listitem.ActualIcon]</texture>
-								<aspectratio>keep</aspectratio>
-								<visible>!String.IsEmpty(ListItem.ActualIcon)</visible>
-							</control>
-							<control type="label">
-								<left>120</left>
-								<top>10</top>
-								<right>30</right>
-								<height>100</height>
-								<aligny>top</aligny>
-								<label>$INFO[ListItem.ChannelName][COLOR grey]$INFO[ListItem.Label, - ][/COLOR]</label>
-							</control>
-							<control type="label">
-								<left>120</left>
-								<top>20</top>
-								<width>350</width>
-								<height>100</height>
-								<font>font12</font>
-								<aligny>center</aligny>
-								<label>$INFO[ListItem.Date]</label>
-							</control>
-						</control>
-					</itemlayout>
-					<focusedlayout height="100">
-						<control type="image">
-							<left>0</left>
-							<top>0</top>
-							<right>0</right>
-							<height>101</height>
-							<texture colordiffuse="button_focus">lists/focus.png</texture>
-							<visible>Control.HasFocus(50)</visible>
-						</control>
-						<control type="label">
-							<visible>String.IsEmpty(ListItem.Date)</visible>
-							<left>120</left>
-							<top>0</top>
-							<right>30</right>
-							<height>100</height>
-							<font>font36_title</font>
-							<aligny>center</aligny>
-							<label>$INFO[ListItem.Label]</label>
-						</control>
-						<control type="group">
-							<visible>!String.IsEmpty(ListItem.Date)</visible>
-							<control type="image">
-								<left>25</left>
-								<top>10</top>
-								<width>80</width>
-								<height>80</height>
-								<texture fallback="DefaultTVShows.png">$INFO[Listitem.ActualIcon]</texture>
-								<aspectratio>keep</aspectratio>
-								<visible>!String.IsEmpty(ListItem.ActualIcon)</visible>
-							</control>
-							<control type="label">
-								<left>120</left>
-								<top>10</top>
-								<right>30</right>
-								<height>100</height>
-								<aligny>top</aligny>
-								<label>$INFO[ListItem.ChannelName]$INFO[ListItem.Label, - ]</label>
-							</control>
-							<control type="label">
-								<left>120</left>
-								<top>20</top>
-								<width>350</width>
-								<height>100</height>
-								<font>font12</font>
-								<aligny>center</aligny>
-								<label>$INFO[ListItem.Date]</label>
-							</control>
-						</control>
-					</focusedlayout>
+					<movement>4</movement>
+					<focusposition>4</focusposition>
+					<pagecontrol>73</pagecontrol>
+					<scrolltime tween="cubic" easing="out">500</scrolltime>
+					<include content="PVRListItemLayouts">
+						<param name="list_id" value="50" />
+						<param name="only_label_condition" value="String.IsEmpty(ListItem.Date)" />
+						<param name="label1" value="$VAR[PVRMySearchLabel1Var]" />
+						<param name="label2" value="$INFO[ListItem.Date]" />
+					</include>
 				</control>
 			</control>
 			<control type="group">
 				<depth>DepthContentPanel</depth>
+				<include>OpenClose_Right</include>
 				<width>870</width>
 				<right>0</right>
-				<include>OpenClose_Right</include>
 				<include content="ContentPanel">
-					<param name="left" value="-68" />
+					<param name="left" value="-72" />
 					<param name="width" value="970" />
 					<param name="top" value="-20" />
 					<param name="flipx" value="true" />
 				</include>
-				<control type="scrollbar" id="77">
-					<left>-45</left>
-					<top>0</top>
+				<control type="scrollbar" id="73">
+					<left>-50</left>
+					<top>list_top_offset</top>
 					<width>12</width>
-					<height>100%</height>
+					<bottom>list_bottom_offset</bottom>
 					<onleft>50</onleft>
 					<onright>50</onright>
 					<orientation>vertical</orientation>
-					<animation effect="zoom" start="100,100" end="50,100" center="-45,0" time="300" tween="sine" easing="inout" condition="!Control.HasFocus(77)">conditional</animation>
+					<animation effect="zoom" start="100,100" end="50,100" center="-50,0" time="300" tween="sine" easing="inout" condition="!Control.HasFocus(73)">conditional</animation>
 				</control>
 				<include>PVRInfoPanel</include>
 			</control>
@@ -150,6 +66,14 @@
 				<include>MediaMenuCommon</include>
 				<include>PVRSideBar</include>
 			</control>
+		</control>
+		<control type="label" id="29">
+			<font></font>
+			<include>HiddenObject</include>
+		</control>
+		<control type="label" id="30">
+			<font></font>
+			<include>HiddenObject</include>
 		</control>
 	</controls>
 </window>

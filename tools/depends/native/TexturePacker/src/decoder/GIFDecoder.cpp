@@ -18,9 +18,16 @@
  *
  */
 
-#include <cstring>
 #include "GIFDecoder.h"
+
 #include "GifHelper.h"
+
+#include <cstring>
+
+GIFDecoder::GIFDecoder()
+{
+  m_extensions.emplace_back(".gif");
+}
 
 // returns true for gif files, otherwise returns false
 bool GIFDecoder::CanDecode(const std::string &filename)
@@ -31,53 +38,35 @@ bool GIFDecoder::CanDecode(const std::string &filename)
 bool GIFDecoder::LoadFile(const std::string &filename, DecodedFrames &frames)
 {
   int n = 0;
-  GifHelper *gifImage = new GifHelper();
-  if (gifImage->LoadGif(filename.c_str()))
+  bool result = false;
+
+  GifHelper gifImage;
+  if (gifImage.LoadGif(filename))
   {
-    auto extractedFrames = gifImage->GetFrames();
+    auto extractedFrames = gifImage.GetFrames();
     n = extractedFrames.size();
     if (n > 0)
     {
-      unsigned int height = gifImage->GetHeight();
-      unsigned int width = gifImage->GetWidth();
-      unsigned int pitch = gifImage->GetPitch();
-      unsigned int frameSize = pitch * height;
+      unsigned int height = gifImage.GetHeight();
+      unsigned int width = gifImage.GetWidth();
+      unsigned int pitch = gifImage.GetPitch();
+
       for (unsigned int i = 0; i < extractedFrames.size(); i++)
       {
         DecodedFrame frame;
-        
-        frame.rgbaImage.pixels = (char *)new char[frameSize];
-        memcpy(frame.rgbaImage.pixels, extractedFrames[i]->m_pImage, frameSize);
+
+        frame.rgbaImage.pixels = extractedFrames[i]->m_pImage;
         frame.rgbaImage.height = height;
         frame.rgbaImage.width = width;
         frame.rgbaImage.bbp = 32;
         frame.rgbaImage.pitch = pitch;
         frame.delay = extractedFrames[i]->m_delay;
-        
+
         frames.frameList.push_back(frame);
       }
     }
-    frames.user = gifImage;
-    return true;
+    result = true;
   }
-  else
-  {
-    delete gifImage;
-    return false;
-  }
-}
 
-void GIFDecoder::FreeDecodedFrames(DecodedFrames &frames)
-{
-  for (unsigned int i = 0; i < frames.frameList.size(); i++)
-  {
-    delete [] frames.frameList[i].rgbaImage.pixels;
-  }
-  delete (GifHelper *)frames.user;
-  frames.clear();
-}
-
-void GIFDecoder::FillSupportedExtensions()
-{
-  m_supportedExtensions.push_back(".gif");
+  return result;
 }

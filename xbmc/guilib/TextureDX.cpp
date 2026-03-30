@@ -1,32 +1,27 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "TextureDX.h"
-#include "windowing/WindowingFactory.h"
+
+#include "utils/MemUtils.h"
 #include "utils/log.h"
 
-/************************************************************************/
-/*    CDXTexture                                                       */
-/************************************************************************/
-CDXTexture::CDXTexture(unsigned int width, unsigned int height, unsigned int format)
-: CBaseTexture(width, height, format)
+#include <memory>
+
+std::unique_ptr<CTexture> CTexture::CreateTexture(unsigned int width,
+                                                  unsigned int height,
+                                                  XB_FMT format)
+{
+  return std::make_unique<CDXTexture>(width, height, format);
+}
+
+CDXTexture::CDXTexture(unsigned int width, unsigned int height, XB_FMT format)
+  : CTexture(width, height, format)
 {
 }
 
@@ -101,7 +96,8 @@ void CDXTexture::LoadToGPU()
 
     if (m_texture.Get() == nullptr)
     {
-      CLog::Log(LOGDEBUG, "CDXTexture::CDXTexture: Error creating new texture for size %d x %d.", m_textureWidth, m_textureHeight);
+      CLog::Log(LOGDEBUG, "CDXTexture::CDXTexture: Error creating new texture for size {} x {}.",
+                m_textureWidth, m_textureHeight);
       return;
     }
   }
@@ -121,7 +117,8 @@ void CDXTexture::LoadToGPU()
       m_texture.Create(m_textureWidth, m_textureHeight, IsMipmapped() ? 0 : 1, usage, GetFormat(), m_pixels, GetPitch());
       if (m_texture.Get() == nullptr)
       {
-        CLog::Log(LOGDEBUG, "CDXTexture::CDXTexture: Error creating new texture for size %d x %d.", m_textureWidth, m_textureHeight);
+        CLog::Log(LOGDEBUG, "CDXTexture::CDXTexture: Error creating new texture for size {} x {}.",
+                  m_textureWidth, m_textureHeight);
         return;
       }
 
@@ -175,14 +172,18 @@ void CDXTexture::LoadToGPU()
     }
     else
     {
-      CLog::Log(LOGERROR, __FUNCTION__" - failed to lock texture.");
+      CLog::LogF(LOGERROR, "failed to lock texture.");
     }
     m_texture.UnlockRect(0);
     if (usage != D3D11_USAGE_STAGING && IsMipmapped())
       m_texture.GenerateMipmaps();
   }
-  _aligned_free(m_pixels);
-  m_pixels = nullptr;
+
+  if (!m_bCacheMemory)
+  {
+    KODI::MEMORY::AlignedFree(m_pixels);
+    m_pixels = nullptr;
+  }
 
   m_loadedToGPU = true;
 }

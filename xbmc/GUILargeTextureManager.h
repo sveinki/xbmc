@@ -1,31 +1,25 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
+#include "guilib/AspectRatio.h"
+#include "guilib/TextureManager.h"
+#include "jobs/IJobCallback.h"
+#include "jobs/Job.h"
+#include "threads/CriticalSection.h"
+
+#include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "guilib/TextureManager.h"
-#include "threads/CriticalSection.h"
-#include "utils/Job.h"
+class CTexture;
 
 /*!
  \ingroup textures,jobs
@@ -38,7 +32,11 @@
 class CImageLoader : public CJob
 {
 public:
-  CImageLoader(const std::string &path, const bool useCache);
+  CImageLoader(const std::string& path,
+               unsigned int targetWidth,
+               unsigned int targetHeight,
+               CAspectRatio::AspectRatio aspectRatio,
+               const bool useCache);
   ~CImageLoader() override;
 
   /*!
@@ -48,7 +46,12 @@ public:
 
   bool          m_use_cache; ///< Whether or not to use any caching with this image
   std::string    m_path; ///< path of image to load
-  CBaseTexture *m_texture; ///< Texture object to load the image into \sa CBaseTexture.
+  std::unique_ptr<CTexture> m_texture; ///< Texture object to load the image into \sa CTexture.
+
+private:
+  unsigned int m_targetWidth; ///< target width of the image
+  unsigned int m_targetHeight; ///< target height of the image
+  CAspectRatio::AspectRatio m_aspectRatio; ///< aspect ratio mode of the image
 };
 
 /*!
@@ -84,12 +87,20 @@ public:
 
    \param path path of the image to load.
    \param texture texture object to hold the resulting texture
-   \param orientation orientation of resulting texture
+   \param width target width of the image. 0 means original width.
+   \param height target height of the image. 0 means original height.
    \param firstRequest true if this is the first time we are requesting this texture
+   \param useCache whether to load from image cache.
    \return true if the image exists, else false.
    \sa CGUITextureArray and CGUITexture
    */
-  bool GetImage(const std::string &path, CTextureArray &texture, bool firstRequest, bool useCache = true);
+  bool GetImage(const std::string& path,
+                CTextureArray& texture,
+                unsigned int width,
+                unsigned int height,
+                CAspectRatio::AspectRatio aspectRatio,
+                bool firstRequest,
+                bool useCache = true);
 
   /*!
    \brief Request a texture to be unloaded.
@@ -99,10 +110,16 @@ public:
    texture is still queued for loading, or is in the process of loading, the image load is cancelled.
 
    \param path path of the image to release.
+   \param width target width of the image to release.
+   \param height target height of the image to release.
    \param immediately if set true the image is immediately unloaded once its reference count reaches zero
                       rather than being unloaded after a delay.
    */
-  void ReleaseImage(const std::string &path, bool immediately = false);
+  void ReleaseImage(const std::string& path,
+                    unsigned int width,
+                    unsigned int height,
+                    CAspectRatio::AspectRatio aspectRatio,
+                    bool immediately = false);
 
   /*!
    \brief Cleanup images that are no longer in use.
@@ -119,16 +136,22 @@ private:
   class CLargeTexture
   {
   public:
-    CLargeTexture(const std::string &path);
+    explicit CLargeTexture(const std::string& path,
+                           unsigned int targetWidth,
+                           unsigned int targetHeight,
+                           CAspectRatio::AspectRatio aspectRatio);
     virtual ~CLargeTexture();
 
     void AddRef();
     bool DecrRef(bool deleteImmediately);
     bool DeleteIfRequired(bool deleteImmediately = false);
-    void SetTexture(CBaseTexture* texture);
+    void SetTexture(std::unique_ptr<CTexture> texture);
 
-    const std::string &GetPath() const { return m_path; };
-    const CTextureArray &GetTexture() const { return m_texture; };
+    const std::string& GetPath() const { return m_path; }
+    const CTextureArray& GetTexture() const { return m_texture; }
+    unsigned int GetTargetWidth() const { return m_targetWidth; }
+    unsigned int GetTargetHeight() const { return m_targetHeight; }
+    CAspectRatio::AspectRatio GetAspectRatio() const { return m_aspectRatio; }
 
   private:
     static const unsigned int TIME_TO_DELETE = 2000;
@@ -136,10 +159,17 @@ private:
     unsigned int m_refCount;
     std::string m_path;
     CTextureArray m_texture;
+    unsigned int m_targetWidth;
+    unsigned int m_targetHeight;
+    CAspectRatio::AspectRatio m_aspectRatio;
     unsigned int m_timeToDelete;
   };
 
-  void QueueImage(const std::string &path, bool useCache = true);
+  void QueueImage(const std::string& path,
+                  unsigned int width,
+                  unsigned int height,
+                  CAspectRatio::AspectRatio aspectRatio,
+                  bool useCache = true);
 
   std::vector< std::pair<unsigned int, CLargeTexture *> > m_queued;
   std::vector<CLargeTexture *> m_allocated;
@@ -148,7 +178,4 @@ private:
 
   CCriticalSection m_listSection;
 };
-
-extern CGUILargeTextureManager g_largeTextureManager;
-
 

@@ -1,38 +1,28 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 #include "VideoReferenceClock.h"
+
 #include "ServiceBroker.h"
-#include "utils/MathUtils.h"
-#include "utils/log.h"
-#include "utils/TimeUtils.h"
-#include "threads/SingleLock.h"
-#include "guilib/GraphicContext.h"
 #include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+#include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
+#include "utils/log.h"
+#include "windowing/GraphicContext.h"
 #include "windowing/VideoSync.h"
-#include "windowing/WindowingFactory.h"
+#include "windowing/WinSystem.h"
+
+#include <mutex>
 
 CVideoReferenceClock::CVideoReferenceClock() : CThread("RefClock")
 {
   m_SystemFrequency = CurrentHostFrequency();
   m_ClockSpeed = 1.0;
-  m_ClockOffset = 0;
   m_TotalMissedVblanks = 0;
   m_UseVblank = false;
 
@@ -42,31 +32,30 @@ CVideoReferenceClock::CVideoReferenceClock() : CThread("RefClock")
   m_RefreshRate = 0.0;
   m_MissedVblanks = 0;
   m_VblankTime = 0;
+  m_vsyncStopEvent.Reset();
 
   Start();
 }
 
 CVideoReferenceClock::~CVideoReferenceClock()
 {
+  m_bStop = true;
   m_vsyncStopEvent.Set();
   StopThread();
 }
 
 void CVideoReferenceClock::Start()
 {
-  m_ClockOffset = CurrentHostCounter();
-  if(CServiceBroker::GetSettings().GetBool(CSettings::SETTING_VIDEOPLAYER_USEDISPLAYASCLOCK) && !IsRunning())
+  if(CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_VIDEOPLAYER_USEDISPLAYASCLOCK) && !IsRunning())
     Create();
 }
 
-void CVideoReferenceClock::CBUpdateClock(int NrVBlanks, uint64_t time, void *clock)
+void CVideoReferenceClock::UpdateClock(int NrVBlanks, uint64_t time)
 {
-  {
-    CVideoReferenceClock *refClock = static_cast<CVideoReferenceClock*>(clock);
-    CSingleLock lock(refClock->m_CritSection);
-    refClock->m_VblankTime = time;
-    refClock->UpdateClock(NrVBlanks, true);
-  }
+  std::unique_lock lock(m_CritSection);
+
+  m_VblankTime = time;
+  UpdateClockInternal(NrVBlanks, true);
 }
 
 void CVideoReferenceClock::Process()
@@ -76,17 +65,17 @@ void CVideoReferenceClock::Process()
 
   while(!m_bStop)
   {
-    m_pVideoSync = g_Windowing.GetVideoSync(this);
+    m_pVideoSync = CServiceBroker::GetWinSystem()->GetVideoSync(this);
 
     if (m_pVideoSync)
     {
-      SetupSuccess = m_pVideoSync->Setup(CBUpdateClock);
+      SetupSuccess = m_pVideoSync->Setup();
       UpdateRefreshrate();
     }
 
-    CSingleLock SingleLock(m_CritSection);
+    std::unique_lock SingleLock(m_CritSection);
     Now = CurrentHostCounter();
-    m_CurrTime = Now + m_ClockOffset; //add the clock offset from the previous time we stopped
+    m_CurrTime = Now;
     m_LastIntTime = m_CurrTime;
     m_CurrTimeFract = 0.0;
     m_ClockSpeed = 1.0;
@@ -97,23 +86,25 @@ void CVideoReferenceClock::Process()
     {
       m_UseVblank = true;          //tell other threads we're using vblank as clock
       m_VblankTime = Now;          //initialize the timestamp of the last vblank
-      SingleLock.Leave();
+      SingleLock.unlock();
 
-      m_vsyncStopEvent.Reset();
-      //run the clock
-      m_pVideoSync->Run(m_vsyncStopEvent);
+      // we might got signalled while we did not wait
+      if (!m_vsyncStopEvent.Signaled())
+      {
+        //run the clock
+        m_pVideoSync->Run(m_vsyncStopEvent);
+        m_vsyncStopEvent.Reset();
+      }
     }
     else
     {
-      SingleLock.Leave();
+      SingleLock.unlock();
       CLog::Log(LOGDEBUG, "CVideoReferenceClock: Setup failed, falling back to CurrentHostCounter()");
     }
 
-    SingleLock.Enter();
+    SingleLock.lock();
     m_UseVblank = false;                       //we're back to using the systemclock
-    Now = CurrentHostCounter();                //set the clockoffset between the vblank clock and systemclock
-    m_ClockOffset = m_CurrTime - Now;
-    SingleLock.Leave();
+    SingleLock.unlock();
 
     //clean up the vblank clock
     if (m_pVideoSync)
@@ -128,13 +119,15 @@ void CVideoReferenceClock::Process()
 }
 
 //this is called from the vblank run function and from CVideoReferenceClock::Wait in case of a late update
-void CVideoReferenceClock::UpdateClock(int NrVBlanks, bool CheckMissed)
+void CVideoReferenceClock::UpdateClockInternal(int NrVBlanks, bool CheckMissed)
 {
   if (CheckMissed) //set to true from the vblank run function, set to false from Wait and GetTime
   {
     if (NrVBlanks < m_MissedVblanks) //if this is true the vblank detection in the run function is wrong
-      CLog::Log(LOGDEBUG, "CVideoReferenceClock: detected %i vblanks, missed %i, refreshrate might have changed",
-                NrVBlanks, m_MissedVblanks);
+      CLog::Log(
+          LOGDEBUG,
+          "CVideoReferenceClock: detected {} vblanks, missed {}, refreshrate might have changed",
+          NrVBlanks, m_MissedVblanks);
 
     NrVBlanks -= m_MissedVblanks; //subtract the vblanks we missed
     m_MissedVblanks = 0;
@@ -168,7 +161,7 @@ double CVideoReferenceClock::UpdateInterval() const
 //called from dvdclock to get the time
 int64_t CVideoReferenceClock::GetTime(bool interpolated /* = true*/)
 {
-  CSingleLock SingleLock(m_CritSection);
+  std::unique_lock SingleLock(m_CritSection);
 
   //when using vblank, get the time from that, otherwise use the systemclock
   if (m_UseVblank)
@@ -181,7 +174,7 @@ int64_t CVideoReferenceClock::GetTime(bool interpolated /* = true*/)
 
     while(Now >= NextVblank)  //keep looping until the next vblank is in the future
     {
-      UpdateClock(1, false);           //update clock when next vblank should have happened already
+      UpdateClockInternal(1, false); //update clock when next vblank should have happened already
       NextVblank = TimeOfNextVblank(); //get time when the next vblank should happen
     }
 
@@ -206,27 +199,27 @@ int64_t CVideoReferenceClock::GetTime(bool interpolated /* = true*/)
   }
   else
   {
-    return CurrentHostCounter() + m_ClockOffset;
+    return CurrentHostCounter();
   }
 }
 
 void CVideoReferenceClock::SetSpeed(double Speed)
 {
-  CSingleLock SingleLock(m_CritSection);
+  std::unique_lock SingleLock(m_CritSection);
   //VideoPlayer can change the speed to fit the rereshrate
   if (m_UseVblank)
   {
     if (Speed != m_ClockSpeed)
     {
       m_ClockSpeed = Speed;
-      CLog::Log(LOGDEBUG, "CVideoReferenceClock: Clock speed %f%%", m_ClockSpeed * 100.0);
+      CLog::Log(LOGDEBUG, "CVideoReferenceClock: Clock speed {:0.2f} %", m_ClockSpeed * 100.0);
     }
   }
 }
 
 double CVideoReferenceClock::GetSpeed()
 {
-  CSingleLock SingleLock(m_CritSection);
+  std::unique_lock SingleLock(m_CritSection);
 
   //VideoPlayer needs to know the speed for the resampler
   if (m_UseVblank)
@@ -237,17 +230,17 @@ double CVideoReferenceClock::GetSpeed()
 
 void CVideoReferenceClock::UpdateRefreshrate()
 {
-  CSingleLock SingleLock(m_CritSection);
-  m_RefreshRate = m_pVideoSync->GetFps();
+  std::unique_lock SingleLock(m_CritSection);
+  m_RefreshRate = static_cast<double>(m_pVideoSync->GetFps());
   m_ClockSpeed = 1.0;
 
-  CLog::Log(LOGDEBUG, "CVideoReferenceClock: Detected refreshrate: %.3f hertz", m_RefreshRate);
+  CLog::Log(LOGDEBUG, "CVideoReferenceClock: Detected refreshrate: {:.3f} hertz", m_RefreshRate);
 }
 
 //VideoPlayer needs to know the refreshrate for matching the fps of the video playing to it
 double CVideoReferenceClock::GetRefreshRate(double* interval /*= NULL*/)
 {
-  CSingleLock SingleLock(m_CritSection);
+  std::unique_lock SingleLock(m_CritSection);
 
   if (m_UseVblank)
   {
@@ -272,7 +265,7 @@ int64_t CVideoReferenceClock::TimeOfNextVblank() const
 //for the codec information screen
 bool CVideoReferenceClock::GetClockInfo(int& MissedVblanks, double& ClockSpeed, double& RefreshRate) const
 {
-  CSingleLock SingleLock(m_CritSection);
+  std::unique_lock SingleLock(m_CritSection);
 
   if (m_UseVblank)
   {

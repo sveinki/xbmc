@@ -13,6 +13,7 @@
 #if defined(__SYMBIAN32__)
 #include <stdio.h>
 #endif
+#include <atomic>
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
@@ -40,7 +41,7 @@ class NPT_PosixMutex : public NPT_MutexInterface
 {
 public:
     // methods
-             NPT_PosixMutex();
+             NPT_PosixMutex(bool recursive = false);
     ~NPT_PosixMutex() override;
 
     // NPT_Mutex methods
@@ -55,14 +56,17 @@ private:
 /*----------------------------------------------------------------------
 |       NPT_PosixMutex::NPT_PosixMutex
 +---------------------------------------------------------------------*/
-NPT_PosixMutex::NPT_PosixMutex()
+NPT_PosixMutex::NPT_PosixMutex(bool recursive)
 {
-    // Recursive by default
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	// Recursive by default
+	pthread_mutexattr_t attr;
 
-    pthread_mutex_init(&m_Mutex, &attr);
+	if (recursive) {
+		pthread_mutexattr_init(&attr);
+		pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	}
+	
+	pthread_mutex_init(&m_Mutex, recursive?&attr:NULL);
 }
 
 /*----------------------------------------------------------------------
@@ -96,9 +100,9 @@ NPT_PosixMutex::Unlock()
 /*----------------------------------------------------------------------
 |       NPT_Mutex::NPT_Mutex
 +---------------------------------------------------------------------*/
-NPT_Mutex::NPT_Mutex()
+NPT_Mutex::NPT_Mutex(bool recursive)
 {
-    m_Delegate = new NPT_PosixMutex();
+    m_Delegate = new NPT_PosixMutex(recursive);
 }
 
 /*----------------------------------------------------------------------
@@ -275,8 +279,7 @@ class NPT_PosixAtomicVariable : public NPT_AtomicVariableInterface
 
  private:
     // members
-    volatile int    m_Value;
-    pthread_mutex_t m_Mutex;
+    std::atomic_int m_Value;
 };
 
 /*----------------------------------------------------------------------
@@ -285,7 +288,6 @@ class NPT_PosixAtomicVariable : public NPT_AtomicVariableInterface
 NPT_PosixAtomicVariable::NPT_PosixAtomicVariable(int value) : 
     m_Value(value)
 {
-    pthread_mutex_init(&m_Mutex, NULL);
 }
 
 /*----------------------------------------------------------------------
@@ -293,7 +295,6 @@ NPT_PosixAtomicVariable::NPT_PosixAtomicVariable(int value) :
 +---------------------------------------------------------------------*/
 NPT_PosixAtomicVariable::~NPT_PosixAtomicVariable()
 {
-    pthread_mutex_destroy(&m_Mutex);
 }
 
 /*----------------------------------------------------------------------
@@ -304,9 +305,7 @@ NPT_PosixAtomicVariable::Increment()
 {
     int value;
 
-    pthread_mutex_lock(&m_Mutex);
     value = ++m_Value;
-    pthread_mutex_unlock(&m_Mutex);
     
     return value;
 }
@@ -319,9 +318,7 @@ NPT_PosixAtomicVariable::Decrement()
 {
     int value;
 
-    pthread_mutex_lock(&m_Mutex);
     value = --m_Value;
-    pthread_mutex_unlock(&m_Mutex);
     
     return value;
 }
@@ -332,7 +329,6 @@ NPT_PosixAtomicVariable::Decrement()
 int
 NPT_PosixAtomicVariable::GetValue()
 {
-    // we assume that int read/write are atomic on the platform
     return m_Value;
 }
 
@@ -342,9 +338,7 @@ NPT_PosixAtomicVariable::GetValue()
 void
 NPT_PosixAtomicVariable::SetValue(int value)
 {
-    pthread_mutex_lock(&m_Mutex);
     m_Value = value;
-    pthread_mutex_unlock(&m_Mutex);
 }
 
 /*----------------------------------------------------------------------
@@ -368,6 +362,7 @@ class NPT_PosixThread : public NPT_ThreadInterface
                ~NPT_PosixThread() override;
     NPT_Result  Start() override; 
     NPT_Result  Wait(NPT_Timeout timeout = NPT_TIMEOUT_INFINITE) override;
+    NPT_Result  CancelBlockerSocket() override;
     NPT_Result  SetPriority(int priority) override;
     NPT_Result  GetPriority(int& priority) override;
     
@@ -376,7 +371,7 @@ class NPT_PosixThread : public NPT_ThreadInterface
     static NPT_Result SetPriority(NPT_Thread::ThreadId thread_id, int priority);
 
  private:
-    // class methods
+    // methods
     static void* EntryPoint(void* argument);
 
     // NPT_Runnable methods
@@ -416,7 +411,7 @@ NPT_PosixThread::NPT_PosixThread(NPT_Thread*   delegator,
 +---------------------------------------------------------------------*/
 NPT_PosixThread::~NPT_PosixThread()
 {
-    //NPT_Debug("NPT_PosixThread::~NPT_PosixThread %d\n", m_ThreadId);
+    //NPT_LOG_FINE_1("NPT_PosixThread::~NPT_PosixThread %lld\n", (NPT_Thread::ThreadId)m_ThreadId);
 
     if (!m_Detached) {
         // we're not detached, and not in the Run() method, so we need to 
@@ -432,7 +427,7 @@ NPT_Thread::ThreadId
 NPT_Thread::GetCurrentThreadId()
 {
     pthread_t pid = pthread_self();
-    return (NPT_Thread::ThreadId)((void*)pid);
+    return (NPT_Thread::ThreadId)pid;
 }
 
 /*----------------------------------------------------------------------
@@ -461,12 +456,10 @@ NPT_PosixThread::EntryPoint(void* argument)
 {
     NPT_PosixThread* thread = reinterpret_cast<NPT_PosixThread*>(argument);
 
-    NPT_LOG_FINER("NPT_PosixThread::EntryPoint - in =======================");
+    NPT_LOG_FINE("NPT_PosixThread::EntryPoint - in =======================");
 
-#if defined(NPT_CONFIG_HAVE_AUTORELEASE_POOL)
     // ensure there is the top level autorelease pool for each thread
     NPT_AutoreleasePool pool;
-#endif
     
     // get the thread ID from this context, because m_ThreadId may not yet
     // have been set by the parent thread in the Start() method
@@ -502,7 +495,7 @@ NPT_PosixThread::EntryPoint(void* argument)
 NPT_Result
 NPT_PosixThread::Start()
 {
-    NPT_LOG_FINER("---- Creating thread");
+    NPT_LOG_FINE("NPT_PosixThread::Start - creating thread");
     
     // reset values
     m_Joined = false;
@@ -511,7 +504,7 @@ NPT_PosixThread::Start()
 
     pthread_attr_t *attributes = NULL;
 
-#if defined(NPT_CONFIG_THREAD_STACK_SIZE)
+#if defined(NPT_CONFIG_THREAD_STACK_SIZE) && NPT_CONFIG_THREAD_STACK_SIZE
     pthread_attr_t stack_size_attributes;
     pthread_attr_init(&stack_size_attributes);
     pthread_attr_setstacksize(&stack_size_attributes, NPT_CONFIG_THREAD_STACK_SIZE);
@@ -523,12 +516,15 @@ NPT_PosixThread::Start()
     // before the pthread_create() function returns
     bool detached = m_Detached;
 
+    // reset the joined flag
+    m_Joined = false;
+
     // create the native thread
     pthread_t thread_id;
     int result = pthread_create(&thread_id, attributes, EntryPoint, 
                                 static_cast<NPT_PosixThread*>(this));
-    NPT_LOG_FINER_2("---- Thread Created: id = %d, res=%d", 
-                   thread_id, result);
+    NPT_LOG_FINE_2("NPT_PosixThread::Start - id = %p, res=%d",
+                   (void*)thread_id, result);
     if (result != 0) {
         // failed
         return NPT_ERROR_ERRNO(result);
@@ -564,10 +560,6 @@ NPT_PosixThread::Wait(NPT_Timeout timeout /* = NPT_TIMEOUT_INFINITE */)
     void* return_value;
     int   result;
 
-    // Note: Logging here will cause a crash on exit because LogManager may already be destroyed
-    // if this object is global or static as well
-    //NPT_LOG_FINE_1("NPT_PosixThread::Wait - waiting for id %d", m_ThreadId);
-
     // check that we're not detached
     if (m_ThreadId == 0 || m_Detached) {
         return NPT_FAILURE;
@@ -579,7 +571,8 @@ NPT_PosixThread::Wait(NPT_Timeout timeout /* = NPT_TIMEOUT_INFINITE */)
         result = 0;
     } else {
         if (timeout != NPT_TIMEOUT_INFINITE) {
-            if (NPT_FAILED(m_Done.WaitUntilEquals(1, timeout))) {
+            result = m_Done.WaitUntilEquals(1, timeout);
+            if (NPT_FAILED(result)) {
                 result = -1;
                 goto timedout;
             }
@@ -596,6 +589,15 @@ timedout:
     } else {
         return NPT_SUCCESS;
     }
+}
+
+/*----------------------------------------------------------------------
+|   NPT_PosixThread::CancelBlockerSocket
++---------------------------------------------------------------------*/
+NPT_Result
+NPT_PosixThread::CancelBlockerSocket()
+{
+    return NPT_Socket::CancelBlockerSocket((NPT_Thread::ThreadId)m_ThreadId);
 }
 
 /*----------------------------------------------------------------------

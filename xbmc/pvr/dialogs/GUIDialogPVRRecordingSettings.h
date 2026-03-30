@@ -1,64 +1,57 @@
-#pragma once
 /*
- *      Copyright (C) 2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2017-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include <string>
+#pragma once
 
-#include "settings/SettingConditions.h"
 #include "settings/dialogs/GUIDialogSettingsManualBase.h"
-#include "settings/lib/SettingDependency.h"
 
-#include "pvr/PVRTypes.h"
+#include <memory>
+#include <string>
+#include <vector>
 
+class CFileItem;
 class CSetting;
+
+struct IntegerSettingOption;
 
 namespace PVR
 {
-  class CGUIDialogPVRRecordingSettings : public CGUIDialogSettingsManualBase
-  {
-  public:
-    CGUIDialogPVRRecordingSettings();
+class CPVRRecording;
 
-    void SetRecording(const CPVRRecordingPtr &recording);
+class CGUIDialogPVRRecordingSettings : public CGUIDialogSettingsManualBase
+{
+public:
+  CGUIDialogPVRRecordingSettings();
 
-  protected:
-    // implementation of ISettingCallback
-    bool OnSettingChanging(std::shared_ptr<const CSetting> setting) override;
-    void OnSettingChanged(std::shared_ptr<const CSetting> setting) override;
+  void SetRecording(const std::shared_ptr<CPVRRecording>& recording);
+  static bool CanEditRecording(const CFileItem& item);
 
-    // specialization of CGUIDialogSettingsBase
-    bool AllowResettingSettings() const override { return false; }
-    void Save() override;
-    void SetupView() override;
+protected:
+  // implementation of ISettingCallback
+  bool OnSettingChanging(const std::shared_ptr<const CSetting>& setting) override;
+  void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
 
-    // specialization of CGUIDialogSettingsManualBase
-    void InitializeSettings() override;
+  // specialization of CGUIDialogSettingsBase
+  bool AllowResettingSettings() const override { return false; }
+  bool Save() override;
+  void SetupView() override;
 
-  private:
-    static void LifetimesFiller(std::shared_ptr<const CSetting> setting,
-                                std::vector<std::pair<std::string, int>> &list,
-                                int &current, void *data);
+  // specialization of CGUIDialogSettingsManualBase
+  void InitializeSettings() override;
 
-    CPVRRecordingPtr m_recording;
-    std::string m_strTitle;
-    int m_iPlayCount;
-    int m_iLifetime;
-  };
+private:
+  void LifetimesFiller(const std::shared_ptr<const CSetting>& setting,
+                       std::vector<IntegerSettingOption>& list,
+                       int& current) const;
+
+  std::shared_ptr<CPVRRecording> m_recording;
+  std::string m_strTitle;
+  int m_iPlayCount = 0;
+  int m_iLifetime = 0;
+};
 } // namespace PVR

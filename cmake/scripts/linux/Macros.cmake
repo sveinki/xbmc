@@ -28,7 +28,13 @@ function(core_link_library lib wraplib)
       list(APPEND export ${arg})
     endforeach()
   elseif(check_arg STREQUAL archives)
-    set(extra_libs ${data_arg})
+    foreach(_data_arg ${data_arg})
+      if(TARGET ${_data_arg})
+        list(APPEND extra_libs $<TARGET_FILE:${_data_arg}>)
+      else()
+        list(APPEND extra_libs ${_data_arg})
+      endif()
+    endforeach()
   endif()
 
   string(REGEX REPLACE "[ ]+" ";" _flags "${CMAKE_SHARED_LINKER_FLAGS}")
@@ -65,7 +71,7 @@ function(find_soname lib)
       set(link_lib -l${${lib}_LIBRARIES})
     endif()
   endif()
-  execute_process(COMMAND ${CMAKE_C_COMPILER} -nostdlib -o /dev/null -Wl,-M ${link_lib} 
+  execute_process(COMMAND ${CMAKE_C_COMPILER} -nostdlib -o /dev/null -Wl,-M ${link_lib}
                   COMMAND grep LOAD.*${liblow}
                   ERROR_QUIET
                   OUTPUT_VARIABLE ${lib}_FILENAME)

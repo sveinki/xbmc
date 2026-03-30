@@ -21,7 +21,7 @@ function check_dyloaded_depends
           install_name_tool -change "$a" "$DYLIB_NAMEPATH/$(basename $a)" "$TARGET_FRAMEWORKS/$(basename $b)"
         fi
       fi
-    done 
+    done
   fi
 }
 
@@ -51,7 +51,7 @@ function check_xbmc_dylib_depends
 EXTERNAL_LIBS=$XBMC_DEPENDS
 
 TARGET_NAME=$FULL_PRODUCT_NAME
-TARGET_CONTENTS=$TARGET_BUILD_DIR/$TARGET_NAME/Contents
+TARGET_CONTENTS=$TARGET_BUILD_DIR
 
 TARGET_BINARY=$TARGET_CONTENTS/MacOS/$APP_NAME
 TARGET_FRAMEWORKS=$TARGET_CONTENTS/Libraries
@@ -63,9 +63,6 @@ mkdir -p "$TARGET_CONTENTS/Resources"
 # start clean so we don't keep old dylibs
 rm -rf "$TARGET_CONTENTS/Libraries"
 mkdir -p "$TARGET_CONTENTS/Libraries"
-
-echo "Package $TARGET_BUILD_DIR/$APP_NAME"
-cp -f "$TARGET_BUILD_DIR/$APP_NAME" "$TARGET_BINARY"
 
 echo "Creating icon"
 iconutil -c icns --output "$TARGET_CONTENTS/Resources/kodi.icns" "$SRCROOT/tools/darwin/packaging/media/osx/icon.iconset"
@@ -81,14 +78,14 @@ for a in $(otool -LX "$TARGET_BINARY"  | grep "$EXTERNAL_LIBS" | awk ' { print $
 	install_name_tool -change "$a" "$DYLIB_NAMEPATH/$(basename $a)" "$TARGET_BINARY"
 done
 
-echo "Package $EXTERNAL_LIBS/lib/python2.7"
+echo "Package $EXTERNAL_LIBS/lib/python$PYTHON_VERSION"
 mkdir -p "$TARGET_CONTENTS/Libraries/lib"
 PYTHONSYNC="rsync -aq --exclude .DS_Store --exclude *.a --exclude *.exe --exclude test --exclude tests"
-${PYTHONSYNC} "$EXTERNAL_LIBS/lib/python2.7" "$TARGET_FRAMEWORKS/lib/"
-rm -rf "$TARGET_FRAMEWORKS/lib/python2.7/config"
+${PYTHONSYNC} "$EXTERNAL_LIBS/lib/python$PYTHON_VERSION" "$TARGET_FRAMEWORKS/lib/"
+rm -rf "$TARGET_FRAMEWORKS/lib/python$PYTHON_VERSION/config"
 
-echo "Checking $TARGET_FRAMEWORKS/lib/python2.7 *.so for dylib dependencies"
-check_xbmc_dylib_depends "$TARGET_FRAMEWORKS"/lib/python2.7 "*.so"
+echo "Checking $TARGET_FRAMEWORKS/lib/python$PYTHON_VERSION *.so for dylib dependencies"
+check_xbmc_dylib_depends "$TARGET_FRAMEWORKS"/lib/python$PYTHON_VERSION "*.so"
 
 echo "Checking $XBMC_HOME/system *.so for dylib dependencies"
 check_xbmc_dylib_depends "$XBMC_HOME"/system "*.so"
@@ -123,7 +120,7 @@ do
 				let REWIND="1"
 			fi
 			install_name_tool -change "$a" "$DYLIB_NAMEPATH/$(basename $a)" "$TARGET_FRAMEWORKS/$(basename $b)"
-		done 
+		done
 	done
 done
 

@@ -1,21 +1,9 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "XBTF.h"
@@ -89,9 +77,9 @@ void CXBTFFrame::SetFormat(uint32_t format)
   m_format = format;
 }
 
-uint32_t CXBTFFrame::GetFormat(bool raw) const
+XB_FMT CXBTFFrame::GetFormat(bool raw) const
 {
-  return raw ? m_format : (m_format & XB_FMT_MASK);
+  return static_cast<XB_FMT>(raw ? m_format : m_format & XB_FMT_MASK);
 }
 
 uint64_t CXBTFFrame::GetOffset() const
@@ -128,16 +116,29 @@ uint64_t CXBTFFrame::GetHeaderSize() const
   return result;
 }
 
+KD_TEX_FMT CXBTFFrame::GetKDFormat() const
+{
+  return static_cast<KD_TEX_FMT>(m_format & KD_TEX_FMT_MASK);
+}
+
+KD_TEX_FMT CXBTFFrame::GetKDFormatType() const
+{
+  return static_cast<KD_TEX_FMT>(m_format & KD_TEX_FMT_TYPE_MASK);
+}
+
+KD_TEX_ALPHA CXBTFFrame::GetKDAlpha() const
+{
+  return static_cast<KD_TEX_ALPHA>(m_format & KD_TEX_ALPHA_MASK);
+}
+
+KD_TEX_SWIZ CXBTFFrame::GetKDSwizzle() const
+{
+  return static_cast<KD_TEX_SWIZ>(m_format & KD_TEX_SWIZ_MASK);
+}
+
 CXBTFFile::CXBTFFile()
   : m_path(),
-    m_loop(0),
     m_frames()
-{ }
-
-CXBTFFile::CXBTFFile(const CXBTFFile& ref)
-  : m_path(ref.m_path),
-    m_loop(ref.m_loop),
-    m_frames(ref.m_frames)
 { }
 
 const std::string& CXBTFFile::GetPath() const

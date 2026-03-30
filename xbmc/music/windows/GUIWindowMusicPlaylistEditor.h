@@ -1,24 +1,12 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include "GUIWindowMusicBase.h"
 
@@ -31,18 +19,19 @@ public:
   ~CGUIWindowMusicPlaylistEditor(void) override;
 
   bool OnMessage(CGUIMessage& message) override;
+  bool OnAction(const CAction &action) override;
+  bool OnClick(int iItem, const std::string &player = "") override;
   bool OnBack(int actionID) override;
 
 protected:
   bool GetDirectory(const std::string &strDirectory, CFileItemList &items) override;
   void UpdateButtons() override;
   bool Update(const std::string &strDirectory, bool updateFilterPath = true) override;
-  void OnPrepareFileItems(CFileItemList &items) override;
-  void GetContextButtons(int itemNumber, CContextButtons &buttons) override;
-  bool OnContextButton(int itemNumber, CONTEXT_BUTTON button) override;
-  void OnQueueItem(int iItem) override;
-  std::string GetStartFolder(const std::string &dir) override { return ""; };
+  void OnPrepareFileItems(CFileItemList& items) override;
+  void OnQueueItem(int iItem, bool first = false) override;
+  std::string GetStartFolder(const std::string& dir) override { return ""; }
 
+  void OnSourcesContext();
   void OnPlaylistContext();
   int GetCurrentPlaylistItem();
   void OnDeletePlaylistItem(int item);

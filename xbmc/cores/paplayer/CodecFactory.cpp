@@ -1,52 +1,40 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
 #include "CodecFactory.h"
+
+#include "ServiceBroker.h"
 #include "URL.h"
 #include "VideoPlayerCodec.h"
-#include "utils/StringUtils.h"
 #include "addons/AudioDecoder.h"
-#include "addons/binary-addons/BinaryAddonBase.h"
-#include "ServiceBroker.h"
+#include "addons/ExtsMimeSupportList.h"
+#include "addons/addoninfo/AddonType.h"
+#include "utils/StringUtils.h"
 
-using namespace ADDON;
+using namespace KODI::ADDONS;
 
-ICodec* CodecFactory::CreateCodec(const std::string &strFileType)
+ICodec* CodecFactory::CreateCodec(const CURL& urlFile)
 {
-  std::string fileType = strFileType;
+  std::string fileType = urlFile.GetFileType();
   StringUtils::ToLower(fileType);
 
-  BinaryAddonBaseList addonInfos;
-  CServiceBroker::GetBinaryAddonManager().GetAddonInfos(addonInfos, true, ADDON_AUDIODECODER);
+  auto addonInfos = CServiceBroker::GetExtsMimeSupportList().GetExtensionSupportedAddonInfos(
+      "." + fileType, CExtsMimeSupportList::FilterSelect::all);
   for (const auto& addonInfo : addonInfos)
   {
-    if (CAudioDecoder::GetExtensions(addonInfo).find("."+fileType) != std::string::npos)
+    // Check asked and given extension is supported by only for here allowed audiodecoder addons.
+    if (addonInfo.first == ADDON::AddonType::AUDIODECODER)
     {
-      CAudioDecoder* result = new CAudioDecoder(addonInfo);
+      std::unique_ptr<CAudioDecoder> result = std::make_unique<CAudioDecoder>(addonInfo.second);
       if (!result->CreateDecoder())
-      {
-        delete result;
-        return nullptr;
-      }
-      return result;
+        continue;
+
+      return result.release();
     }
   }
 
@@ -61,19 +49,18 @@ ICodec* CodecFactory::CreateCodecDemux(const CFileItem& file, unsigned int filec
   StringUtils::ToLower(content);
   if (!content.empty())
   {
-    BinaryAddonBaseList addonInfos;
-    CServiceBroker::GetBinaryAddonManager().GetAddonInfos(addonInfos, true, ADDON_AUDIODECODER);
+    auto addonInfos = CServiceBroker::GetExtsMimeSupportList().GetMimetypeSupportedAddonInfos(
+        content, CExtsMimeSupportList::FilterSelect::all);
     for (const auto& addonInfo : addonInfos)
     {
-      if (CAudioDecoder::GetMimetypes(addonInfo).find(content) != std::string::npos)
+      // Check asked and given mime type is supported by only for here allowed audiodecoder addons.
+      if (addonInfo.first == ADDON::AddonType::AUDIODECODER)
       {
-        CAudioDecoder* result = new CAudioDecoder(addonInfo);
-        if (!result->CreateDecoder())
-        {
-          delete result;
-          return nullptr;
-        }
-        return result;
+        std::unique_ptr<CAudioDecoder> result = std::make_unique<CAudioDecoder>(addonInfo.second);
+        if (!result->CreateDecoder() && result->SupportsFile(file.GetPath()))
+          continue;
+
+        return result.release();
       }
     }
   }
@@ -89,8 +76,8 @@ ICodec* CodecFactory::CreateCodecDemux(const CFileItem& file, unsigned int filec
       content == "application/ogg"  ||
       content == "audio/ogg"        ||
       content == "audio/x-xbmc-pcm" ||
-      content == "audio/flac"       || 
-      content == "audio/x-flac"     || 
+      content == "audio/flac"       ||
+      content == "audio/x-flac"     ||
       content == "application/x-flac"
       )
   {
@@ -120,6 +107,6 @@ ICodec* CodecFactory::CreateCodecDemux(const CFileItem& file, unsigned int filec
     return dvdcodec;
   }
   else
-    return CreateCodec(urlFile.GetFileType());
+    return CreateCodec(urlFile);
 }
 

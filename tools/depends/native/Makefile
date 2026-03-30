@@ -4,43 +4,109 @@ ifneq ($(shell test -f $(NATIVEPREFIX)/share/config.site && echo 1),1)
   $(error Error: $(NATIVEPREFIX)/share/config.site  is missing. Please reconfigure depends to generate it)
 endif
 
-NATIVE= m4-native gettext-native autoconf-native automake-native \
-        libtool-native pkg-config-native yasm-native cmake-native \
-        gas-preprocessor-native python27-native zlib-native \
-        pcre-native swig-native \
-        libpng-native libjpeg-turbo-native liblzo2-native giflib-native \
-        distribute-native distutilscross-native JsonSchemaBuilder TexturePacker \
-        google-breakpad-native
+# Keep in alphabetical order
+NATIVE= \
+  autoconf \
+  autoconf-archive \
+  automake \
+  cmake \
+  bison \
+  gas-preprocessor \
+  gettext \
+  giflib \
+  heimdal \
+  libjpeg-turbo \
+  liblzo2 \
+  libpng \
+  libtool \
+  m4 \
+  meson \
+  nasm \
+  ninja \
+  openssl \
+  pcre2 \
+  perlmodule-parseyapp \
+  pythonmodule-pybind11 \
+  pythonmodule-setuptools \
+  pkg-config \
+  python3 \
+  swig \
+  TexturePacker \
+  zlib
 
-
-ifeq ($(OS),ios)
-  NATIVE += dpkg-native xz-native tar-native fakeroot-native gen_entitlements-native ldid-native
+ifneq ($(NATIVE_OS),osx)
+  NATIVE += libffi
+  LIBFFI = libffi
 endif
 
-ifeq ($(OS),osx)
-  NATIVE += xz-native tar-native
+ifeq ($(OS),darwin_embedded)
+  NATIVE += dpkg xz tar ldid
 endif
 
-.PHONY: $(NATIVE) native
+ifeq ($(OS),linux)
+  NATIVE += expat wayland-scanner pugixml waylandpp-scanner
+  EXPAT = expat
+
+  ifeq ($(RENDER_SYSTEM),gles)
+    NATIVE += MarkupSafe Mako
+  endif
+
+  ifeq ($(TARGET_PLATFORM),webos)
+    NATIVE += rustup cargo-c
+  endif
+endif
+
+ifeq ($(OS),android)
+  NATIVE += rustup cargo-c
+endif
+
+.PHONY: $(NATIVE) native download $(DOWNLOAD_TARGETS)
 
 all: native
 	@echo "Dependencies built successfully."
 
+DOWNLOAD_TARGETS := $(addprefix download/, $(NATIVE))
+
+$(DOWNLOAD_TARGETS):
+	$(MAKE) -C $(notdir $@) download
+
+download: $(DOWNLOAD_TARGETS)
+
 # Dependency layout for parallel builds
-autoconf-native: m4-native
-automake-native: autoconf-native
-libtool-native: automake-native
-libpng-native: zlib-native
-swig-native: pcre-native
-distribute-native: python27-native
-distutilscross-native: python27-native distribute-native
-tar-native: xz-native automake-native
-python27-native: zlib-native
+autoconf-archive: autoconf
+autoconf: m4
+automake: autoconf
+bison: gettext
+cargo-c: pkg-config openssl rustup
+dpkg: automake gettext libtool pkg-config tar
+heimdal: libtool
+JsonSchemaBuilder: cmake
+libjpeg-turbo: cmake nasm
+libpng: zlib automake
+libtool: automake
+Mako: MarkupSafe
+meson: python3 pythonmodule-setuptools
+ninja: meson
+openssl: zlib
+pcre2: cmake
+pkgconf: meson ninja
+pugixml: cmake
+python3: $(EXPAT) $(LIBFFI) pkg-config zlib openssl autoconf-archive
+pythonmodule-pybind11: pythonmodule-setuptools python3
+pythonmodule-setuptools: python3
+swig: bison cmake pcre2
+tar: xz automake
+TexturePacker: cmake libpng liblzo2 giflib libjpeg-turbo
+wayland-scanner: expat ninja pkg-config
+waylandpp-scanner: cmake pugixml
+
+# python installs are not thread safe when using easy_install method.
+# MarkupSafe doesn't really depend on ninja but we need to make the
+# build sequential
+MarkupSafe: ninja
 
 #liblzo2 has stale packaged automake files that cause borked host/build detection
-liblzo2-native: automake-native
-JsonSchemaBuilder: automake-native
-TexturePacker: automake-native pkg-config-native libpng-native liblzo2-native giflib-native libjpeg-turbo-native
+liblzo2: automake
 
 native: $(NATIVE)
 $(NATIVE):

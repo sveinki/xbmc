@@ -1,27 +1,35 @@
-set(SOURCES PVRActionListener.cpp
-            PVRGUIInfo.cpp
-            PVRManager.cpp
-            PVRDatabase.cpp
-            PVRSettings.cpp
-            PVRContextMenus.cpp
-            PVRGUIActions.cpp
-            PVRItem.cpp
+set(SOURCES PVRCachedImage.cpp
+	    PVRCachedImages.cpp
+            PVRChannelGroupImageFileLoader.cpp
             PVRChannelNumberInputHandler.cpp
-            PVRJobs.cpp
-            PVRGUIChannelNavigator.cpp)
+            PVRComponentRegistration.cpp
+            PVRContextMenus.cpp
+            PVRDatabase.cpp
+            PVREdl.cpp
+            PVREventLogJob.cpp
+            PVRItem.cpp
+            PVRManager.cpp
+            PVRPlaybackState.cpp
+            PVRStreamProperties.cpp
+            PVRThumbLoader.cpp)
 
-set(HEADERS PVRActionListener.h
-            PVRDatabase.h
-            PVREvent.h
-            PVRGUIInfo.h
-            PVRManager.h
-            PVRSettings.h
-            PVRContextMenus.h
-            PVRGUIActions.h
-            PVRItem.h
-            PVRTypes.h
+set(HEADERS IPVRComponent.h
+            PVRCachedImage.h
+            PVRCachedImages.h
+            PVRChannelGroupImageFileLoader.h
             PVRChannelNumberInputHandler.h
-            PVRJobs.h
-            PVRGUIChannelNavigator.h)
+            PVRComponentRegistration.h
+            PVRConstants.h
+            PVRContextMenus.h
+            PVRDatabase.h
+            PVRDescrambleInfo.h
+            PVREdl.h
+            PVREventLogJob.h
+            PVRItem.h
+            PVRManager.h
+            PVRPlaybackState.h
+            PVRSignalStatus.h
+            PVRStreamProperties.h
+            PVRThumbLoader.h)
 
 core_add_library(pvr)

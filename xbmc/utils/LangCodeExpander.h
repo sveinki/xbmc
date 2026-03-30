@@ -1,23 +1,12 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
 
 #include <map>
 #include <string>
@@ -38,6 +27,20 @@ public:
     ENGLISH_NAME
   };
 
+  enum class LANG_LIST
+  {
+    // Standard ISO
+    DEFAULT,
+    // Standard ISO + Language addons
+    INCLUDE_ADDONS,
+    // Standard ISO + User defined
+    // (User defined can override language name of existing codes)
+    INCLUDE_USERDEFINED,
+    // Standard ISO + Language addons + User defined
+    // (User defined can override language name of existing codes)
+    INCLUDE_ADDONS_USERDEFINED,
+  };
+
   void LoadUserCodes(const TiXmlElement* pRootElement);
   void Clear();
 
@@ -49,7 +52,7 @@ public:
   *   \param[in] lang2 The second language string to compare given as english language name.
   *   \return true if the two language strings represent the same language, false otherwise.
   *   For example "Abkhaz" and "Abkhazian" represent the same language.
-  */ 
+  */
   bool CompareFullLanguageNames(const std::string& lang1, const std::string& lang2);
 
   /** \brief Determines if two languages given as ISO 639-1, ISO 639-2/T, or ISO 639-2/B codes represent the same language.
@@ -57,16 +60,16 @@ public:
   *   \param[in] code2 The second language to compare given as ISO 639-1, ISO 639-2/T, or ISO 639-2/B code.
   *   \return true if the two language codes represent the same language, false otherwise.
   *   For example "ger", "deu" and "de" represent the same language.
-  */ 
+  */
   bool CompareISO639Codes(const std::string& code1, const std::string& code2);
 
   /** \brief Converts a language given as 2-Char (ISO 639-1),
   *          3-Char (ISO 639-2/T or ISO 639-2/B),
-  *          or full english name string to a 2-Char (ISO 639-1) code.  
+  *          or full english name string to a 2-Char (ISO 639-1) code.
   *   \param[out] code The 2-Char language code of the given language lang.
   *   \param[in] lang The language that should be converted.
-  *   \return true if the conversion succeeded, false otherwise. 
-  */ 
+  *   \return true if the conversion succeeded, false otherwise.
+  */
   bool ConvertToISO6391(const std::string& lang, std::string& code);
 
   /** \brief Converts a language given as 2-Char (ISO 639-1),
@@ -84,6 +87,14 @@ public:
   *   \return true if the conversion succeeded, false otherwise.
   */
   static bool ConvertISO6391ToISO6392B(const std::string& strISO6391, std::string& strISO6392B, bool checkWin32Locales = false);
+
+  /*!
+   * \brief Converts a language given as 3-Char (ISO 639-2/B or /T) to a 2-Char (ISO 639-1) code.
+   * \param[in] iso6392 The language that should be converted. Case-insensitive.
+   * \param[out] iso6391 The 2-Char (ISO 639-1) language code of the given language.
+   * \return true if the conversion succeeded, false otherwise.
+   */
+  static bool ConvertISO6392ToISO6391(std::string iso6392, std::string& iso6391);
 
   /** \brief Converts a language given as 2-Char (ISO 639-1),
   *          3-Char (ISO 639-2/T or ISO 639-2/B),
@@ -113,30 +124,60 @@ public:
   */
   std::string ConvertToISO6392T(const std::string& lang);
 
+  /*
+   * \brief Find a language code with subtag (e.g. zh-tw, zh-Hans) in to a string.
+   *        This function find a limited set of IETF BCP47 specs, so:
+   *        language tag + region subtag, or, language tag + script subtag.
+   *        The language code can be found if wrapped by curly brackets e.g. {pt-br}.
+   * \param str The string where find the language code.
+   * \return The language code found in the string, otherwise empty string
+   */
+  static std::string FindLanguageCodeWithSubtag(const std::string& str);
+
 #ifdef TARGET_WINDOWS
   static bool ConvertISO31661Alpha2ToISO31661Alpha3(const std::string& strISO31661Alpha2, std::string& strISO31661Alpha3);
   static bool ConvertWindowsLanguageCodeToISO6392B(const std::string& strWindowsLanguageCode, std::string& strISO6392B);
 #endif
 
-  std::vector<std::string> GetLanguageNames(LANGFORMATS format = ISO_639_1, bool customNames = false);
+  /*
+   * \brief Get the list of language names.
+   * \param format [OPT] The format type.
+   * \param list [OPT] The type of language list to retrieve.
+   * \return The languages
+   */
+  std::vector<std::string> GetLanguageNames(LANGFORMATS format = ISO_639_1,
+                                            LANG_LIST list = LANG_LIST::DEFAULT);
+
+  /*
+   * \brief Converts a language given as 2-Char (ISO 639-1),
+   *        3-Char (ISO 639-2/T, ISO 639-2/B), BCP 47 language tag
+   *        or full English name string to a BCP 47 tag.
+   * \param[in] text The language to convert
+   * \param[out] bcp47 The BCP47 language tag
+   * \return true if the conversion succeeded, false otherwise.
+   */
+  bool ConvertToBcp47(const std::string& text, std::string& bcp47);
+
 protected:
-
-  /** \brief Converts a language code given as a long, see #MAKECODE(a, b, c, d)
-  *          to its string representation.
-  *   \param[in] code The language code given as a long, see #MAKECODE(a, b, c, d).
-  *   \param[out] ret The string representation of the given language code code.
-  */ 
-  static void CodeToString(long code, std::string& ret);
-
   static bool LookupInISO639Tables(const std::string& code, std::string& desc);
+
+  /*
+   * \brief Looks up the language description for given language code
+   *        in to the installed language addons.
+   * \param[in] code The language code for which description is looked for.
+   * \param[out] desc The english language name.
+   * \return true if the language description was found, false otherwise.
+   */
+  static bool LookupInLangAddons(const std::string& code, std::string& desc);
+
   bool LookupInUserMap(const std::string& code, std::string& desc);
 
-  /** \brief Looks up the ISO 639-1, ISO 639-2/T, or ISO 639-2/B, whichever it finds first,
-  *          code of the given english language name.
+  /** \brief Looks up the ISO 639-1 or ISO 639-2/T, whichever it finds first, code of the given
+             english language name.
   *   \param[in] desc The english language name for which a code is looked for.
-  *   \param[out] code The ISO 639-1, ISO 639-2/T, or ISO 639-2/B code of the given language desc.
-  *   \return true if the a code was found, false otherwise.
-  */ 
+  *   \param[out] code The ISO 639-1 or ISO 639-2/T code of the given language desc.
+  *   \return true if a code was found, false otherwise.
+  */
   bool ReverseLookup(const std::string& desc, std::string& code);
 
 
@@ -146,6 +187,15 @@ protected:
   *   \return true if desc was found, false otherwise.
   */
   bool LookupUserCode(const std::string& desc, std::string &userCode);
+
+  /*!
+   * \brief Converts a language given as 3-Char (ISO 639-2/B or /T) to a 2-Char (ISO 639-1) code.
+   *        Function meant to be used internally for an already validated input
+   * \param[in] iso6392 The language that should be converted. Must be trimmed and lowercased.
+   * \param[out] iso6391 The 2-Char (ISO 639-1) language code of the given language.
+   * \return true if the conversion succeeded, false otherwise.
+   */
+  static bool ConvertISO6392ToISO6391Internal(const std::string& iso6392, std::string& iso6391);
 
   typedef std::map<std::string, std::string> STRINGLOOKUPTABLE;
   STRINGLOOKUPTABLE m_mapUser;

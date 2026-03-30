@@ -1,10 +1,106 @@
-v0.3.17
+v0.5.25
+- add Kodi 19.5 release
+- Update translations from Weblate
+
+v0.5.24
+- add Kodi 20 RC1 release
+- Update translations from Weblate
+
+v0.5.23
+- add Kodi 20 Alpha1 release
+- Update translations from Weblate
+
+v0.5.22
+- add Kodi 19.4 release
+- fix potential UnicodeDecodeError in distro |contrib: mvn23|
+- Update translations from Weblate
+
+v0.5.21
+- add Kodi 19.3 release
+- Update translations from Weblate
+
+v0.5.20
+- add Kodi 19.2 release
+- Update translations from Weblate
+
+v0.5.19
+- add Kodi 19.1 release
+
+v0.5.18
+- Update translations from Weblate
+
+v0.5.17
+- Fix-up exception on non linux platforms due to missing variable definition
+
+v0.5.16
+- Bump minimum Kodi version from Gotham to Leia
+
+v0.5.15
+- Fix exec of linux specific code path on windows
+
+v0.5.14
+- add Kodi 19.0 release
+
+v0.5.13
+- add Kodi 19.0 rc1 release
+
+v0.5.12
+- add Kodi 19.0 beta2 release
+
+v0.5.11
+- add Kodi 19.0 beta1 release
+
+v0.5.10
+- add Kodi 19.0 alpha3 release
+
+v0.5.9
+- add Kodi 18.9 release
+- fixup Kodi 19 pre alpha2 translatePath
+
+v0.5.7 - 0.5.8
+- add Kodi 19.0 alpha2 release
+- use xbmcvfs for translatePath for matrix
+- fix platforms where subprocess is not available
+- fix dialogs on Kodi 19
+
+v0.5.6
+- add Kodi 18.8 stable release
+- add Kodi 19.0 alpha1 release
+
+v0.5.5
+- add Kodi 18.7 stable release
+
+v0.5.4
+- include distro package for Python >= v3.8 where platform.linux_distribution is removed
+
+v0.5.3
+- fix exception when distro/platform modules are unavailable
+
+v0.5.2
+- add Kodi 18.6 stable release
+
+v0.5.1
+- add Kodi 18.5 stable release
+- add json schema file for versions.txt
+- fix logic for deciding when to use distro over platform
+
+v0.5.0
+- Python 3 / Kodi 19 ready
+- Update to use SPDX license identifiers
+- Refactor
+- PEP8 and cosmetics
+- pylint 10.00/10
+
+v0.4.6 to v0.4.7
 - Update version list
 
-v0.3.16
+v0.3.26 to v0.4.5
 - Update version list
 
-v0.3.15
+v0.3.25
+- fix issue with the older python2.6
+
+v0.3.5 to v0.3.24
 - Update version list
 
 v0.3.14

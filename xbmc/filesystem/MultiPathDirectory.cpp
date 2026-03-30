@@ -1,37 +1,31 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "threads/SystemClock.h"
 #include "MultiPathDirectory.h"
+
 #include "Directory.h"
-#include "Util.h"
-#include "URL.h"
-#include "guilib/GUIWindowManager.h"
-#include "dialogs/GUIDialogProgress.h"
 #include "FileItem.h"
+#include "FileItemList.h"
+#include "ServiceBroker.h"
+#include "URL.h"
+#include "Util.h"
+#include "dialogs/GUIDialogProgress.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "threads/SystemClock.h"
 #include "utils/StringUtils.h"
-#include "utils/log.h"
-#include "utils/Variant.h"
 #include "utils/URIUtils.h"
+#include "utils/Variant.h"
+#include "utils/log.h"
 
 using namespace XFILE;
+
+using namespace std::chrono_literals;
 
 //
 // multipath://{path1}/{path2}/{path3}/.../{path-N}
@@ -46,13 +40,13 @@ CMultiPathDirectory::~CMultiPathDirectory() = default;
 
 bool CMultiPathDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 {
-  CLog::Log(LOGDEBUG,"CMultiPathDirectory::GetDirectory(%s)", url.GetRedacted().c_str());
+  CLog::Log(LOGDEBUG, "CMultiPathDirectory::GetDirectory({})", url.GetRedacted());
 
   std::vector<std::string> vecPaths;
   if (!GetPaths(url, vecPaths))
     return false;
 
-  XbmcThreads::EndTime progressTime(3000); // 3 seconds before showing progress bar
+  XbmcThreads::EndTime<> progressTime(3000ms); // 3 seconds before showing progress bar
   CGUIDialogProgress* dlgProgress = NULL;
 
   unsigned int iFailures = 0;
@@ -61,7 +55,7 @@ bool CMultiPathDirectory::GetDirectory(const CURL& url, CFileItemList &items)
     // show the progress dialog if we have passed our time limit
     if (progressTime.IsTimePast() && !dlgProgress)
     {
-      dlgProgress = g_windowManager.GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
+      dlgProgress = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
       if (dlgProgress)
       {
         dlgProgress->SetHeading(CVariant{15310});
@@ -83,12 +77,12 @@ bool CMultiPathDirectory::GetDirectory(const CURL& url, CFileItemList &items)
     }
 
     CFileItemList tempItems;
-    CLog::Log(LOGDEBUG,"Getting Directory (%s)", vecPaths[i].c_str());
+    CLog::Log(LOGDEBUG, "Getting Directory ({})", CURL::GetRedacted(vecPaths[i]));
     if (CDirectory::GetDirectory(vecPaths[i], tempItems, m_strFileMask, m_flags))
       items.Append(tempItems);
     else
     {
-      CLog::Log(LOGERROR,"Error Getting Directory (%s)", vecPaths[i].c_str());
+      CLog::Log(LOGERROR, "Error Getting Directory ({})", CURL::GetRedacted(vecPaths[i]));
       iFailures++;
     }
 
@@ -113,7 +107,7 @@ bool CMultiPathDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 
 bool CMultiPathDirectory::Exists(const CURL& url)
 {
-  CLog::Log(LOGDEBUG,"Testing Existence (%s)", url.GetRedacted().c_str());
+  CLog::Log(LOGDEBUG, "Testing Existence ({})", url.GetRedacted());
 
   std::vector<std::string> vecPaths;
   if (!GetPaths(url, vecPaths))
@@ -121,7 +115,7 @@ bool CMultiPathDirectory::Exists(const CURL& url)
 
   for (unsigned int i = 0; i < vecPaths.size(); ++i)
   {
-    CLog::Log(LOGDEBUG,"Testing Existence (%s)", vecPaths[i].c_str());
+    CLog::Log(LOGDEBUG, "Testing Existence ({})", CURL::GetRedacted(vecPaths[i]));
     if (CDirectory::Exists(vecPaths[i]))
       return true;
   }
@@ -145,7 +139,7 @@ bool CMultiPathDirectory::Remove(const CURL& url)
 
 std::string CMultiPathDirectory::GetFirstPath(const std::string &strPath)
 {
-  size_t pos = strPath.find("/", 12);
+  size_t pos = strPath.find('/', 12);
   if (pos != std::string::npos)
     return CURL::Decode(strPath.substr(12, pos - 12));
   return "";
@@ -172,7 +166,7 @@ bool CMultiPathDirectory::GetPaths(const std::string& path, std::vector<std::str
 
   // URL decode each item
   paths.resize(temp.size());
-  std::transform(temp.begin(), temp.end(), paths.begin(), CURL::Decode);
+  std::ranges::transform(temp, paths.begin(), CURL::Decode);
   return true;
 }
 
@@ -202,18 +196,18 @@ std::string CMultiPathDirectory::ConstructMultiPath(const CFileItemList& items, 
   // the paths using " , "
   //CLog::Log(LOGDEBUG, "Building multipath");
   std::string newPath = "multipath://";
-  //CLog::Log(LOGDEBUG, "-- adding path: %s", strPath.c_str());
+  //CLog::Log(LOGDEBUG, "-- adding path: {}", strPath);
   for (unsigned int i = 0; i < stack.size(); ++i)
     AddToMultiPath(newPath, items[stack[i]]->GetPath());
 
-  //CLog::Log(LOGDEBUG, "Final path: %s", newPath.c_str());
+  //CLog::Log(LOGDEBUG, "Final path: {}", newPath);
   return newPath;
 }
 
 void CMultiPathDirectory::AddToMultiPath(std::string& strMultiPath, const std::string& strPath)
 {
   URIUtils::AddSlashAtEnd(strMultiPath);
-  //CLog::Log(LOGDEBUG, "-- adding path: %s", strPath.c_str());
+  //CLog::Log(LOGDEBUG, "-- adding path: {}", strPath);
   strMultiPath += CURL::Encode(strPath);
   strMultiPath += "/";
 }
@@ -224,47 +218,47 @@ std::string CMultiPathDirectory::ConstructMultiPath(const std::vector<std::strin
   // the paths using " , "
   //CLog::Log(LOGDEBUG, "Building multipath");
   std::string newPath = "multipath://";
-  //CLog::Log(LOGDEBUG, "-- adding path: %s", strPath.c_str());
+  //CLog::Log(LOGDEBUG, "-- adding path: {}", strPath);
   for (std::vector<std::string>::const_iterator path = vecPaths.begin(); path != vecPaths.end(); ++path)
     AddToMultiPath(newPath, *path);
-  //CLog::Log(LOGDEBUG, "Final path: %s", newPath.c_str());
+  //CLog::Log(LOGDEBUG, "Final path: {}", newPath);
   return newPath;
 }
 
 std::string CMultiPathDirectory::ConstructMultiPath(const std::set<std::string> &setPaths)
 {
   std::string newPath = "multipath://";
-  for (std::set<std::string>::const_iterator path = setPaths.begin(); path != setPaths.end(); ++path)
-    AddToMultiPath(newPath, *path);
+  for (const std::string& path : setPaths)
+    AddToMultiPath(newPath, path);
 
   return newPath;
 }
 
 void CMultiPathDirectory::MergeItems(CFileItemList &items)
 {
-  CLog::Log(LOGDEBUG, "CMultiPathDirectory::MergeItems, items = %i", (int)items.Size());
-  unsigned int time = XbmcThreads::SystemClockMillis();
+  CLog::Log(LOGDEBUG, "CMultiPathDirectory::MergeItems, items = {}", items.Size());
+  auto start = std::chrono::steady_clock::now();
   if (items.Size() == 0)
     return;
   // sort items by label
   // folders are before files in this sort method
-  items.Sort(SortByLabel, SortOrderAscending);
+  items.Sort(SortBy::LABEL, SortOrder::ASCENDING);
   int i = 0;
 
   // if first item in the sorted list is a file, just abort
-  if (!items.Get(i)->m_bIsFolder)
+  if (!items.Get(i)->IsFolder())
     return;
 
   while (i + 1 < items.Size())
   {
     // there are no more folders left, so exit the loop
     CFileItemPtr pItem1 = items.Get(i);
-    if (!pItem1->m_bIsFolder)
+    if (!pItem1->IsFolder())
       break;
 
     std::vector<int> stack;
     stack.push_back(i);
-    CLog::Log(LOGDEBUG,"Testing path: [%03i] %s", i, pItem1->GetPath().c_str());
+    CLog::Log(LOGDEBUG, "Testing path: [{:03}] {}", i, CURL::GetRedacted(pItem1->GetPath()));
 
     int j = i + 1;
     do
@@ -278,7 +272,7 @@ void CMultiPathDirectory::MergeItems(CFileItemList &items)
       if (!pItem2->IsFileFolder())
       {
         stack.push_back(j);
-        CLog::Log(LOGDEBUG,"  Adding path: [%03i] %s", j, pItem2->GetPath().c_str());
+        CLog::Log(LOGDEBUG, "  Adding path: [{:03}] {}", j, CURL::GetRedacted(pItem2->GetPath()));
       }
       j++;
     }
@@ -292,15 +286,17 @@ void CMultiPathDirectory::MergeItems(CFileItemList &items)
       for (unsigned int k = stack.size() - 1; k > 0; --k)
         items.Remove(stack[k]);
       pItem1->SetPath(newPath);
-      CLog::Log(LOGDEBUG,"  New path: %s", pItem1->GetPath().c_str());
+      CLog::Log(LOGDEBUG, "  New path: {}", CURL::GetRedacted(pItem1->GetPath()));
     }
 
     i++;
   }
 
-  CLog::Log(LOGDEBUG,
-            "CMultiPathDirectory::MergeItems, items = %i,  took %d ms",
-            items.Size(), XbmcThreads::SystemClockMillis() - time);
+  auto end = std::chrono::steady_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  CLog::Log(LOGDEBUG, "CMultiPathDirectory::MergeItems, items = {},  took {} ms", items.Size(),
+            duration.count());
 }
 
 bool CMultiPathDirectory::SupportsWriteFileOperations(const std::string &strPath)

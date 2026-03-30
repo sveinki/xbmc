@@ -1,31 +1,20 @@
 /*
-*      Copyright (C) 2017 Team XBMC
-*      http://xbmc.org
-*
-*  This Program is free software; you can redistribute it and/or modify
-*  it under the terms of the GNU General Public License as published by
-*  the Free Software Foundation; either version 2, or (at your option)
-*  any later version.
-*
-*  This Program is distributed in the hope that it will be useful,
-*  but WITHOUT ANY WARRANTY; without even the implied warranty of
-*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-*  GNU General Public License for more details.
-*
-*  You should have received a copy of the GNU General Public License
-*  along with XBMC; see the file COPYING.  If not, see
-*  <http://www.gnu.org/licenses/>.
-*
-*/
+ *  Copyright (C) 2017-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
 
 #include "BitstreamReader.h"
 
-CBitstreamReader::CBitstreamReader(const uint8_t *buf, int len)
-  : buffer(buf)
-  , start(buf)
-  , offbits(0)
-  , length(len)
-  , oflow(0)
+extern "C"
+{
+#include <libavutil/intreadwrite.h>
+}
+
+CBitstreamReader::CBitstreamReader(const uint8_t* buf, int len)
+  : buffer(buf), start(buf), length(len)
 {
 }
 
@@ -37,6 +26,8 @@ uint32_t CBitstreamReader::ReadBits(int nbits)
   buffer += offbits / 8;
   offbits %= 8;
 
+  m_posBits += nbits;
+
   return ret;
 }
 
@@ -45,6 +36,8 @@ void CBitstreamReader::SkipBits(int nbits)
   offbits += nbits;
   buffer += offbits / 8;
   offbits %= 8;
+
+  m_posBits += nbits;
 
   if (buffer > (start + length))
     oflow = 1;
@@ -102,7 +95,7 @@ const uint8_t* find_start_code(const uint8_t *p, const uint8_t *end, uint32_t *s
   }
 
   p = (p < end)? p - 4 : end - 4;
-  *state = BS_RB32(p);
+  *state = AV_RB32(p);
 
   return p + 4;
 }

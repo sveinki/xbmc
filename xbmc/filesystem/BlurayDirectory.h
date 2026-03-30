@@ -1,66 +1,65 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "Directory.h"
-#include "FileItem.h"
-#include "URL.h"
+#pragma once
 
-class  DllLibbluray;
-typedef struct bluray BLURAY;
-typedef struct bd_title_info BLURAY_TITLE_INFO;
+#include "DiscDirectoryHelper.h"
+#include "IDirectory.h"
+#include "URL.h"
+#include "bluray/MPLSParser.h"
+
+#include <map>
+#include <string>
+
+#include <libbluray/bluray.h>
+
+class CFileItem;
+class CFileItemList;
 
 namespace XFILE
 {
+using namespace std::chrono_literals;
 
-class CBlurayDirectory: public XFILE::IDirectory
+class CBlurayDirectory : public IDirectory
 {
 public:
   CBlurayDirectory();
   ~CBlurayDirectory() override;
-  bool GetDirectory(const CURL& url, CFileItemList &items) override;
+  CBlurayDirectory(const CBlurayDirectory&) = delete;
+  CBlurayDirectory& operator=(const CBlurayDirectory&) = delete;
+  CBlurayDirectory(CBlurayDirectory&&) noexcept = default;
+  CBlurayDirectory& operator=(CBlurayDirectory&&) noexcept = default;
+
+  bool GetDirectory(const CURL& url, CFileItemList& items) override;
+  bool Resolve(CFileItem& item) const override;
 
   bool InitializeBluray(const std::string &root);
-  std::string GetBlurayTitle();
-  std::string GetBlurayID();
+  static std::string GetBasePath(const CURL& url);
+  std::string GetBlurayTitle() const;
+  std::string GetBlurayID() const;
 
 private:
-  enum class DiscInfo
+  enum class DiscInfo : uint8_t
   {
     TITLE,
     ID
   };
 
-  void         Dispose();
-  std::string  GetDiscInfoString(DiscInfo info);
-  void         GetRoot  (CFileItemList &items);
-  void         GetTitles(bool main, CFileItemList &items);
-  std::vector<BLURAY_TITLE_INFO*> GetUserPlaylists();
-  CFileItemPtr GetTitle(const BLURAY_TITLE_INFO* title, const std::string& label);
-  CURL         GetUnderlyingCURL(const CURL& url);
-  std::string  HexToString(const uint8_t * buf, int count);
-  CURL          m_url;
-  DllLibbluray* m_dll;
-  BLURAY*       m_bd;
-  bool          m_blurayInitialized = false;
-};
+  void Dispose();
+  std::string GetDiscInfoString(DiscInfo info) const;
+  const BLURAY_DISC_INFO* GetDiscInfo() const;
 
-}
+  CURL m_url;
+  std::string m_realPath;
+  BLURAY* m_bd{nullptr};
+  bool m_blurayInitialized{false};
+  bool m_blurayMenuSupport{false};
+
+  std::map<unsigned int, ClipInformation> m_clipCache;
+};
+} // namespace XFILE

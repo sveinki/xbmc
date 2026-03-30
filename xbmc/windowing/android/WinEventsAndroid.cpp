@@ -1,33 +1,22 @@
 /*
- *      Copyright (C) 2010-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2010-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
-
-#include "system.h"
 
 #include "WinEventsAndroid.h"
 
-#include "Application.h"
+#include "ServiceBroker.h"
+#include "application/AppInboundProtocol.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "input/InputManager.h"
-#include "input/XBMC_vkeys.h"
+#include "input/keyboard/XBMC_vkeys.h"
 #include "utils/log.h"
-#include "windowing/WindowingFactory.h"
+
+#include <mutex>
 
 #define ALMOST_ZERO 0.125f
 enum {
@@ -64,14 +53,14 @@ CWinEventsAndroid::~CWinEventsAndroid()
 
 void CWinEventsAndroid::MessagePush(XBMC_Event *newEvent)
 {
-  CSingleLock lock(m_eventsCond);
+  std::unique_lock lock(m_eventsCond);
 
   m_events.push_back(*newEvent);
 }
 
 void CWinEventsAndroid::MessagePushRepeat(XBMC_Event *repeatEvent)
 {
-  CSingleLock lock(m_eventsCond);
+  std::unique_lock lock(m_eventsCond);
 
   std::list<XBMC_Event>::iterator itt;
   for (itt = m_events.begin(); itt != m_events.end(); ++itt)
@@ -100,17 +89,19 @@ bool CWinEventsAndroid::MessagePump()
     // deeper message loop and call the deeper MessagePump from there.
     XBMC_Event pumpEvent;
     {
-      CSingleLock lock(m_eventsCond);
+      std::unique_lock lock(m_eventsCond);
       if (m_events.empty())
         return ret;
       pumpEvent = m_events.front();
       m_events.pop_front();
     }
 
-    ret |= g_application.OnEvent(pumpEvent);
+    std::shared_ptr<CAppInboundProtocol> appPort = CServiceBroker::GetAppPort();
+    if (appPort)
+      ret |= appPort->OnEvent(pumpEvent);
 
     if (pumpEvent.type == XBMC_MOUSEBUTTONUP)
-      g_windowManager.SendMessage(GUI_MSG_UNFOCUS_ALL, 0, 0, 0, 0);
+      CServiceBroker::GetGUI()->GetWindowManager().SendMessage(GUI_MSG_UNFOCUS_ALL, 0, 0, 0, 0);
   }
 
   return ret;
@@ -118,7 +109,7 @@ bool CWinEventsAndroid::MessagePump()
 
 size_t CWinEventsAndroid::GetQueueSize()
 {
-  CSingleLock lock(m_eventsCond);
+  std::unique_lock lock(m_eventsCond);
   return m_events.size();
 }
 
@@ -134,9 +125,9 @@ void CWinEventsAndroid::Process()
   while (!m_bStop)
   {
     // run a 10ms (timeout) wait cycle
-    Sleep(timeout);
+    CThread::Sleep(std::chrono::milliseconds(timeout));
 
-    CSingleLock lock(m_lasteventCond);
+    std::unique_lock lock(m_lasteventCond);
 
     switch(state)
     {
@@ -164,7 +155,8 @@ void CWinEventsAndroid::Process()
 
         if (repeatDuration >= holdTimeout)
         {
-          CLog::Log(LOGDEBUG, "hold  ->repeat, size(%d), repeatDuration(%d)", m_lastevent.size(), repeatDuration);
+          CLog::Log(LOGDEBUG, "hold  ->repeat, size({}), repeatDuration({})", m_lastevent.size(),
+                    repeatDuration);
           state = EVENT_STATE_REPEAT;
         }
         break;

@@ -1,96 +1,75 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "GUIIncludes.h"
-#include "addons/Skin.h"
+
 #include "GUIInfoManager.h"
-#include "GUIInfoTypes.h"
-#include "utils/log.h"
+#include "ServiceBroker.h"
+#include "URL.h"
+#include "addons/Skin.h"
+#include "filesystem/ResourceFile.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/guiinfo/GUIInfoLabel.h"
+#include "interfaces/info/SkinVariable.h"
+#include "utils/Set.h"
+#include "utils/StringUtils.h"
 #include "utils/XBMCTinyXML.h"
 #include "utils/XMLUtils.h"
-#include "utils/StringUtils.h"
-#include "interfaces/info/SkinVariable.h"
+#include "utils/log.h"
 
-CGUIIncludes::CGUIIncludes()
+#include <algorithm>
+
+namespace
 {
-  m_constantAttributes.insert("x");
-  m_constantAttributes.insert("y");
-  m_constantAttributes.insert("width");
-  m_constantAttributes.insert("height");
-  m_constantAttributes.insert("center");
-  m_constantAttributes.insert("max");
-  m_constantAttributes.insert("min");
-  m_constantAttributes.insert("w");
-  m_constantAttributes.insert("h");
-  m_constantAttributes.insert("time");
-  m_constantAttributes.insert("acceleration");
-  m_constantAttributes.insert("delay");
-  m_constantAttributes.insert("start");
-  m_constantAttributes.insert("end");
-  m_constantAttributes.insert("center");
-  m_constantAttributes.insert("border");
-  m_constantAttributes.insert("repeat");
 
-  m_constantNodes.insert("posx");
-  m_constantNodes.insert("posy");
-  m_constantNodes.insert("left");
-  m_constantNodes.insert("centerleft");
-  m_constantNodes.insert("right");
-  m_constantNodes.insert("centerright");
-  m_constantNodes.insert("top");
-  m_constantNodes.insert("centertop");
-  m_constantNodes.insert("bottom");
-  m_constantNodes.insert("centerbottom");
-  m_constantNodes.insert("width");
-  m_constantNodes.insert("height");
-  m_constantNodes.insert("offsetx");
-  m_constantNodes.insert("offsety");
-  m_constantNodes.insert("textoffsetx");
-  m_constantNodes.insert("textoffsety");
-  m_constantNodes.insert("textwidth");
-  m_constantNodes.insert("spinposx");
-  m_constantNodes.insert("spinposy");
-  m_constantNodes.insert("spinwidth");
-  m_constantNodes.insert("spinheight");
-  m_constantNodes.insert("radioposx");
-  m_constantNodes.insert("radioposy");
-  m_constantNodes.insert("radiowidth");
-  m_constantNodes.insert("radioheight");
-  m_constantNodes.insert("sliderwidth");
-  m_constantNodes.insert("sliderheight");
-  m_constantNodes.insert("itemgap");
-  m_constantNodes.insert("bordersize");
-  m_constantNodes.insert("timeperimage");
-  m_constantNodes.insert("fadetime");
-  m_constantNodes.insert("pauseatend");
-  m_constantNodes.insert("depth");
-  m_constantNodes.insert("movement");
-  m_constantNodes.insert("focusposition");
+constexpr auto CONSTANT_ATTRIBUTES = make_set<std::string_view>({
+    "acceleration",
+    "border",
+    "center",
+    "delay",
+    "end",
+    "h",
+    "height",
+    "max",
+    "min",
+    "repeat",
+    "start",
+    "time",
+    "w",
+    "width",
+    "x",
+    "y",
 
-  m_expressionAttributes.insert("condition");
+});
 
-  m_expressionNodes.insert("visible");
-  m_expressionNodes.insert("enable");
-  m_expressionNodes.insert("usealttexture");
-  m_expressionNodes.insert("selected");
-}
+constexpr auto CONSTANT_NODES = make_set<std::string_view>({
+    "bordersize",  "bottom",     "centerbottom",  "centerleft", "centerright", "centertop",
+    "depth",       "fadetime",   "focusposition", "height",     "itemgap",     "left",
+    "movement",    "offsetx",    "offsety",       "pauseatend", "posx",        "posy",
+    "radioheight", "radioposx",  "radioposy",     "radiowidth", "right",       "sliderheight",
+    "sliderwidth", "spinheight", "spinposx",      "spinposy",   "spinwidth",   "textoffsetx",
+    "textoffsety", "textwidth",  "timeperimage",  "top",        "width",
+});
+
+constexpr std::string_view EXPRESSION_ATTRIBUTE = "condition";
+
+constexpr auto EXPRESSION_NODES = make_set<std::string_view>({
+    "enable",
+    "selected",
+    "usealttexture",
+    "visible",
+});
+
+} // namespace
+
+using namespace KODI::GUILIB;
+
+CGUIIncludes::CGUIIncludes() = default;
 
 CGUIIncludes::~CGUIIncludes() = default;
 
@@ -121,14 +100,15 @@ bool CGUIIncludes::Load_Internal(const std::string &file)
   CXBMCTinyXML doc;
   if (!doc.LoadFile(file))
   {
-    CLog::Log(LOGINFO, "Error loading include file %s: %s (row: %i, col: %i)", file.c_str(), doc.ErrorDesc(), doc.ErrorRow(), doc.ErrorCol());
+    CLog::Log(LOGINFO, "Error loading include file {}: {} (row: {}, col: {})", file,
+              doc.ErrorDesc(), doc.ErrorRow(), doc.ErrorCol());
     return false;
   }
 
   TiXmlElement *root = doc.RootElement();
   if (!root || !StringUtils::EqualsNoCase(root->Value(), "includes"))
   {
-    CLog::Log(LOGERROR, "Error loading include file %s: Root element <includes> required.", file.c_str());
+    CLog::Log(LOGERROR, "Error loading include file {}: Root element <includes> required.", file);
     return false;
   }
 
@@ -148,13 +128,13 @@ void CGUIIncludes::LoadDefaults(const TiXmlElement *node)
 {
   if (!node)
     return;
-  
+
   const TiXmlElement* child = node->FirstChildElement("default");
   while (child)
   {
     const char *type = child->Attribute("type");
     if (type && child->FirstChild())
-      m_defaults.insert(std::make_pair(type, *child));
+      m_defaults.try_emplace(type, *child);
 
     child = child->NextSiblingElement("default");
   }
@@ -170,7 +150,7 @@ void CGUIIncludes::LoadExpressions(const TiXmlElement *node)
   {
     const char *tagName = child->Attribute("name");
     if (tagName && child->FirstChild())
-      m_expressions.insert(std::make_pair(tagName, "[" + child->FirstChild()->ValueStr() + "]"));
+      m_expressions.try_emplace(tagName, "[" + child->FirstChild()->ValueStr() + "]");
 
     child = child->NextSiblingElement("expression");
   }
@@ -187,7 +167,7 @@ void CGUIIncludes::LoadConstants(const TiXmlElement *node)
   {
     const char *tagName = child->Attribute("name");
     if (tagName && child->FirstChild())
-      m_constants.insert(std::make_pair(tagName, child->FirstChild()->ValueStr()));
+      m_constants.try_emplace(tagName, child->FirstChild()->ValueStr());
 
     child = child->NextSiblingElement("constant");
   }
@@ -203,7 +183,7 @@ void CGUIIncludes::LoadVariables(const TiXmlElement *node)
   {
     const char *tagName = child->Attribute("name");
     if (tagName && child->FirstChild())
-      m_skinvariables.insert(std::make_pair(tagName, *child));
+      m_skinvariables.try_emplace(tagName, *child);
 
     child = child->NextSiblingElement("variable");
   }
@@ -229,18 +209,20 @@ void CGUIIncludes::LoadIncludes(const TiXmlElement *node)
       Params defaultParams;
       bool haveParamTags = GetParameters(child, "default", defaultParams);
       if (haveParamTags && !definitionTag)
-        CLog::Log(LOGWARNING, "Skin has invalid include definition: %s", tagName);
+        CLog::Log(LOGWARNING, "Skin has invalid include definition: {}", tagName);
       else
-        m_includes.insert({ tagName, { *includeBody, std::move(defaultParams) } });
+        m_includes.try_emplace(tagName, *includeBody, std::move(defaultParams));
     }
     else if (child->Attribute("file"))
     {
-      std::string file = g_SkinInfo->GetSkinPath(child->Attribute("file"));
+      auto skin = CServiceBroker::GetGUI()->GetSkinInfo();
+      std::string file = skin ? skin->GetSkinPath(child->Attribute("file")) : "";
       const char *condition = child->Attribute("condition");
 
       if (condition)
       { // load include file if condition evals to true
-        if (g_infoManager.Register(condition)->Get())
+        if (CServiceBroker::GetGUI()->GetInfoManager().Register(condition)->Get(
+                INFO::DEFAULT_CONTEXT))
           Load_Internal(file);
       }
       else
@@ -252,33 +234,37 @@ void CGUIIncludes::LoadIncludes(const TiXmlElement *node)
 
 void CGUIIncludes::FlattenExpressions()
 {
-  for (auto& expression : m_expressions)
+  std::vector<std::string> resolved(1);
+  for (auto& [key, value] : m_expressions)
   {
-    std::vector<std::string> resolved = std::vector<std::string>();
-    resolved.push_back(expression.first);
-    FlattenExpression(expression.second, resolved);
+    resolved[0] = key;
+    FlattenExpression(value, resolved);
   }
 }
 
 void CGUIIncludes::FlattenExpression(std::string &expression, const std::vector<std::string> &resolved)
 {
   std::string original(expression);
-  CGUIInfoLabel::ReplaceSpecialKeywordReferences(expression, "EXP", [&](const std::string &expressionName) -> std::string {
-    if (std::find(resolved.begin(), resolved.end(), expressionName) != resolved.end())
-    {
-      CLog::Log(LOGERROR, "Skin has a circular expression \"%s\": %s", resolved.back().c_str(), original.c_str());
-      return std::string();
-    }
-    auto it = m_expressions.find(expressionName);
-    if (it == m_expressions.end())
-      return std::string();
+  GUIINFO::CGUIInfoLabel::ReplaceSpecialKeywordReferences(
+      expression, "EXP",
+      [&](const std::string& expressionName) -> std::string
+      {
+        if (std::ranges::find(resolved, expressionName) != resolved.end())
+        {
+          CLog::Log(LOGERROR, "Skin has a circular expression \"{}\": {}", resolved.back(),
+                    original);
+          return std::string();
+        }
+        auto it = m_expressions.find(expressionName);
+        if (it == m_expressions.end())
+          return std::string();
 
-    std::vector<std::string> rescopy = resolved;
-    rescopy.push_back(expressionName);
-    FlattenExpression(it->second, rescopy);
+        std::vector<std::string> rescopy = resolved;
+        rescopy.push_back(expressionName);
+        FlattenExpression(it->second, rescopy);
 
-    return it->second;
-  });
+        return it->second;
+      });
 }
 
 void CGUIIncludes::FlattenSkinVariableConditions()
@@ -299,7 +285,7 @@ void CGUIIncludes::FlattenSkinVariableConditions()
 
 bool CGUIIncludes::HasLoaded(const std::string &file) const
 {
-  for (auto loadedFile : m_files)
+  for (const auto& loadedFile : m_files)
   {
     if (loadedFile == file)
       return true;
@@ -363,7 +349,8 @@ void CGUIIncludes::ResolveConstants(TiXmlElement *node)
     return;
 
   TiXmlNode *child = node->FirstChild();
-  if (child && child->Type() == TiXmlNode::TINYXML_TEXT && m_constantNodes.count(node->ValueStr()))
+  if (child && child->Type() == TiXmlNode::TINYXML_TEXT &&
+      CONSTANT_NODES.contains(node->ValueStr()))
   {
     child->SetValue(ResolveConstant(child->ValueStr()));
   }
@@ -372,7 +359,7 @@ void CGUIIncludes::ResolveConstants(TiXmlElement *node)
     TiXmlAttribute *attribute = node->FirstAttribute();
     while (attribute)
     {
-      if (m_constantAttributes.count(attribute->Name()))
+      if (CONSTANT_ATTRIBUTES.contains(attribute->Name()))
         attribute->SetValue(ResolveConstant(attribute->ValueStr()));
 
       attribute = attribute->Next();
@@ -386,7 +373,8 @@ void CGUIIncludes::ResolveExpressions(TiXmlElement *node)
     return;
 
   TiXmlNode *child = node->FirstChild();
-  if (child && child->Type() == TiXmlNode::TINYXML_TEXT && m_expressionNodes.count(node->ValueStr()))
+  if (child && child->Type() == TiXmlNode::TINYXML_TEXT &&
+      EXPRESSION_NODES.contains(node->ValueStr()))
   {
     child->SetValue(ResolveExpressions(child->ValueStr()));
   }
@@ -395,7 +383,7 @@ void CGUIIncludes::ResolveExpressions(TiXmlElement *node)
     TiXmlAttribute *attribute = node->FirstAttribute();
     while (attribute)
     {
-      if (m_expressionAttributes.count(attribute->Name()))
+      if (EXPRESSION_ATTRIBUTE == attribute->Name())
         attribute->SetValue(ResolveExpressions(attribute->ValueStr()));
 
       attribute = attribute->Next();
@@ -414,17 +402,46 @@ void CGUIIncludes::ResolveIncludes(TiXmlElement *node, std::map<INFO::InfoPtr, b
     // file: load includes from specified XML file
     const char *file = include->Attribute("file");
     if (file)
-      Load(g_SkinInfo->GetSkinPath(file));
+    {
+      const CURL includeUrl{file};
+
+      if (includeUrl.IsProtocol("resource"))
+      {
+        std::string resourceFile;
+
+        if (!XFILE::CResourceFile::TranslatePath(includeUrl, resourceFile))
+        {
+          CLog::Log(LOGERROR, "Unable to translate resource include file: {}", file);
+          include = include->NextSiblingElement("include");
+          continue;
+        }
+
+        CLog::Log(LOGDEBUG, "Includes: resolved resource include '{}' to '{}'", file, resourceFile);
+        Load(resourceFile);
+      }
+      else
+      {
+        auto skin = CServiceBroker::GetGUI()->GetSkinInfo();
+        if (skin)
+          Load(skin->GetSkinPath(file));
+      }
+    }
 
     // condition: process include if condition evals to true
     const char *condition = include->Attribute("condition");
     if (condition)
     {
-      INFO::InfoPtr conditionID = g_infoManager.Register(ResolveExpressions(condition));
-      bool value = conditionID->Get();
+      INFO::InfoPtr conditionID =
+          CServiceBroker::GetGUI()->GetInfoManager().Register(ResolveExpressions(condition));
+      bool value = false;
 
-      if (xmlIncludeConditions)
-        xmlIncludeConditions->insert(std::make_pair(conditionID, value));
+      if (conditionID)
+      {
+        value = conditionID->Get(INFO::DEFAULT_CONTEXT);
+
+        if (xmlIncludeConditions)
+          xmlIncludeConditions->insert(std::make_pair(conditionID, value));
+      }
 
       if (!value)
       {
@@ -435,7 +452,8 @@ void CGUIIncludes::ResolveIncludes(TiXmlElement *node, std::map<INFO::InfoPtr, b
 
     Params params;
     std::string tagName;
-    // normal or old-style include
+
+    // determine which form of include call we have
     const char *name = include->Attribute("content");
     if (name)
     {
@@ -464,30 +482,74 @@ void CGUIIncludes::ResolveIncludes(TiXmlElement *node, std::map<INFO::InfoPtr, b
     auto it = m_includes.find(tagName);
     if (it != m_includes.end())
     {
-      const TiXmlElement *includeBody = &it->second.first;
-      const Params& defaultParams = it->second.second;
-      const TiXmlElement *tag = includeBody->FirstChildElement();
+      const TiXmlElement *includeDefinition = &it->second.first;
+
       // combine passed include parameters with their default values into a single list (no overwrites)
+      const Params& defaultParams = it->second.second;
       params.insert(defaultParams.begin(), defaultParams.end());
-      while (tag)
+
+      // process include definition
+      const TiXmlElement *includeDefinitionChild = includeDefinition->FirstChildElement();
+      while (includeDefinitionChild)
       {
-        // we insert before the <include> element to keep the correct
-        // order (we render in the order given in the xml file)
-        TiXmlElement *insertedTag = static_cast<TiXmlElement*>(node->InsertBeforeChild(include, *tag));
-        // after insertion we resolve parameters even if parameter list is empty (to remove param references)
-        ResolveParametersForNode(insertedTag, params);
-        tag = tag->NextSiblingElement();
+        // insert before <include> element to keep order of occurrence in xml file
+        TiXmlElement *insertedNode = static_cast<TiXmlElement*>(node->InsertBeforeChild(include, *includeDefinitionChild));
+
+        // process nested
+        InsertNested(node, include, insertedNode);
+
+        // resolve parameters even if parameter list is empty (to remove param references)
+        ResolveParametersForNode(insertedNode, params);
+
+        includeDefinitionChild = includeDefinitionChild->NextSiblingElement();
       }
+
       // remove the include element itself
       node->RemoveChild(include);
+
       include = node->FirstChildElement("include");
     }
     else
     { // invalid include
-      CLog::Log(LOGWARNING, "Skin has invalid include: %s", tagName.c_str());
+      CLog::Log(LOGWARNING, "Skin has invalid include: {}", tagName);
       include = include->NextSiblingElement("include");
     }
   }
+}
+
+void CGUIIncludes::InsertNested(TiXmlElement *controls, TiXmlElement *include, TiXmlElement *node)
+{
+  TiXmlElement *target;
+  TiXmlElement *nested;
+
+  if (node->ValueStr() == "nested")
+  {
+    nested = node;
+    target = controls;
+  }
+  else
+  {
+    nested = node->FirstChildElement("nested");
+    target = node;
+  }
+
+  if (nested)
+  {
+    // copy all child elements except param elements
+    const TiXmlElement *child = include->FirstChildElement();
+    while (child)
+    {
+      if (child->ValueStr() != "param")
+      {
+        // insert before <nested> element to keep order of occurrence in xml file
+        target->InsertBeforeChild(nested, *child);
+      }
+      child = child->NextSiblingElement();
+    }
+    if (nested != node)
+      target->RemoveChild(nested);
+  }
+
 }
 
 bool CGUIIncludes::GetParameters(const TiXmlElement *include, const char *valueAttribute, Params& params)
@@ -574,12 +636,17 @@ void CGUIIncludes::ResolveParametersForNode(TiXmlElement *node, const Params& pa
       else if (result != NO_PARAMS_FOUND)
         child->SetValue(newValue);
     }
-    else if (child->Type() == TiXmlNode::TINYXML_ELEMENT)
+    else if (child->Type() == TiXmlNode::TINYXML_ELEMENT ||
+             child->Type() == TiXmlNode::TINYXML_COMMENT)
     {
       do
       {
-        TiXmlElement *next = child->NextSiblingElement();   // save next as current child might be removed from the tree
-        ResolveParametersForNode(static_cast<TiXmlElement *>(child), params);
+        // save next as current child might be removed from the tree
+        TiXmlElement* next = child->NextSiblingElement();
+
+        if (child->Type() == TiXmlNode::TINYXML_ELEMENT)
+          ResolveParametersForNode(static_cast<TiXmlElement*>(child), params);
+
         child = next;
       }
       while (child);
@@ -591,11 +658,11 @@ class ParamReplacer
 {
   const std::map<std::string, std::string>& m_params;
   // keep some stats so that we know exactly what's been resolved
-  int m_numTotalParams;
-  int m_numUndefinedParams;
+  int m_numTotalParams = 0;
+  int m_numUndefinedParams = 0;
+
 public:
-  ParamReplacer(const std::map<std::string, std::string>& params)
-    : m_params(params), m_numTotalParams(0), m_numUndefinedParams(0) {}
+  explicit ParamReplacer(const std::map<std::string, std::string>& params) : m_params(params) {}
   int GetNumTotalParams() const { return m_numTotalParams; }
   int GetNumDefinedParams() const { return m_numTotalParams - m_numUndefinedParams; }
   int GetNumUndefinedParams() const { return m_numUndefinedParams; }
@@ -614,7 +681,7 @@ public:
 CGUIIncludes::ResolveParamsResult CGUIIncludes::ResolveParameters(const std::string& strInput, std::string& strOutput, const Params& params)
 {
   ParamReplacer paramReplacer(params);
-  if (CGUIInfoLabel::ReplaceSpecialKeywordReferences(strInput, "PARAM", std::ref(paramReplacer), strOutput))
+  if (GUIINFO::CGUIInfoLabel::ReplaceSpecialKeywordReferences(strInput, "PARAM", std::ref(paramReplacer), strOutput))
     // detect special input values of the form "$PARAM[undefinedParam]" (with no extra characters around)
     return paramReplacer.GetNumUndefinedParams() == 1 && paramReplacer.GetNumTotalParams() == 1 && strOutput.empty() ? SINGLE_UNDEFINED_PARAM_RESOLVED : PARAMS_RESOLVED;
   return NO_PARAMS_FOUND;
@@ -623,11 +690,11 @@ CGUIIncludes::ResolveParamsResult CGUIIncludes::ResolveParameters(const std::str
 std::string CGUIIncludes::ResolveConstant(const std::string &constant) const
 {
   std::vector<std::string> values = StringUtils::Split(constant, ",");
-  for (std::vector<std::string>::iterator i = values.begin(); i != values.end(); ++i)
+  for (auto& i : values)
   {
-    std::map<std::string, std::string>::const_iterator it = m_constants.find(*i);
+    const auto it = m_constants.find(i);
     if (it != m_constants.end())
-      *i = it->second;
+      i = it->second;
   }
   return StringUtils::Join(values, ",");
 }
@@ -635,19 +702,22 @@ std::string CGUIIncludes::ResolveConstant(const std::string &constant) const
 std::string CGUIIncludes::ResolveExpressions(const std::string &expression) const
 {
   std::string work(expression);
-  CGUIInfoLabel::ReplaceSpecialKeywordReferences(work, "EXP", [&](const std::string &str) -> std::string {
-    std::map<std::string, std::string>::const_iterator it = m_expressions.find(str);
-    if (it != m_expressions.end())
-      return it->second;
-    return "";
-  });
+  GUIINFO::CGUIInfoLabel::ReplaceSpecialKeywordReferences(
+      work, "EXP",
+      [this](const std::string& str) -> std::string
+      {
+        const auto it = m_expressions.find(str);
+        if (it != m_expressions.end())
+          return it->second;
+        return "";
+      });
 
   return work;
 }
 
 const INFO::CSkinVariableString* CGUIIncludes::CreateSkinVariable(const std::string& name, int context)
 {
-  std::map<std::string, TiXmlElement>::const_iterator it = m_skinvariables.find(name);
+  const auto it = m_skinvariables.find(name);
   if (it != m_skinvariables.end())
     return INFO::CSkinVariable::CreateFromXML(it->second, context);
   return NULL;

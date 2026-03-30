@@ -1,67 +1,47 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
+
+#pragma once
+
+#include "utils/UrlOptions.h"
 
 #include <stdlib.h>
 #include <string>
-#include "utils/UrlOptions.h"
+#include <string_view>
 
 #ifdef TARGET_WINDOWS
 #undef SetPort // WIN32INCLUDES this is defined as SetPortA in WinSpool.h which is being included _somewhere_
 #endif
 
-class CURL
+class CURL final
 {
 public:
-  explicit CURL(const std::string& strURL)
-  {
-    Parse(strURL);
-  }
+  CURL() = default;
+  explicit CURL(std::string strURL);
 
-  CURL():m_iPort(0) {}
-  virtual ~CURL(void);
-
+  bool operator==(const CURL& url) const { return url.Get() == Get(); }
   // explicit equals operator for std::string comparison
-  bool operator==(const std::string &url) const { return Get() == url; }
+  friend bool operator==(const CURL& url, const std::string_view str) { return url.Get() == str; }
 
   void Reset();
-  void Parse(const std::string& strURL);
-  void SetFileName(const std::string& strFileName);
-  void SetHostName(const std::string& strHostName)
-  {
-    m_strHostName = strHostName;
-  }
+  void Parse(std::string strURL);
+  void SetFileName(std::string strFileName);
+  void SetHostName(std::string strHostName) { m_strHostName = std::move(strHostName); }
 
-  void SetUserName(const std::string& strUserName)
-  {
-    m_strUserName = strUserName;
-  }
+  void SetUserName(std::string strUserName) { m_strUserName = std::move(strUserName); }
 
-  void SetPassword(const std::string& strPassword)
-  {
-    m_strPassword = strPassword;
-  }
+  void SetDomain(std::string strDomain) { m_strDomain = std::move(strDomain); }
 
-  void SetProtocol(const std::string& strProtocol);
-  void SetOptions(const std::string& strOptions);
-  void SetProtocolOptions(const std::string& strOptions);
+  void SetPassword(std::string strPassword) { m_strPassword = std::move(strPassword); }
+
+  void SetProtocol(std::string strProtocol);
+  void SetOptions(std::string strOptions);
+  void SetProtocolOptions(std::string strOptions);
   void SetPort(int port)
   {
     m_iPort = port;
@@ -107,7 +87,7 @@ public:
     return m_strProtocol;
   }
 
-  const std::string GetTranslatedProtocol() const;
+  std::string GetTranslatedProtocol() const;
 
   const std::string& GetFileType() const
   {
@@ -129,7 +109,7 @@ public:
     return m_strProtocolOptions;
   }
 
-  const std::string GetFileNameWithoutPath() const; /* return the filename excluding path */
+  std::string GetFileNameWithoutPath() const; /* return the filename excluding path */
 
   char GetDirectorySeparator() const;
 
@@ -138,23 +118,20 @@ public:
   std::string GetWithoutUserDetails(bool redact = false) const;
   std::string GetWithoutFilename() const;
   std::string GetRedacted() const;
-  static std::string GetRedacted(const std::string& path);
+  static std::string GetRedacted(std::string path);
   bool IsLocal() const;
   bool IsLocalHost() const;
   static bool IsFileOnly(const std::string &url); ///< return true if there are no directories in the url.
   static bool IsFullPath(const std::string &url); ///< return true if the url includes the full path
-  static std::string Decode(const std::string& strURLData);
-  static std::string Encode(const std::string& strURLData);
+  static std::string Decode(std::string_view strURLData);
+  static std::string Encode(std::string_view strURLData);
 
   /*! \brief Check whether a URL is a given URL scheme.
    Comparison is case-insensitive as per RFC1738
    \param type a lower-case scheme name, e.g. "smb".
    \return true if the url is of the given scheme, false otherwise.
    */
-  bool IsProtocol(const char *type) const
-  {
-    return IsProtocolEqual(m_strProtocol, type);
-  }
+  bool IsProtocol(std::string_view type) const { return IsProtocolEqual(m_strProtocol, type); }
 
   /*! \brief Check whether a URL protocol is a given URL scheme.
    Both parameters MUST be lower-case.  Typically this would be called using
@@ -163,7 +140,7 @@ public:
    \param type a lower-case scheme name, e.g. "smb".
    \return true if the url is of the given scheme, false otherwise.
    */
-  static bool IsProtocolEqual(const std::string& protocol, const char *type);
+  static bool IsProtocolEqual(const std::string& protocol, std::string_view type);
 
   /*! \brief Check whether a URL is a given filetype.
    Comparison is effectively case-insensitive as both the parameter
@@ -171,10 +148,7 @@ public:
    \param type a lower-case filetype, e.g. "mp3".
    \return true if the url is of the given filetype, false otherwise.
    */
-  bool IsFileType(const char *type) const
-  {
-    return m_strFileType == type;
-  }
+  bool IsFileType(std::string_view type) const { return m_strFileType == type; }
 
   void GetOptions(std::map<std::string, std::string> &options) const;
   bool HasOption(const std::string &key) const;
@@ -190,8 +164,43 @@ public:
   void SetProtocolOption(const std::string &key, const std::string &value);
   void RemoveProtocolOption(const std::string &key);
 
-protected:
-  int m_iPort;
+  bool HasExtension(std::string_view extensions) const;
+  std::string GetExtension() const;
+  bool IsStack() const;
+  bool IsMultiPath() const;
+  bool IsFavourite() const;
+  bool IsPlugin() const;
+  bool IsScript() const;
+  bool IsAddonsPath() const;
+  bool IsSourcesPath() const;
+  bool IsCDDA() const;
+  bool IsISO9660() const;
+  bool IsMusicDb() const;
+  bool IsVideoDb() const;
+  bool IsBlurayPath() const;
+  bool IsAndroidApp() const;
+  bool IsLibraryFolder() const;
+  bool IsUPnP() const;
+  bool IsAPK() const;
+  bool IsZIP() const; // also checks for comic books!
+  bool IsArchive() const;
+  bool IsCBZ() const;
+  bool IsCBR() const;
+  bool IsDiscImage() const;
+  bool IsPicture() const;
+
+  bool HasParentInHostname() const;
+  bool HasEncodedHostname() const;
+  bool HasEncodedFilename() const;
+
+  bool IsLibraryContent() const;
+
+  bool IsBDFile() const;
+  bool IsDVDFile() const;
+  bool IsOpticalMediaFile() const;
+
+private:
+  int m_iPort = 0;
   std::string m_strHostName;
   std::string m_strShareName;
   std::string m_strDomain;

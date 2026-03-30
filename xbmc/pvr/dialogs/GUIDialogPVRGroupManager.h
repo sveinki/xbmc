@@ -1,77 +1,78 @@
-#pragma once
 /*
- *      Copyright (C) 2012-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2012-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "guilib/GUIDialog.h"
+#include "pvr/PVRThumbLoader.h"
 #include "view/GUIViewControl.h"
 
-#include "pvr/channels/PVRChannelGroup.h"
+#include <memory>
 
 class CFileItemList;
+class CGUIMessage;
 
 namespace PVR
 {
-  class CGUIDialogPVRGroupManager : public CGUIDialog
-  {
-  public:
-    CGUIDialogPVRGroupManager(void);
-    ~CGUIDialogPVRGroupManager(void) override;
-    bool OnMessage(CGUIMessage& message) override;
-    void OnWindowLoaded() override;
-    void OnWindowUnload() override;
+class CPVRChannelGroup;
 
-    void SetRadio(bool bIsRadio);
+class CGUIDialogPVRGroupManager : public CGUIDialog
+{
+public:
+  CGUIDialogPVRGroupManager();
+  ~CGUIDialogPVRGroupManager() override;
+  bool OnMessage(CGUIMessage& message) override;
+  bool OnAction(const CAction& action) override;
+  void OnWindowLoaded() override;
+  void OnWindowUnload() override;
 
-  protected:
-    void OnInitWindow() override;
-    void OnDeinitWindow(int nextWindowID) override;
+  void SetRadio(bool bIsRadio);
 
-  private:
-    void Clear();
-    void Update();
-    bool PersistChanges(void);
-    bool CancelChanges(void);
-    bool ActionButtonOk(CGUIMessage &message);
-    bool ActionButtonNewGroup(CGUIMessage &message);
-    bool ActionButtonDeleteGroup(CGUIMessage &message);
-    bool ActionButtonRenameGroup(CGUIMessage &message);
-    bool ActionButtonUngroupedChannels(CGUIMessage &message);
-    bool ActionButtonGroupMembers(CGUIMessage &message);
-    bool ActionButtonChannelGroups(CGUIMessage &message);
-    bool ActionButtonHideGroup(CGUIMessage &message);
-    bool ActionButtonToggleRadioTV(CGUIMessage &message);
-    bool OnMessageClick(CGUIMessage &message);
+protected:
+  void OnInitWindow() override;
+  void OnDeinitWindow(int nextWindowID) override;
 
-    CPVRChannelGroupPtr m_selectedGroup;
-    bool              m_bIsRadio;
+private:
+  void Clear();
+  void ClearGroupThumbnails(const CFileItem& changedItem);
+  void Update();
+  bool ActionButtonOk(const CGUIMessage& message);
+  bool ActionButtonNewGroup(const CGUIMessage& message);
+  bool ActionButtonDeleteGroup(const CGUIMessage& message);
+  bool ActionButtonRenameGroup(const CGUIMessage& message);
+  bool ActionButtonUngroupedChannels(const CGUIMessage& message);
+  bool ActionButtonGroupMembers(const CGUIMessage& message);
+  bool ActionButtonChannelGroups(const CGUIMessage& message);
+  bool ActionButtonHideGroup(const CGUIMessage& message);
+  bool ActionButtonToggleRadioTV(const CGUIMessage& message);
+  bool ActionButtonRecreateThumbnail(const CGUIMessage& message);
+  bool OnMessageClick(const CGUIMessage& message);
+  bool OnPopupMenu(int itemNumber);
+  bool OnContextButton(int itemNumber, int button);
+  bool OnActionMove(const CAction& action);
 
-    unsigned int      m_iSelectedUngroupedChannel;
-    unsigned int      m_iSelectedGroupMember;
-    unsigned int      m_iSelectedChannelGroup;
+  std::shared_ptr<CPVRChannelGroup> m_selectedGroup;
+  bool m_bIsRadio;
+  bool m_movingItem{false};
+  bool m_allowReorder{false};
 
-    CFileItemList *   m_ungroupedChannels;
-    CFileItemList *   m_groupMembers;
-    CFileItemList *   m_channelGroups;
+  int m_iSelectedUngroupedChannel = 0;
+  int m_iSelectedGroupMember = 0;
+  int m_iSelectedChannelGroup = 0;
 
-    CGUIViewControl   m_viewUngroupedChannels;
-    CGUIViewControl   m_viewGroupMembers;
-    CGUIViewControl   m_viewChannelGroups;
-  };
-}
+  std::unique_ptr<CFileItemList> m_ungroupedChannels;
+  std::unique_ptr<CFileItemList> m_groupMembers;
+  std::unique_ptr<CFileItemList> m_channelGroups;
+
+  CGUIViewControl m_viewUngroupedChannels;
+  CGUIViewControl m_viewGroupMembers;
+  CGUIViewControl m_viewChannelGroups;
+
+  CPVRThumbLoader m_thumbLoader;
+};
+} // namespace PVR

@@ -1,11 +1,11 @@
-![Kodi logo](https://raw.githubusercontent.com/xbmc/xbmc-forum/master/xbmc/images/logo-sbs-black.png)
+![Kodi logo](https://github.com/xbmc/xbmc/raw/master/docs/resources/banner_slim.png)
 # Kodi add-ons CMake based buildsystem
 This directory contains the cmake-based buildsystem for Kodi add-ons. It looks into the directory pointed to by the *ADDONS_DEFINITION_DIR* option (which defaults to the *addons* sub-directory) and parses all *.txt files recursively. Each add-on must have its own `<addon-id>.txt` file in a separate sub-directory that must follow one of the defined formats:
 
   - `<addon-id> <git-url> <git-revision>`
   - `<addon-id> <tarball-url>`
   - `<addon-id> <file://path>`
- 
+
 where
 - `<addon-id>` must be identical to the add-on's ID as defined in the add-on's addon.xml
 - `<git-url>` must be the URL of the git repository containing the add-on
@@ -18,27 +18,26 @@ where
 
 List of platforms to build an add-on for (or *all*). Negating platforms is supported using a leading exclamation mark, e.g. *!windows*.
 
-Available platforms are: linux, windows, osx, ios, android, rbpi and freebsd.
+Available platforms are: linux, windows, osx, ios, android and freebsd.
 
 #### Attention
 If no add-on definitions could be found, the buildsystem assumes that the bootstrapping of the add-on definition repositories hasn't been performed yet and automatically executes the add-on bootstrapping buildsystem located in the *bootstrap* sub-directory with the default settings (i.e. *all* add-ons from all pre-defined add-on definition repositories are bootstrapped into the directory pointed to by the *ADDONS_DEFINITION_DIR* option).
 
 ## Buildsystem variables
-The buildsystem uses the following variables (which can be passed into it when executing cmake with the -D`<variable-name>=<value>` format) to manipulate the build process:
-- `ADDONS_TO_BUILD` has two variations, which are tested in order:
-     - a quoted, space delimited list of `<addon-id>s` that you want to build (default is *all*)
-     - a regular expression that every `<addon-id>` is matched against (e.g. `ADDONS_TO_BUILD="pvr.*"`) to build all pvr add-ons
+The buildsystem uses the following addon-related variables (which can be passed into it when executing cmake with the -D`<variable-name>=<value>` format) to manipulate the build process:
+- `ADDONS_TO_BUILD` has four rules for matching a provided space delimited list:
+     - to build all addons, just use `all` (default is *all*)
+     - an exact match of an `<addon-id>` that you want to build (e.g. `ADDONS_TO_BUILD="game.libretro"`)
+     - a regular expression `<addon-id>` is matched against (e.g. `ADDONS_TO_BUILD="pvr.*"`) to build all pvr add-ons
+     - a regular expression exclusion can be made using `-<addon-id regex>` (e.g. `ADDONS_TO_BUILD="pvr.* -pvr.dvb"`) to exclude pvr.dvblink and pvr.dvbviewer, but build all other pvr add-ons
 - `ADDONS_DEFINITION_DIR` points to the directory containing the definitions for the addons to be built
 - `ADDON_SRC_PREFIX` can be used to override the add-on repository location. It must point to the locally available parent directory of the add-on(s) to build. `<addon-id>` will be appended to this path automatically
-- `CMAKE_BUILD_TYPE` specifies the type of the build. This can be either *Debug* or *Release* (default is *Release*)
 - `CMAKE_INSTALL_PREFIX` points to the directory where the built add-ons and their additional files (addon.xml, resources, ...) will be installed to (defaults to `<ADDON_DEPENDS_PATH>`)
-- `CMAKE_TOOLCHAIN_FILE` can be used to pass a toolchain file into the add-on builds
 - `ADDON_DEPENDS_PATH` points to the directory containing the *include* and *lib* directories of the add-ons' dependencies.
 - `CORE_SOURCE_DIR` points to the root directory of the project (default is the absolute representation of ../../.. starting from this directory)
 - `BUILD_DIR` points to the directory where the add-ons and their dependencies will be downloaded and built
 - `PACKAGE_ZIP=ON` means that the add-ons will be 'packaged' into a common folder, rather than being placed in `<CMAKE_INSTALL_PREFIX>/lib/kodi/addons` and `<CMAKE_INSTALL_PREFIX>/share/kodi/addons`
 - `PACKAGE_DIR` points to the directory where the ZIP archived add-ons will be stored after they have been packaged (defaults to `<BUILD_DIR>/zips`)
-- `ARCH_DEFINES` specifies the platform-specific C/C++ preprocessor defines (defaults to empty)
 - `ADDON_TARBALL_CACHING` specifies whether downloaded add-on source tarballs should be cached or not (defaults to *ON*)
 
 ## Deprecated buildsystem variables
@@ -48,18 +47,3 @@ Buildsystem will print a warning if you use any of the below-listed variables. F
 ## Building
 The buildsystem makes some assumptions about the environment which must be met by whoever uses it:
 - Any dependencies of the add-ons must already be built and their include and library files must be present in the path pointed to by `<CMAKE_PREFIX_PATH>` (in *include* and *lib* sub-directories)
-
-To trigger the cmake-based buildsystem the following command must be executed with `<path>` set to this directory (absolute or relative) allowing for in-source and out-of-source builds
-
-`cmake <path> -G <generator>`
-
-CMake supports multiple generators. See [here] (https://cmake.org/cmake/help/v3.1/manual/cmake-generators.7.html) for a list.
-
-In case of additional options the call might look like this:
-
-cmake `<path>` [-G `<generator>`] \  
-      -DCMAKE_BUILD_TYPE=Release \  
-      -DCORE_SOURCE_DIR="`<path-to-app-root>`" \  
-      -DARCH_DEFINES="-DTARGET_LINUX" \  
-      -DADDON_DEPENDS_PATH=`<path-to-built-depends>` \  
-      -DCMAKE_INSTALL_PREFIX="`<path-to-install-directory`"

@@ -1,26 +1,17 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#include "system.h"
 #include "GUIListContainer.h"
-#include "input/Key.h"
+
+#include "GUIListItemLayout.h"
+#include "GUIMessage.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
 #include "utils/StringUtils.h"
 
 CGUIListContainer::CGUIListContainer(int parentID, int controlID, float posX, float posY, float width, float height, ORIENTATION orientation, const CScroller& scroller, int preloadItems)
@@ -28,6 +19,10 @@ CGUIListContainer::CGUIListContainer(int parentID, int controlID, float posX, fl
 {
   ControlType = GUICONTAINER_LIST;
   m_type = VIEW_TYPE_LIST;
+}
+
+CGUIListContainer::CGUIListContainer(const CGUIListContainer& other) : CGUIBaseContainer(other)
+{
 }
 
 CGUIListContainer::~CGUIListContainer(void) = default;
@@ -67,7 +62,7 @@ bool CGUIListContainer::OnAction(const CAction &action)
     {
       m_analogScrollCount += action.GetAmount() * action.GetAmount();
       bool handled = false;
-      while (m_analogScrollCount > 0.4)
+      while (m_analogScrollCount > 0.4f)
       {
         handled = true;
         m_analogScrollCount -= 0.4f;
@@ -87,7 +82,7 @@ bool CGUIListContainer::OnAction(const CAction &action)
     {
       m_analogScrollCount += action.GetAmount() * action.GetAmount();
       bool handled = false;
-      while (m_analogScrollCount > 0.4)
+      while (m_analogScrollCount > 0.4f)
       {
         handled = true;
         m_analogScrollCount -= 0.4f;
@@ -283,13 +278,19 @@ CGUIListContainer::CGUIListContainer(int parentID, int controlID, float posX, fl
                                  float textureHeight, float itemWidth, float itemHeight, float spaceBetweenItems)
 : CGUIBaseContainer(parentID, controlID, posX, posY, width, height, VERTICAL, 200, 0)
 {
-  m_layouts.emplace_back();
-  m_layouts.back().CreateListControlLayouts(width, textureHeight + spaceBetweenItems, false, labelInfo, labelInfo2, textureButton, textureButtonFocus, textureHeight, itemWidth, itemHeight, "", "");
-  std::string condition = StringUtils::Format("control.hasfocus(%i)", controlID);
+  CGUIListItemLayout& layout = m_layouts.emplace_back();
+  layout.CreateListControlLayouts(width, textureHeight + spaceBetweenItems, false, labelInfo,
+                                  labelInfo2, textureButton, textureButtonFocus, textureHeight,
+                                  itemWidth, itemHeight, "", "");
+  std::string condition = StringUtils::Format("control.hasfocus({})", controlID);
   std::string condition2 = "!" + condition;
-  m_focusedLayouts.emplace_back();
-  m_focusedLayouts.back().CreateListControlLayouts(width, textureHeight + spaceBetweenItems, true, labelInfo, labelInfo2, textureButton, textureButtonFocus, textureHeight, itemWidth, itemHeight, condition2, condition);
-  m_height = floor(m_height / (textureHeight + spaceBetweenItems)) * (textureHeight + spaceBetweenItems);
+
+  CGUIListItemLayout& focusedLayout = m_focusedLayouts.emplace_back();
+  focusedLayout.CreateListControlLayouts(
+      width, textureHeight + spaceBetweenItems, true, labelInfo, labelInfo2, textureButton,
+      textureButtonFocus, textureHeight, itemWidth, itemHeight, condition2, condition);
+  m_height =
+      floor(m_height / (textureHeight + spaceBetweenItems)) * (textureHeight + spaceBetweenItems);
   ControlType = GUICONTAINER_LIST;
 }
 //#endif

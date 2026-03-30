@@ -1,30 +1,21 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "PlaylistFileDirectory.h"
-#include "playlists/PlayListFactory.h"
-#include "File.h"
-#include "URL.h"
-#include "playlists/PlayList.h"
 
-using namespace PLAYLIST;
+#include "FileItem.h"
+#include "FileItemList.h"
+#include "URL.h"
+#include "filesystem/File.h"
+#include "playlists/PlayList.h"
+#include "playlists/PlayListFactory.h"
+
+using namespace KODI;
 
 namespace XFILE
 {
@@ -34,20 +25,19 @@ namespace XFILE
 
   bool CPlaylistFileDirectory::GetDirectory(const CURL& url, CFileItemList& items)
   {
-    const std::string pathToUrl = url.Get();
-    std::unique_ptr<CPlayList> pPlayList (CPlayListFactory::Create(pathToUrl));
-    if ( NULL != pPlayList.get())
+    std::unique_ptr<PLAYLIST::CPlayList> pPlayList(PLAYLIST::CPlayListFactory::Create(url));
+    if (nullptr != pPlayList)
     {
       // load it
-      if (!pPlayList->Load(pathToUrl))
+      if (!pPlayList->Load(url.Get()))
         return false; //hmmm unable to load playlist?
 
-      CPlayList playlist = *pPlayList;
+      PLAYLIST::CPlayList playlist = *pPlayList;
       // convert playlist items to songs
-      for (int i = 0; i < (int)playlist.size(); ++i)
+      for (int i = 0; i < playlist.size(); ++i)
       {
         CFileItemPtr item = playlist[i];
-        item->m_iprogramCount = i;  // hack for playlist order
+        item->SetProgramCount(i); //! @todo remove this hack for playlist order
         items.Add(item);
       }
     }
@@ -56,12 +46,11 @@ namespace XFILE
 
   bool CPlaylistFileDirectory::ContainsFiles(const CURL& url)
   {
-    const std::string pathToUrl = url.Get();
-    std::unique_ptr<CPlayList> pPlayList (CPlayListFactory::Create(pathToUrl));
-    if ( NULL != pPlayList.get())
+    std::unique_ptr<PLAYLIST::CPlayList> pPlayList(PLAYLIST::CPlayListFactory::Create(url));
+    if (nullptr != pPlayList)
     {
       // load it
-      if (!pPlayList->Load(pathToUrl))
+      if (!pPlayList->Load(url.Get()))
         return false; //hmmm unable to load playlist?
 
       return (pPlayList->size() > 1);
@@ -73,5 +62,4 @@ namespace XFILE
   {
     return XFILE::CFile::Delete(url);
   }
-}
-
+  } // namespace XFILE

@@ -1,40 +1,36 @@
 /*
- *      Copyright (C) 2005-2014 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2026 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
+
 #include "DVDDemux.h"
+#include "DVDDemuxCC/CaptionBlock.h"
+#include "DVDDemuxCC/ICCBitstreamParser.h"
+
+#include <memory>
 #include <vector>
 
-class CCaptionBlock;
 class CDecoderCC708;
+class ICCBitstreamParser;
 
 class CDVDDemuxCC : public CDVDDemux
 {
 public:
-  CDVDDemuxCC(AVCodecID codec);
+  explicit CDVDDemuxCC(AVCodecID codec, const uint8_t* extradata, int extrasize);
   ~CDVDDemuxCC() override;
 
-  void Reset() override {};
+  bool Reset() override { return true; }
   void Flush() override {};
-  DemuxPacket* Read() override { return NULL; };
-  bool SeekTime(double time, bool backwards = false, double* startpts = NULL) override {return true;};
+  DemuxPacket* Read() override { return NULL; }
+  bool SeekTime(double time, bool backwards = false, double* startpts = NULL) override
+  {
+    return true;
+  }
   CDemuxStream* GetStream(int iStreamId) const override;
   std::vector<CDemuxStream*> GetStreams() const override;
   int GetNrOfStreams() const override;
@@ -58,8 +54,8 @@ protected:
   std::vector<CDemuxStreamSubtitle> m_streams;
   bool m_hasData;
   double m_curPts;
-  std::vector<CCaptionBlock*> m_ccReorderBuffer;
-  std::vector<CCaptionBlock*> m_ccTempBuffer;
-  CDecoderCC708 *m_ccDecoder;
-  AVCodecID m_codec;
+  std::vector<CCaptionBlock> m_ccReorderBuffer;
+  std::vector<CCaptionBlock> m_ccTempBuffer;
+  std::unique_ptr<CDecoderCC708> m_ccDecoder;
+  std::unique_ptr<ICCBitstreamParser> m_parser;
 };

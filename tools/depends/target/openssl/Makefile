@@ -1,51 +1,80 @@
-include ../../Makefile.include
-DEPS= ../../Makefile.include Makefile
-
-# lib name, version
-LIBNAME=openssl
-VERSION=1.0.2l
-SOURCE=$(LIBNAME)-$(VERSION)
-ARCHIVE=$(SOURCE).tar.gz
+include ../../Makefile.include OPENSSL-VERSION ../../download-files.include
+DEPS = ../../Makefile.include Makefile OPENSSL-VERSION ../../download-files.include \
+                        001-android-getauxvalrevert.patch 16-kodi.conf
 
 # configuration settings
-CONFIGURE=MACHINE=$(PLATFORM) ./config shared zlib --openssldir=$(PREFIX) --with-zlib-include=$(PREFIX)/include --with-zlib-lib=$(PREFIX)/lib
-ifeq ($(OS), android)
-  CONFIGURE=./Configure shared zlib --openssldir=$(PREFIX) --with-zlib-include=$(PREFIX)/include --with-zlib-lib=$(PREFIX)/lib linux-generic32
-endif
-ifeq ($(OS), ios)
-  CONFIGURE=./Configure iphoneos-cross zlib no-asm no-krb5 --openssldir=$(PREFIX)
-endif
-ifeq ($(OS), osx)
-  ifeq ($(CPU),x86_64)
-    CONFIGURE=./Configure darwin64-$(CPU)-cc zlib no-asm no-krb5 shared --openssldir=$(PREFIX)
+ifeq ($(OS), linux)
+  TARGETOPT=--with-zlib-include=$(PREFIX)/include --with-zlib-lib=$(PREFIX)/lib
+  CONFIGURE=./Configure no-shared zlib no-tests no-asm no-module  $(TARGETOPT) --prefix=$(PREFIX) --libdir=lib
+  ifeq ($(TARGET_PLATFORM),webos)
+    CONFIGURE+= linux-armv4
+    # Need to add "no-async" to avoid "setcontext is not implemented and will always fail" warning
+    TARGETOPT+= no-async
   else
-    CONFIGURE=./Configure darwin-$(CPU)-cc zlib no-asm no-krb5 shared --openssldir=$(PREFIX)
+    ifeq ($(CPU),aarch64)
+      CONFIGURE+= linux-aarch64
+    else ifeq ($(CPU),arm)
+      CONFIGURE+= linux-armv4
+    else ifeq ($(CPU),x86_64)
+      CONFIGURE+= linux-x86_64
+    else
+      # Fallback to base generic linux target
+      CONFIGURE+= linux-generic32
+    endif
   endif
+else
+  ifeq ($(OS), android)
+    TARGETOPT=--with-zlib-include=$(PREFIX)/include --with-zlib-lib=$(PREFIX)/lib -U__ANDROID_API__ -D__ANDROID_API__=$(NDK_LEVEL)
+
+    export ANDROID_NDK_ROOT=$(NDKROOT)
+    export PATH:=$(TOOLCHAIN)/bin:$(PATH)
+    ifeq ($(MESON_CPU), aarch64)
+      OPENSSLPLATFORM=android-arm64
+    else
+      OPENSSLPLATFORM=android-$(MESON_CPU)
+    endif
+  endif
+  ifeq ($(OS), darwin_embedded)
+    # LLVM 15 has raised this to error by default. drop back to warning
+    CFLAGS+= -Wno-error=implicit-int
+    export SDKROOT CFLAGS
+    OPENSSLPLATFORM=kodi-iphoneos-arm64
+
+    ifeq ($(TARGET_PLATFORM),appletvos)
+      OPENSSLPLATFORM=kodi-appletvos-arm64
+      # Need to add "no-async" to avoid "'setcontext' is unavailable: not available on tvOS" error
+      TARGETOPT+= no-async
+    endif
+  endif
+  ifeq ($(OS), osx)
+    OPENSSLPLATFORM=kodi-darwin64-$(CPU)
+  endif
+
+  # Openssl 3.2.0 allows no-apps no-docs as options. Use when we update further
+  # We explicitly use no-asm as there is a symbol clash with gnutls
+  CONFIGURE=./Configure no-shared zlib no-tests no-asm no-module  $(TARGETOPT) --prefix=$(PREFIX) $(OPENSSLPLATFORM)
 endif
+
+export CC CXX AR RANLIB
+export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+
 LIBDYLIB=$(PLATFORM)/libssl.a
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
 
 all: .installed-$(PLATFORM)
 
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) $(RETRIEVE_TOOL_FLAGS) $(BASE_URL)/$(ARCHIVE)
 
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
-	cd $(PLATFORM); AR="$(AR)" CFLAGS="$(CFLAGS)" CC="$(CC)" RANLIB=$(RANLIB) $(CONFIGURE)
-	if test "$(OS)" = "osx"; then \
-		sed -ie "s|CC= /usr/bin/gcc-4.2|CC= $(CC)|" "$(PLATFORM)/Makefile"; \
-		sed -ie "s|CFLAG= |CFLAG=$(CFLAGS) |" "$(PLATFORM)/Makefile"; \
+ifeq ($(OS),android)
+	cd $(PLATFORM); patch -p1 -i ../001-android-getauxvalrevert.patch
+endif
+	cd $(PLATFORM); cp ../16-kodi.conf ./Configurations/
+	cd $(PLATFORM); $(CONFIGURE)
+	if test "$(OS)" = "darwin_embedded"; then \
+		sed -E -ie "s|static volatile sig_atomic_t intr_signal;|static volatile intr_signal;|" "$(PLATFORM)/crypto/ui/ui_openssl.c"; \
 	fi
-	# for iphoneos-cross config a sysroot argument is added
-	# however sysroot already set in Makefile.include, so remove this 	
-	if test "$(OS)" = "ios"; then \
-		sed -ie "s|CFLAG= |CFLAG=$(CFLAGS) |" "$(PLATFORM)/Makefile"; \
-		sed -ie "s|-isysroot \$$(CROSS_TOP)/SDKs/\$$(CROSS_SDK) ||" "$(PLATFORM)/Makefile"; \
-		sed -ie "s|static volatile sig_atomic_t intr_signal;|static volatile intr_signal;|" "$(PLATFORM)/crypto/ui/ui_openssl.c"; \
-	fi
-	sed -ie "s|apps test||" "$(PLATFORM)/Makefile"; \
+	sed -ie "s|PROGRAMS=|PROGRAMS=#|" "$(PLATFORM)/Makefile";
 
 $(LIBDYLIB): $(PLATFORM)
 	$(MAKE) -C $(PLATFORM)
@@ -53,10 +82,6 @@ $(LIBDYLIB): $(PLATFORM)
 
 .installed-$(PLATFORM): $(LIBDYLIB)
 	$(MAKE) -C $(PLATFORM) install_sw
-	rm -f $(PREFIX)/lib/libcrypto.so*
-	rm -f $(PREFIX)/lib/libssl.so*
-	rm -rf $(PREFIX)/lib/libcrypto.*dylib*
-	rm -rf $(PREFIX)/lib/libssl.*dylib*
 	touch $@
 
 clean:

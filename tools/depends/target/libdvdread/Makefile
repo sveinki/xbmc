@@ -1,10 +1,10 @@
 -include ../../Makefile.include
-include DVDREAD-VERSION
-DEPS = DVDREAD-VERSION Makefile
+include LIBDVDREAD-VERSION
+DEPS = LIBDVDREAD-VERSION Makefile ../../download-files.include
 
 # configuration settings
-config = --prefix=$(PREFIX) --disable-shared --enable-static --with-pic
-EXTRA_CFLAGS = -D_XBMC
+config = --prefix=$(PREFIX) --disable-shared --enable-static --with-pic --with-libdvdcss
+EXTRA_CFLAGS = -D_XBMC -DHAVE_DVDCSS_DVDCSS_H
 
 ifeq ($(CROSS_COMPILING), yes)
   DEPS += ../../Makefile.include
@@ -18,43 +18,26 @@ else
     TARBALLS_LOCATION = $(ROOT_DIR)
     PKGCONFIGPATH = PKG_CONFIG_PATH="$(ROOT_DIR)/../libdvdcss/dvdcss-install/lib/pkgconfig"
     EXTRA_CFLAGS += -I$(ROOT_DIR)/../libdvdcss/dvdcss-install/include
+    RETRIEVE_TOOL := curl
+    RETRIEVE_TOOL_FLAGS := -LsS --create-dirs --retry 10 --retry-connrefused -o
+    ARCHIVE_TOOL := tar
+    ARCHIVE_TOOL_FLAGS := --strip-components=1 -xf
   endif
 endif
 
-ifneq ($(OS),ios)
-  config += --with-libdvdcss
-  EXTRA_CFLAGS += -DHAVE_DVDCSS_DVDCSS_H
-endif
 ifeq ($(OS),osx)
   EXTRA_CFLAGS +=  -D__DARWIN__
 endif
-ifeq ($(OS),ios)
-  EXTRA_CFLAGS +=  -D__DARWIN__ -UHAVE_DVDCSS_DVDCSS_H
+ifeq ($(OS),darwin_embedded)
+  EXTRA_CFLAGS +=  -D__DARWIN__
 endif
 
-RETRIEVE_TOOL := curl -Ls --create-dirs --retry 10 --retry-delay 3
-ARCHIVE_TOOL := tar --strip-components=1 -xf
-
-GITREV=$(shell git ls-remote $(BASE_URL) $(VERSION) | awk '{print $$1}')
-ifeq ($(GITREV),)
-  ARCHIVE=$(LIBNAME)-$(VERSION).tar.gz
-else
-  ARCHIVE=$(LIBNAME)-$(GITREV).tar.gz
-endif
-
-
-CLEAN_FILES=$(ARCHIVE) $(PLATFORM)
-
+include ../../download-files.include
 all: .installed-$(PLATFORM)
 
-download: $(TARBALLS_LOCATION)/$(ARCHIVE)
-
-$(TARBALLS_LOCATION)/$(ARCHIVE):
-	cd $(TARBALLS_LOCATION); $(RETRIEVE_TOOL) -o $(TARBALLS_LOCATION)/$(ARCHIVE) $(BASE_URL)/archive/$(VERSION).tar.gz
-
-$(PLATFORM): $(TARBALLS_LOCATION)/$(ARCHIVE) $(DEPS)
+$(PLATFORM): $(DEPS) | $(TARBALLS_LOCATION)/$(ARCHIVE).$(HASH_TYPE)
 	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)
-	cd $(PLATFORM); $(ARCHIVE_TOOL) $(TARBALLS_LOCATION)/$(ARCHIVE)
+	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
 	cd $(PLATFORM); $(AUTORECONF) -vif && $(PKGCONFIGPATH) CFLAGS="$(CFLAGS) $(EXTRA_CFLAGS)" ac_cv_path_GIT= ./configure $(config)
 
 $(PLATFORM)/.libs/$(LIBNAME).a: $(PLATFORM)

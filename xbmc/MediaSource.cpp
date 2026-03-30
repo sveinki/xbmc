@@ -1,29 +1,21 @@
 /*
- *      Copyright (C) 2005-2015 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2005-2020 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with Kodi; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "MediaSource.h"
-#include "Util.h"
+
 #include "URL.h"
+#include "Util.h"
 #include "filesystem/MultiPathDirectory.h"
-#include "utils/URIUtils.h"
+#include "media/MediaLockState.h"
 #include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+
+#include <algorithm>
 
 using namespace XFILE;
 
@@ -32,7 +24,7 @@ bool CMediaSource::IsWritable() const
   return CUtil::SupportsWriteFileOperations(strPath);
 }
 
-void CMediaSource::FromNameAndPaths(const std::string &category, const std::string &name, const std::vector<std::string> &paths)
+void CMediaSource::FromNameAndPaths(std::string_view name, const std::vector<std::string>& paths)
 {
   vecPaths = paths;
   if (paths.empty())
@@ -49,29 +41,27 @@ void CMediaSource::FromNameAndPaths(const std::string &category, const std::stri
   }
 
   strName = name;
-  m_iLockMode = LOCK_MODE_EVERYONE;
-  m_strLockCode = "0";
-  m_iBadPwdCount = 0;
-  m_iHasLock = 0;
+  m_lockInfo = {};
   m_allowSharing = true;
 
   if (URIUtils::IsMultiPath(strPath))
-    m_iDriveType = SOURCE_TYPE_VPATH;
+    m_iDriveType = SourceType::VPATH;
   else if (StringUtils::StartsWithNoCase(strPath, "udf:"))
   {
-    m_iDriveType = SOURCE_TYPE_VIRTUAL_DVD;
+    m_iDriveType = SourceType::VIRTUAL_OPTICAL_DISC;
     strPath = "D:\\";
   }
   else if (URIUtils::IsISO9660(strPath))
-    m_iDriveType = SOURCE_TYPE_VIRTUAL_DVD;
+    m_iDriveType = SourceType::VIRTUAL_OPTICAL_DISC;
   else if (URIUtils::IsDVD(strPath))
-    m_iDriveType = SOURCE_TYPE_DVD;
+    m_iDriveType = SourceType::OPTICAL_DISC;
   else if (URIUtils::IsRemote(strPath))
-    m_iDriveType = SOURCE_TYPE_REMOTE;
+    m_iDriveType = SourceType::REMOTE;
   else if (URIUtils::IsHD(strPath))
-    m_iDriveType = SOURCE_TYPE_LOCAL;
+    m_iDriveType = SourceType::LOCAL;
   else
-    m_iDriveType = SOURCE_TYPE_UNKNOWN;
+    m_iDriveType = SourceType::UNKNOWN;
+
   // check - convert to url and back again to make sure strPath is accurate
   // in terms of what we expect
   strPath = CURL(strPath).Get();
@@ -80,43 +70,20 @@ void CMediaSource::FromNameAndPaths(const std::string &category, const std::stri
 bool CMediaSource::operator==(const CMediaSource &share) const
 {
   // NOTE: we may wish to filter this through CURL to enable better "fuzzy" matching
-  if (strPath != share.strPath)
-    return false;
-  if (strName != share.strName)
-    return false;
-  return true;
+  return strPath == share.strPath && strName == share.strName;
 }
 
-void AddOrReplace(VECSOURCES& sources, const VECSOURCES& extras)
+void AddOrReplace(std::vector<CMediaSource>& sources, const std::vector<CMediaSource>& extras)
 {
-  unsigned int i;
-  for( i=0;i<extras.size();++i )
-  {
-    unsigned int j;
-    for ( j=0;j<sources.size();++j)
-    {
-      if (StringUtils::EqualsNoCase(sources[j].strPath, extras[i].strPath))
-      {
-        sources[j] = extras[i];
-        break;
-      }
-    }
-    if (j == sources.size())
-      sources.push_back(extras[i]);
-  }
+  std::ranges::for_each(extras, [&sources](auto& extra) { AddOrReplace(sources, extra); });
 }
 
-void AddOrReplace(VECSOURCES& sources, const CMediaSource& source)
+void AddOrReplace(std::vector<CMediaSource>& sources, const CMediaSource& source)
 {
-  unsigned int i;
-  for( i=0;i<sources.size();++i )
-  {
-    if (StringUtils::EqualsNoCase(sources[i].strPath, source.strPath))
-    {
-      sources[i] = source;
-      break;
-    }
-  }
-  if (i == sources.size())
+  auto it = std::ranges::find_if(sources, [&path = source.strPath](const auto& src)
+                                 { return StringUtils::EqualsNoCase(src.strPath, path); });
+  if (it != sources.end())
+    *it = source;
+  else
     sources.push_back(source);
 }

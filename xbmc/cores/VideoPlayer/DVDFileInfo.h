@@ -1,25 +1,14 @@
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,29 +17,47 @@ class CDVDDemux;
 class CStreamDetails;
 class CStreamDetailSubtitle;
 class CDVDInputStream;
+class CTexture;
 class CTextureDetails;
 
 class CDVDFileInfo
 {
 public:
-  // Extract a thumbnail image from the media at strPath, optionally populating a streamdetails class with the data
-  static bool ExtractThumb(const std::string &strPath,
-                           CTextureDetails &details,
-                           CStreamDetails *pStreamDetails, int pos=-1);
+  static std::unique_ptr<CTexture> ExtractThumbToTexture(const CFileItem& fileItem,
+                                                         int chapterNumber = 0);
+
+  /*!
+   * @brief Can a thumbnail image and file stream details be extracted from this file item?
+  */
+  static bool CanExtract(const CFileItem& fileItem);
 
   // Probe the files streams and store the info in the VideoInfoTag
-  static bool GetFileStreamDetails(CFileItem *pItem);
-  static bool DemuxerToStreamDetails(CDVDInputStream* pInputStream, CDVDDemux *pDemux, CStreamDetails &details, const std::string &path = "");
+  static bool GetFileStreamDetails(CFileItem* pItem);
+
+  static bool GetFileDuration(const std::string& path, int& duration);
+
+private:
+  static bool DemuxerToStreamDetails(const std::shared_ptr<CDVDInputStream>& pInputStream,
+                                     CDVDDemux* pDemux,
+                                     CStreamDetails& details,
+                                     const std::string& path = "");
 
   /** \brief Probe the file's internal and external streams and store the info in the StreamDetails parameter.
   *   \param[out] details The file's StreamDetails consisting of internal streams and external subtitle streams.
   */
-  static bool DemuxerToStreamDetails(CDVDInputStream *pInputStream, CDVDDemux *pDemuxer, const std::vector<CStreamDetailSubtitle> &subs, CStreamDetails &details);
-
-  static bool GetFileDuration(const std::string &path, int &duration);
+  static bool DemuxerToStreamDetails(const std::shared_ptr<CDVDInputStream>& pInputStream,
+                                     CDVDDemux* pDemuxer,
+                                     const std::vector<CStreamDetailSubtitle>& subs,
+                                     CStreamDetails& details);
 
   /** \brief Probe the streams of an external subtitle file and store the info in the StreamDetails parameter.
   *   \param[out] details The external subtitle file's StreamDetails.
   */
   static bool AddExternalSubtitleToDetails(const std::string &path, CStreamDetails &details, const std::string& filename, const std::string& subfilename = "");
+
+  /** \brief Checks external subtitles for a given item and adds any existing ones to the item stream details
+  *   \param item The video item
+  *   \sa AddExternalSubtitleToDetails
+  */
+  static void ProcessExternalSubtitles(CFileItem* item);
 };

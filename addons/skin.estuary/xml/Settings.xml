@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <window>
-	<defaultcontrol always="true">9000</defaultcontrol>
+	<defaultcontrol>9000</defaultcontrol>
 	<backgroundcolor>background</backgroundcolor>
 	<controls>
 		<include>DefaultBackground</include>
@@ -35,7 +35,8 @@
 				<width>100%</width>
 				<top>120</top>
 				<height>300</height>
-				<onup>noop</onup>
+				<onup>Control.SetFocus(9001,$INFO[Container(9000).Position],absolute)</onup>
+				<onup>Down</onup>
 				<ondown>Control.SetFocus(9001,$INFO[Container(9000).Position],absolute)</ondown>
 				<include>SettingsPanel</include>
 				<content>
@@ -67,7 +68,8 @@
 				<top>470</top>
 				<bottom>0</bottom>
 				<onup>Control.SetFocus(9000,$INFO[Container(9001).Position],absolute)</onup>
-				<ondown>noop</ondown>
+				<ondown>Up</ondown>
+				<ondown>Control.SetFocus(9000,$INFO[Container(9001).Position],absolute)</ondown>
 				<include>SettingsPanel</include>
 				<content>
 					<item>
@@ -115,7 +117,7 @@
 						<label>LibreELEC</label>
 						<onclick>RunAddon(service.libreelec.settings)</onclick>
 						<icon>icons/settings/libreelec.png</icon>
-						<visible>System.HasAddon(service.libreelec.settings)</visible>
+						<visible>System.AddonIsEnabled(service.libreelec.settings)</visible>
 					</item>
 				</content>
 			</control>

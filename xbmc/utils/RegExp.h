@@ -1,42 +1,20 @@
-#pragma once
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
-#ifndef REGEXP_H
-#define REGEXP_H
+#pragma once
 
 //! @todo - move to std::regex (after switching to gcc 4.9 or higher) and get rid of CRegExp
 
 #include <string>
 #include <vector>
 
-/* make sure stdlib.h is included before including pcre.h inside the
-   namespace; this works around stdlib.h definitions also living in
-   the PCRE namespace */
-#include <stdlib.h>
-
-namespace PCRE {
-struct real_pcre_jit_stack; // forward declaration for PCRE without JIT
-typedef struct real_pcre_jit_stack pcre_jit_stack;
-#include <pcre.h>
-}
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 class CRegExp
 {
@@ -45,7 +23,7 @@ public:
   {
     NoStudy          = 0, // do not study expression
     StudyRegExp      = 1, // study expression (slower compilation, faster find)
-    StudyWithJitComp      // study expression and JIT-compile it, if possible (heavyweight optimization) 
+    StudyWithJitComp      // study expression and JIT-compile it, if possible (heavyweight optimization)
   };
   enum utf8Mode
   {
@@ -65,7 +43,7 @@ public:
   /**
    * Create new CRegExp object and compile regexp expression in one step
    * @warning Use only with hardcoded regexp when you're sure that regexp is compiled without errors
-   * @param caseless    Matching will be case insensitive if set to true 
+   * @param caseless    Matching will be case insensitive if set to true
    *                    or case sensitive if set to false
    * @param utf8        Control UTF-8 processing
    * @param re          The regular expression
@@ -80,7 +58,7 @@ public:
   /**
    * Compile (prepare) regular expression
    * @param re          The regular expression
-   * @param study (optional) Controls study of expression, useful if expression will be used 
+   * @param study (optional) Controls study of expression, useful if expression will be used
    *                         several times
    * @return true on success, false on any error
    */
@@ -100,7 +78,7 @@ public:
    * Find first match of regular expression in given string
    * @param str         The string to match against regular expression
    * @param startoffset (optional) The string offset to start matching
-   * @param maxNumberOfCharsToTest (optional) The maximum number of characters to test (match) in 
+   * @param maxNumberOfCharsToTest (optional) The maximum number of characters to test (match) in
    *                                          string. If set to -1 string checked up to the end.
    * @return staring position of match in string, negative value in case of error or no match
    */
@@ -125,15 +103,11 @@ public:
   };
   int GetSubCount() const { return m_iMatchCount - 1; } // PCRE returns the number of sub-patterns + 1
   int GetSubStart(int iSub) const;
-  int GetSubStart(const std::string& subName) const;
   int GetSubLength(int iSub) const;
-  int GetSubLength(const std::string& subName) const;
   int GetCaptureTotal() const;
   std::string GetMatch(int iSub = 0) const;
-  std::string GetMatch(const std::string& subName) const;
+  std::string GetMatch(const char* name) const;
   const std::string& GetPattern() const { return m_pattern; }
-  bool GetNamedSubPattern(const char* strName, std::string& strMatch) const;
-  int GetNamedSubPatternNumber(const char* strName) const;
   void DumpOvector(int iLog);
   /**
    * Check is RegExp object is ready for matching
@@ -157,17 +131,18 @@ private:
   void Cleanup();
   inline bool IsValidSubNumber(int iSub) const;
 
-  PCRE::pcre* m_re;
-  PCRE::pcre_extra* m_sd;
+  pcre2_code* m_re;
+  pcre2_match_context* m_ctxt;
   static const int OVECCOUNT=(m_MaxNumOfBackrefrences + 1) * 3;
   unsigned int m_offset;
-  int         m_iOvector[OVECCOUNT];
+  pcre2_match_data* m_matchData;
+  PCRE2_SIZE* m_iOvector;
   utf8Mode    m_utf8Mode;
   int         m_iMatchCount;
-  int         m_iOptions;
+  uint32_t m_iOptions;
   bool        m_jitCompiled;
   bool        m_bMatched;
-  PCRE::pcre_jit_stack* m_jitStack;
+  pcre2_jit_stack* m_jitStack;
   std::string m_subject;
   std::string m_pattern;
   static int  m_Utf8Supported;
@@ -175,7 +150,4 @@ private:
   static int  m_JitSupported;
 };
 
-typedef std::vector<CRegExp> VECCREGEXP;
-
-#endif
-
+std::vector<CRegExp> CompileRegexes(const std::vector<std::string>& regExpPatterns);

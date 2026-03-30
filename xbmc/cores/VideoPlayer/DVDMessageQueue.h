@@ -1,55 +1,35 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
+
 #include "DVDMessage.h"
-#include <atomic>
-#include <string>
-#include <list>
-#include <algorithm>
 #include "threads/CriticalSection.h"
 #include "threads/Event.h"
 
+#include <algorithm>
+#include <atomic>
+#include <list>
+#include <string>
+
 struct DVDMessageListItem
 {
-  DVDMessageListItem(CDVDMsg* msg, int prio)
+  DVDMessageListItem(std::shared_ptr<CDVDMsg> msg, int prio) : message(std::move(msg))
   {
-    message = msg->Acquire();
     priority = prio;
   }
-  DVDMessageListItem()
-  {
-    message = NULL;
-    priority = 0;
-  }
+  DVDMessageListItem() { priority = 0; }
   DVDMessageListItem(const DVDMessageListItem&) = delete;
- ~DVDMessageListItem()
-  {
-    if(message)
-      message->Release();
-  }
+  ~DVDMessageListItem() = default;
 
   DVDMessageListItem& operator=(const DVDMessageListItem&) = delete;
 
-  CDVDMsg* message;
+  std::shared_ptr<CDVDMsg> message;
   int priority;
 };
 
@@ -68,7 +48,7 @@ enum MsgQueueReturnCode
 class CDVDMessageQueue
 {
 public:
-  CDVDMessageQueue(const std::string &owner);
+  explicit CDVDMessageQueue(const std::string &owner);
   virtual ~CDVDMessageQueue();
 
   void Init();
@@ -76,23 +56,25 @@ public:
   void Abort();
   void End();
 
-  MsgQueueReturnCode Put(CDVDMsg* pMsg, int priority = 0);
-  MsgQueueReturnCode PutBack(CDVDMsg* pMsg, int priority = 0);
+  MsgQueueReturnCode Put(const std::shared_ptr<CDVDMsg>& pMsg, int priority = 0);
+  MsgQueueReturnCode PutBack(const std::shared_ptr<CDVDMsg>& pMsg, int priority = 0);
 
   /**
    * msg,       message type from DVDMessage.h
    * timeout,   timeout in msec
    * priority,  minimum priority to get, outputs returned packets priority
    */
-  MsgQueueReturnCode Get(CDVDMsg** pMsg, unsigned int iTimeoutInMilliSeconds, int &priority);
-  MsgQueueReturnCode Get(CDVDMsg** pMsg, unsigned int iTimeoutInMilliSeconds)
+  MsgQueueReturnCode Get(std::shared_ptr<CDVDMsg>& pMsg,
+                         std::chrono::milliseconds timeout,
+                         int& priority);
+  MsgQueueReturnCode Get(std::shared_ptr<CDVDMsg>& pMsg, std::chrono::milliseconds timeout)
   {
     int priority = 0;
-    return Get(pMsg, iTimeoutInMilliSeconds, priority);
+    return Get(pMsg, timeout, priority);
   }
 
   int GetDataSize() const { return m_iDataSize; }
-  int GetTimeSize() const;
+  double GetTimeSize() const;
   unsigned GetPacketCount(CDVDMsg::Message type);
   bool ReceivedAbortRequest() { return m_bAbortRequest; }
   void WaitUntilEmpty();
@@ -102,22 +84,21 @@ public:
   int GetLevel() const;
 
   void SetMaxDataSize(int iMaxDataSize) { m_iMaxDataSize = iMaxDataSize; }
-  void SetMaxTimeSize(double sec) { m_TimeSize  = 1.0 / std::max(1.0, sec); }
+  void SetMaxTimeSize(double sec) { m_TimeSize = 1.0 / sec; }
   int GetMaxDataSize() const { return m_iMaxDataSize; }
   double GetMaxTimeSize() const { return m_TimeSize; }
   bool IsInited() const { return m_bInitialized; }
   bool IsDataBased() const;
 
 private:
-
-  MsgQueueReturnCode Put(CDVDMsg* pMsg, int priority, bool front);
+  MsgQueueReturnCode Put(const std::shared_ptr<CDVDMsg>& pMsg, int priority, bool front);
   void UpdateTimeFront();
   void UpdateTimeBack();
 
   CEvent m_hEvent;
   mutable CCriticalSection m_section;
 
-  std::atomic<bool> m_bAbortRequest;
+  std::atomic<bool> m_bAbortRequest = false;
   bool m_bInitialized;
   bool m_drain = false;
 

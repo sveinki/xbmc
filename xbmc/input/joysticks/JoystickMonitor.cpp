@@ -1,32 +1,40 @@
 /*
- *      Copyright (C) 2015-2017 Team Kodi
- *      http://kodi.tv
+ *  Copyright (C) 2015-2024 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this Program; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
 #include "JoystickMonitor.h"
-#include "Application.h"
-#include "input/InputManager.h"
+
 #include "ServiceBroker.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationPowerHandling.h"
+#include "games/controllers/ControllerIDs.h"
+#include "input/InputManager.h"
+
+#include <cmath>
 
 using namespace KODI;
 using namespace JOYSTICK;
 
-bool CJoystickMonitor::OnButtonMotion(unsigned int buttonIndex, bool bPressed)
+#define AXIS_DEADZONE 0.05f
+
+std::string CJoystickMonitor::ControllerID() const
+{
+  return GAME::DEFAULT_CONTROLLER_ID;
+}
+
+bool CJoystickMonitor::AcceptsInput(const FeatureName& feature) const
+{
+  // Only accept input when screen saver is active
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+  return appPower->IsInScreenSaver();
+}
+
+bool CJoystickMonitor::OnButtonPress(const FeatureName& feature, bool bPressed)
 {
   if (bPressed)
   {
@@ -37,9 +45,11 @@ bool CJoystickMonitor::OnButtonMotion(unsigned int buttonIndex, bool bPressed)
   return false;
 }
 
-bool CJoystickMonitor::OnHatMotion(unsigned int hatIndex, HAT_STATE state)
+bool CJoystickMonitor::OnButtonMotion(const FeatureName& feature,
+                                      float magnitude,
+                                      unsigned int motionTimeMs)
 {
-  if (state != HAT_STATE::UNPRESSED)
+  if (std::fabs(magnitude) > AXIS_DEADZONE)
   {
     CServiceBroker::GetInputManager().SetMouseActive(false);
     return ResetTimers();
@@ -48,9 +58,39 @@ bool CJoystickMonitor::OnHatMotion(unsigned int hatIndex, HAT_STATE state)
   return false;
 }
 
-bool CJoystickMonitor::OnAxisMotion(unsigned int axisIndex, float position, int center, unsigned int range)
+bool CJoystickMonitor::OnAnalogStickMotion(const FeatureName& feature,
+                                           float x,
+                                           float y,
+                                           unsigned int motionTimeMs)
 {
-  if (position)
+  // Analog stick deadzone already processed
+  if (x != 0.0f || y != 0.0f)
+  {
+    CServiceBroker::GetInputManager().SetMouseActive(false);
+    return ResetTimers();
+  }
+
+  return false;
+}
+
+bool CJoystickMonitor::OnWheelMotion(const FeatureName& feature,
+                                     float position,
+                                     unsigned int motionTimeMs)
+{
+  if (std::fabs(position) > AXIS_DEADZONE)
+  {
+    CServiceBroker::GetInputManager().SetMouseActive(false);
+    return ResetTimers();
+  }
+
+  return false;
+}
+
+bool CJoystickMonitor::OnThrottleMotion(const FeatureName& feature,
+                                        float position,
+                                        unsigned int motionTimeMs)
+{
+  if (std::fabs(position) > AXIS_DEADZONE)
   {
     CServiceBroker::GetInputManager().SetMouseActive(false);
     return ResetTimers();
@@ -61,7 +101,11 @@ bool CJoystickMonitor::OnAxisMotion(unsigned int axisIndex, float position, int 
 
 bool CJoystickMonitor::ResetTimers(void)
 {
-  g_application.ResetSystemIdleTimer();
-  g_application.ResetScreenSaver();
-  return g_application.WakeUpScreenSaverAndDPMS();
+  auto& components = CServiceBroker::GetAppComponents();
+  const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+  appPower->ResetSystemIdleTimer();
+  appPower->ResetScreenSaver();
+  return appPower->WakeUpScreenSaverAndDPMS();
+
+  return true;
 }

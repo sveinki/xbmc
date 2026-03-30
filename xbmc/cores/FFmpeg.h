@@ -1,56 +1,44 @@
-#pragma once
-
 /*
- *      Copyright (C) 2005-2013 Team XBMC
- *      http://xbmc.org
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
  *
- *  This Program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This Program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with XBMC; see the file COPYING.  If not, see
- *  <http://www.gnu.org/licenses/>.
- *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
  */
 
+#pragma once
 
-#include "utils/CPUInfo.h"
+#include "utils/StringUtils.h"
 
-extern "C" {
-#include "libavcodec/avcodec.h"
-#include "libavformat/avformat.h"
-#include "libavutil/avutil.h"
-#include "libavutil/ffversion.h"
-#include "libavfilter/avfilter.h"
-#include "libpostproc/postprocess.h"
-}
-
-inline int PPCPUFlags()
+extern "C"
 {
-  unsigned int cpuFeatures = g_cpuInfo.GetCPUFeatures();
-  int flags = 0;
-
-  if (cpuFeatures & CPU_FEATURE_MMX)
-    flags |= PP_CPU_CAPS_MMX;
-  if (cpuFeatures & CPU_FEATURE_MMX2)
-    flags |= PP_CPU_CAPS_MMX2;
-  if (cpuFeatures & CPU_FEATURE_3DNOW)
-    flags |= PP_CPU_CAPS_3DNOW;
-  if (cpuFeatures & CPU_FEATURE_ALTIVEC)
-    flags |= PP_CPU_CAPS_ALTIVEC;
-
-  return flags;
+#include <libavcodec/avcodec.h>
+#include <libavfilter/avfilter.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/ffversion.h>
+#include <libavutil/log.h>
 }
 
-// callback used for locking
-int ffmpeg_lockmgr_cb(void **mutex, enum AVLockOp operation);
+#include <tuple>
+
+namespace FFMPEG_HELP_TOOLS
+{
+
+struct FFMpegException : public std::exception
+{
+  std::string s;
+  template<typename... Args>
+  FFMpegException(const std::string& fmt, Args&&... args)
+    : s(StringUtils::Format(fmt, std::forward<Args>(args)...))
+  {
+  }
+  const char* what() const noexcept override { return s.c_str(); }
+};
+
+std::string FFMpegErrorToString(int err);
+
+} // namespace FFMPEG_HELP_TOOLS
 
 // callback used for logging
 void ff_avutil_log(void* ptr, int level, const char* format, va_list va);
@@ -65,3 +53,40 @@ public:
   int level;
 };
 
+class FFmpegExtraData
+{
+public:
+  FFmpegExtraData() = default;
+  explicit FFmpegExtraData(size_t size);
+  FFmpegExtraData(const uint8_t* data, size_t size);
+  FFmpegExtraData(const FFmpegExtraData& other);
+  FFmpegExtraData(FFmpegExtraData&& other) noexcept;
+
+  ~FFmpegExtraData();
+
+  FFmpegExtraData& operator=(const FFmpegExtraData& other);
+  FFmpegExtraData& operator=(FFmpegExtraData&& other) noexcept;
+
+  bool operator==(const FFmpegExtraData& other) const;
+  bool operator!=(const FFmpegExtraData& other) const;
+
+  operator bool() const { return m_data != nullptr && m_size != 0; }
+  uint8_t* GetData() { return m_data; }
+  const uint8_t* GetData() const { return m_data; }
+  size_t GetSize() const { return m_size; }
+  /*!
+   * \brief Take ownership over the extra data buffer
+   *
+   * It's in the responsibility of the caller to free the buffer with av_free. After the call
+   * FFmpegExtraData is empty.
+   *
+   * \return The extra data buffer or nullptr if FFmpegExtraData is empty.
+   */
+  uint8_t* TakeData();
+
+private:
+  uint8_t* m_data{nullptr};
+  size_t m_size{};
+};
+
+FFmpegExtraData GetPacketExtradata(const AVPacket* pkt, const AVCodecParameters* codecPar);

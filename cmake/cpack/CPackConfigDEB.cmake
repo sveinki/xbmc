@@ -1,6 +1,40 @@
 # include Macros.cmake to automate generation of time/date stamps, maintainer, etc.
 include(${CMAKE_SOURCE_DIR}/cmake/scripts/common/Macros.cmake)
 
+# Function only used in CPackConfigDEB
+
+# Generates an RFC2822 timestamp
+#
+# The following variable is set:
+#   RFC2822_TIMESTAMP
+function(rfc2822stamp)
+  execute_process(COMMAND date -R
+                  OUTPUT_VARIABLE RESULT)
+  set(RFC2822_TIMESTAMP ${RESULT} PARENT_SCOPE)
+endfunction()
+
+# Generates an user stamp from git config info
+#
+# The following variable is set:
+#   PACKAGE_MAINTAINER - user stamp in the form of "username <username@example.com>"
+#                        if no git tree is found, value is set to "nobody <nobody@example.com>"
+function(userstamp)
+  find_package(Git)
+  if(GIT_FOUND AND EXISTS ${CMAKE_SOURCE_DIR}/.git)
+    execute_process(COMMAND ${GIT_EXECUTABLE} config user.name
+                    OUTPUT_VARIABLE username
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} config user.email
+                    OUTPUT_VARIABLE useremail
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(PACKAGE_MAINTAINER "${username} <${useremail}>" PARENT_SCOPE)
+  else()
+    set(PACKAGE_MAINTAINER "nobody <nobody@example.com>" PARENT_SCOPE)
+  endif()
+endfunction()
+
 # find stuff we need
 find_program(LSB_RELEASE_CMD lsb_release)
 find_program(DPKG_CMD dpkg)
@@ -182,7 +216,7 @@ install(FILES ${CPACK_PACKAGE_DIRECTORY}/deb/kodi-ps3remote.1.gz
         COMPONENT kodi-eventclients-ps3)
 install(FILES ${CPACK_PACKAGE_DIRECTORY}/deb/kodi-send.1.gz
         DESTINATION share/man/man1
-        COMPONENT kodi-eventclients-xbmc-send)
+        COMPONENT kodi-eventclients-kodi-send)
 install(FILES ${CPACK_PACKAGE_DIRECTORY}/deb/kodi-wiiremote.1.gz
         DESTINATION share/man/man1
         COMPONENT kodi-eventclients-wiiremote)

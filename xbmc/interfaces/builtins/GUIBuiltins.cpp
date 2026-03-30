@@ -1,50 +1,44 @@
 /*
-   *      Copyright (C) 2005-2015 Team XBMC
-   *      http://xbmc.org
-   *
-   *  This Program is free software; you can redistribute it and/or modify
-   *  it under the terms of the GNU General Public License as published by
-   *  the Free Software Foundation; either version 2, or (at your option)
-   *  any later version.
-   *
-   *  This Program is distributed in the hope that it will be useful,
-   *  but WITHOUT ANY WARRANTY; without even the implied warranty of
-   *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-   *  GNU General Public License for more details.
-   *
-   *  You should have received a copy of the GNU General Public License
-   *  along with XBMC; see the file COPYING.  If not, see
-   *  <http://www.gnu.org/licenses/>.
-   *
-   */
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
 
 #include "GUIBuiltins.h"
 
-#include "Application.h"
-#include "messaging/ApplicationMessenger.h"
+#include "ServiceBroker.h"
+#include "Util.h"
+#include "application/ApplicationComponents.h"
+#include "application/ApplicationPowerHandling.h"
 #include "dialogs/GUIDialogKaiToast.h"
 #include "dialogs/GUIDialogNumeric.h"
 #include "filesystem/Directory.h"
-#include "input/ActionTranslator.h"
-#include "input/Key.h"
-#include "input/WindowTranslator.h"
+#include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
-#include "guilib/LocalizeStrings.h"
 #include "guilib/StereoscopicsManager.h"
-#include "input/ButtonTranslator.h"
+#include "input/WindowTranslator.h"
+#include "input/actions/Action.h"
+#include "input/actions/ActionIDs.h"
+#include "input/actions/ActionTranslator.h"
+#include "messaging/ApplicationMessenger.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
-#include "settings/DisplaySettings.h"
-#include "utils/log.h"
-#include "utils/StringUtils.h"
-#include "Util.h"
-#include "utils/URIUtils.h"
-#include "utils/Screenshot.h"
-#include "utils/RssManager.h"
+#include "settings/SettingsComponent.h"
 #include "utils/AlarmClock.h"
+#include "utils/RssManager.h"
+#include "utils/Screenshot.h"
+#include "utils/StringUtils.h"
+#include "utils/URIUtils.h"
+#include "utils/log.h"
 #include "windows/GUIMediaWindow.h"
 
-using namespace KODI::MESSAGING;
+using namespace KODI;
 
+namespace
+{
 /*! \brief Execute a GUI action.
  *  \param params The parameters.
  *  \details params[0] = Action to execute.
@@ -52,12 +46,13 @@ using namespace KODI::MESSAGING;
  */
 static int Action(const std::vector<std::string>& params)
 {
-  // try translating the action from our ButtonTranslator
+  // try translating the action from our ActionTranslator
   unsigned int actionID;
-  if (CActionTranslator::TranslateString(params[0], actionID))
+  if (ACTION::CActionTranslator::TranslateString(params[0], actionID))
   {
     int windowID = params.size() == 2 ? CWindowTranslator::TranslateWindow(params[1]) : WINDOW_INVALID;
-    CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, windowID, -1, static_cast<void*>(new CAction(actionID)));
+    CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_ACTION, windowID, -1,
+                                               static_cast<void*>(new CAction(actionID)));
   }
 
   return 0;
@@ -77,7 +72,7 @@ static int ActivateWindow(const std::vector<std::string>& params2)
   std::vector<std::string> params(params2);
   // get the parameters
   std::string strWindow;
-  if (params.size())
+  if (!params.empty())
   {
     strWindow = params[0];
     params.erase(params.begin());
@@ -88,25 +83,38 @@ static int ActivateWindow(const std::vector<std::string>& params2)
   if (iWindow != WINDOW_INVALID)
   {
     // compare the given directory param with the current active directory
+    // if no directory is given, and you switch from a video window to another
+    // we retain history, so it makes sense to not switch to the same window in
+    // that case
     bool bIsSameStartFolder = true;
     if (!params.empty())
     {
-      CGUIWindow *activeWindow = g_windowManager.GetWindow(g_windowManager.GetActiveWindow());
+      CGUIWindow *activeWindow = CServiceBroker::GetGUI()->GetWindowManager().GetWindow(CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow());
       if (activeWindow && activeWindow->IsMediaWindow())
         bIsSameStartFolder = static_cast<CGUIMediaWindow*>(activeWindow)->IsSameStartFolder(params[0]);
     }
 
     // activate window only if window and path differ from the current active window
-    if (iWindow != g_windowManager.GetActiveWindow() || !bIsSameStartFolder)
+    if (iWindow != CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow() || !bIsSameStartFolder)
     {
-      g_application.WakeUpScreenSaverAndDPMS();
-      g_windowManager.ActivateWindow(iWindow, params, Replace);
+      // if the window doesn't change, make sure it knows it's gonna be replaced
+      // this ensures setting the start directory if we switch paths
+      // if we change windows, that's done anyway
+      if (Replace && !params.empty() &&
+          iWindow == CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow())
+        params.emplace_back("replace");
+
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+      appPower->WakeUpScreenSaverAndDPMS();
+      CServiceBroker::GetGUI()->GetWindowManager().ActivateWindow(iWindow, params, Replace);
       return 0;
     }
   }
   else
   {
-    CLog::Log(LOGERROR, "Activate/ReplaceWindow called with invalid destination window: %s", strWindow.c_str());
+    CLog::Log(LOGERROR, "Activate/ReplaceWindow called with invalid destination window: {}",
+              strWindow);
     return false;
   }
 
@@ -130,19 +138,21 @@ static int ActivateAndFocus(const std::vector<std::string>& params)
   int iWindow = CWindowTranslator::TranslateWindow(strWindow);
   if (iWindow != WINDOW_INVALID)
   {
-    if (iWindow != g_windowManager.GetActiveWindow())
+    if (iWindow != CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindow())
     {
       // disable the screensaver
-      g_application.WakeUpScreenSaverAndDPMS();
-      g_windowManager.ActivateWindow(iWindow, {}, Replace);
+      auto& components = CServiceBroker::GetAppComponents();
+      const auto appPower = components.GetComponent<CApplicationPowerHandling>();
+      appPower->WakeUpScreenSaverAndDPMS();
+      CServiceBroker::GetGUI()->GetWindowManager().ActivateWindow(iWindow, {}, Replace);
 
       unsigned int iPtr = 1;
       while (params.size() > iPtr + 1)
       {
-        CGUIMessage msg(GUI_MSG_SETFOCUS, g_windowManager.GetFocusedWindow(),
+        CGUIMessage msg(GUI_MSG_SETFOCUS, CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindowOrDialog(),
                         atol(params[iPtr].c_str()),
                         (params.size() >= iPtr + 2) ? atol(params[iPtr + 1].c_str())+1 : 0);
-        g_windowManager.SendMessage(msg);
+        CServiceBroker::GetGUI()->GetWindowManager().SendMessage(msg);
         iPtr += 2;
       }
       return 0;
@@ -150,7 +160,8 @@ static int ActivateAndFocus(const std::vector<std::string>& params)
 
   }
   else
-    CLog::Log(LOGERROR, "Replace/ActivateWindowAndFocus called with invalid destination window: %s", strWindow.c_str());
+    CLog::Log(LOGERROR, "Replace/ActivateWindowAndFocus called with invalid destination window: {}",
+              strWindow);
 
   return 1;
 }
@@ -165,7 +176,7 @@ static int ActivateAndFocus(const std::vector<std::string>& params)
  */
 static int AlarmClock(const std::vector<std::string>& params)
 {
-  // format is alarmclock(name,command[,seconds,true]);
+  // format is alarmclock(name,command[,time,true,false]);
   float seconds = 0;
   if (params.size() > 2)
   {
@@ -178,9 +189,9 @@ static int AlarmClock(const std::vector<std::string>& params)
   { // check if shutdown is specified in particular, and get the time for it
     std::string strHeading;
     if (StringUtils::EqualsNoCase(params[0], "shutdowntimer"))
-      strHeading = g_localizeStrings.Get(20145);
+      strHeading = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20145);
     else
-      strHeading = g_localizeStrings.Get(13209);
+      strHeading = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(13209);
     std::string strTime;
     if( CGUIDialogNumeric::ShowAndGetNumber(strTime, strHeading) )
       seconds = static_cast<float>(atoi(strTime.c_str())*60);
@@ -229,7 +240,7 @@ static int CancelAlarm(const std::vector<std::string>& params)
  */
 static int ClearProperty(const std::vector<std::string>& params)
 {
-  CGUIWindow *window = g_windowManager.GetWindow(params.size() > 1 ? CWindowTranslator::TranslateWindow(params[1]) : g_windowManager.GetFocusedWindow());
+  CGUIWindow *window = CServiceBroker::GetGUI()->GetWindowManager().GetWindow(params.size() > 1 ? CWindowTranslator::TranslateWindow(params[1]) : CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindowOrDialog());
   if (window)
     window->SetProperty(params[0],"");
 
@@ -248,12 +259,12 @@ static int CloseDialog(const std::vector<std::string>& params)
     bForce = true;
   if (StringUtils::EqualsNoCase(params[0], "all"))
   {
-    g_windowManager.CloseDialogs(bForce);
+    CServiceBroker::GetGUI()->GetWindowManager().CloseDialogs(bForce);
   }
   else
   {
     int id = CWindowTranslator::TranslateWindow(params[0]);
-    CGUIWindow *window = g_windowManager.GetWindow(id);
+    CGUIWindow *window = CServiceBroker::GetGUI()->GetWindowManager().GetWindow(id);
     if (window && window->IsDialog())
       static_cast<CGUIDialog*>(window)->Close(bForce);
   }
@@ -311,7 +322,8 @@ static int Screenshot(const std::vector<std::string>& params)
     {
       if (XFILE::CDirectory::Exists(strSaveToPath))
       {
-        std::string file = CUtil::GetNextFilename(URIUtils::AddFileToFolder(strSaveToPath, "screenshot%03d.png"), 999);
+        std::string file = CUtil::GetNextFilename(
+            URIUtils::AddFileToFolder(strSaveToPath, "screenshot{:05}.png"), 65535);
 
         if (!file.empty())
         {
@@ -319,7 +331,7 @@ static int Screenshot(const std::vector<std::string>& params)
         }
         else
         {
-          CLog::Log(LOGWARNING, "Too many screen shots or invalid folder %s", strSaveToPath.c_str());
+          CLog::Log(LOGWARNING, "Too many screen shots or invalid folder {}", strSaveToPath);
         }
       }
       else
@@ -338,35 +350,7 @@ static int Screenshot(const std::vector<std::string>& params)
  */
 static int SetLanguage(const std::vector<std::string>& params)
 {
-  CApplicationMessenger::GetInstance().PostMsg(TMSG_SETLANGUAGE, -1, -1, nullptr, params[0]);
-
-  return 0;
-}
-
-/*! \brief Set GUI resolution.
- *  \param params The parameters.
- *  \details params[0] = A resolution identifier.
- */
-static int SetResolution(const std::vector<std::string>& params)
-{
-  RESOLUTION res = RES_PAL_4x3;
-  std::string paramlow(params[0]);
-  StringUtils::ToLower(paramlow);
-  if (paramlow == "pal") res = RES_PAL_4x3;
-  else if (paramlow == "pal16x9") res = RES_PAL_16x9;
-  else if (paramlow == "ntsc") res = RES_NTSC_4x3;
-  else if (paramlow == "ntsc16x9") res = RES_NTSC_16x9;
-  else if (paramlow == "720p") res = RES_HDTV_720p;
-  else if (paramlow == "720psbs") res = RES_HDTV_720pSBS;
-  else if (paramlow == "720ptb") res = RES_HDTV_720pTB;
-  else if (paramlow == "1080psbs") res = RES_HDTV_1080pSBS;
-  else if (paramlow == "1080ptb") res = RES_HDTV_1080pTB;
-  else if (paramlow == "1080i") res = RES_HDTV_1080i;
-  if (g_graphicsContext.IsValidResolution(res))
-  {
-    CDisplaySettings::GetInstance().SetCurrentResolution(res, true);
-    g_application.ReloadSkin();
-  }
+  CServiceBroker::GetAppMessenger()->PostMsg(TMSG_SETLANGUAGE, -1, -1, nullptr, params[0]);
 
   return 0;
 }
@@ -379,7 +363,7 @@ static int SetResolution(const std::vector<std::string>& params)
  */
 static int SetProperty(const std::vector<std::string>& params)
 {
-  CGUIWindow *window = g_windowManager.GetWindow(params.size() > 2 ? CWindowTranslator::TranslateWindow(params[2]) : g_windowManager.GetFocusedWindow());
+  CGUIWindow *window = CServiceBroker::GetGUI()->GetWindowManager().GetWindow(params.size() > 2 ? CWindowTranslator::TranslateWindow(params[2]) : CServiceBroker::GetGUI()->GetWindowManager().GetActiveWindowOrDialog());
   if (window)
     window->SetProperty(params[0],params[1]);
 
@@ -392,12 +376,13 @@ static int SetProperty(const std::vector<std::string>& params)
  */
 static int SetStereoMode(const std::vector<std::string>& params)
 {
-  CAction action = CStereoscopicsManager::GetInstance().ConvertActionCommandToAction("SetStereoMode", params[0]);
+  CAction action = CStereoscopicsManager::ConvertActionCommandToAction("SetStereoMode", params[0]);
   if (action.GetID() != ACTION_NONE)
-    CApplicationMessenger::GetInstance().SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1, static_cast<void*>(new CAction(action)));
+    CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_ACTION, WINDOW_INVALID, -1,
+                                               static_cast<void*>(new CAction(action)));
   else
   {
-    CLog::Log(LOGERROR,"Builtin 'SetStereoMode' called with unknown parameter: %s", params[0].c_str());
+    CLog::Log(LOGERROR, "Builtin 'SetStereoMode' called with unknown parameter: {}", params[0]);
     return -2;
   }
 
@@ -409,10 +394,11 @@ static int SetStereoMode(const std::vector<std::string>& params)
  */
 static int ToggleDirty(const std::vector<std::string>&)
 {
-  g_advancedSettings.ToggleDirtyRegionVisualization();
+  CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->ToggleDirtyRegionVisualization();
 
   return 0;
 }
+} // namespace
 
 // Note: For new Texts with comma add a "\" before!!! Is used for table text.
 //
@@ -443,7 +429,7 @@ static int ToggleDirty(const std::vector<std::string>&)
 ///     @param[in] silent                Send "true" or "silent" to silently cancel alarm (optional).
 ///   }
 ///   \table_row2_l{
-///     <b>`AlarmClock(name\,command\,time[\,silent\,loop])`</b>
+///     <b>`AlarmClock(name\,command[\,time\,silent\,loop])`</b>
 ///     ,
 ///     Pops up a dialog asking for the length of time for the alarm (unless the
 ///     parameter time is specified)\, and starts a timer. When the timer runs out\,
@@ -451,28 +437,41 @@ static int ToggleDirty(const std::vector<std::string>&)
 ///     specified\, otherwise it'll pop up an alarm notice. Add silent to hide the
 ///     alarm notification. Add loop for the alarm to execute the command each
 ///     time the specified time interval expires.
+///     @note if using any of the last optional parameters (silent or loop)\, both must
+///     be provided for any to take effect.
+///     <p>
+///     <b>Example:</b>
+///     The following example will create an alarmclock named `mytimer` which will silently
+///     fire (a single time) and set a property (timerelapsed) with value 1 in the window with
+///     id 1109 after 5 seconds have passed.
+///     ~~~~~~~~~~~~~
+///     AlarmClock(mytimer\,SetProperty(timerelapsed\,1\,1109)\,00:00:05\,silent\,false])
+///     ~~~~~~~~~~~~~
+///     <p>
 ///     @param[in] name                  name
 ///     @param[in] command               command
-///     @param[in] time                  Length in seconds (optional).
-///     @param[in] silent                Send "silent" to suppress notifications.
-///     @param[in] loop                  Send "loop" to loop the alarm.
+///     @param[in] time                  [opt] <b>(a)</b> Length in minutes or <b>(b)</b> a timestring in the format `hh:mm:ss` or `mm min`.
+///     @param[in] silent                [opt] Send "silent" to suppress notifications.
+///     @param[in] loop                  [opt] Send "loop" to loop the alarm.
 ///   }
 ///   \table_row2_l{
-///     <b>`ActivateWindow(window[\,dir])`</b>
+///     <b>`ActivateWindow(window[\,dir\, return])`</b>
 ///     ,
 ///     Opens the given window. The parameter window can either be the window's id\,
-///     or in the case of a standard window\, the window's name. See here for a list
-///     of window names\, and their respective ids. If\, furthermore\, the window is
+///     or in the case of a standard window\, the window's name. See \ref window_ids "here" for a list
+///     of window names\, and their respective ids.
+///     If\, furthermore\, the window is
 ///     Music\, Video\, Pictures\, or Program files\, then the optional dir parameter
 ///     specifies which folder Kodi should default to once the window is opened.
 ///     This must be a source as specified in sources.xml\, or a subfolder of a
-///     valid source. For some windows (MusicLibrary and VideoLibrary)\, the return
-///     parameter may be specified\, which indicates that Kodi should use this
+///     valid source. For some windows (MusicLibrary and VideoLibrary)\, a third
+///     parameter (return) may be specified\, which indicates that Kodi should use this
 ///     folder as the "root" of the level\, and thus the "parent directory" action
 ///     from within this folder will return the user to where they were prior to
 ///     the window activating.
 ///     @param[in] window                The window name.
 ///     @param[in] dir                   Window starting folder (optional).
+///     @param[in] return                if dir should be used as the rootfolder of the level
 ///   }
 ///   \table_row2_l{
 ///     <b>`ActivateWindowAndFocus(id1\, id2\,item1\, id3\,item2)`</b>
@@ -555,7 +554,7 @@ static int ToggleDirty(const std::vector<std::string>&)
 ///   \table_row2_l{
 ///     <b>`SetProperty(key\,value[\,id])`</b>
 ///     ,
-///     Sets a window property for the current window (key\,value)\, or the 
+///     Sets a window property for the current window (key\,value)\, or the
 ///     specified window (key\,value\,id).
 ///     @param[in] key                   The property to set.
 ///     @param[in] value                 The property value.
@@ -599,7 +598,6 @@ CBuiltins::CommandMap CGUIBuiltins::GetOperations() const
            {"refreshrss",                     {"Reload RSS feeds from RSSFeeds.xml", 0, RefreshRSS}},
            {"replacewindow",                  {"Replaces the current window with the new one", 1, ActivateWindow<true>}},
            {"replacewindowandfocus",          {"Replaces the current window with the new one and sets focus to the specified id", 1, ActivateAndFocus<true>}},
-           {"resolution",                     {"Change Kodi's Resolution", 1, SetResolution}},
            {"setguilanguage",                 {"Set GUI Language", 1, SetLanguage}},
            {"setproperty",                    {"Sets a window property for the current focused window/dialog (key,value)", 2, SetProperty}},
            {"setstereomode",                  {"Changes the stereo mode of the GUI. Params can be: toggle, next, previous, select, tomono or any of the supported stereomodes (off, split_vertical, split_horizontal, row_interleaved, hardware_based, anaglyph_cyan_red, anaglyph_green_magenta, anaglyph_yellow_blue, monoscopic)", 1, SetStereoMode}},
